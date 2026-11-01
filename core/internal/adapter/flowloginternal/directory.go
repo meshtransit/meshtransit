@@ -343,6 +343,12 @@ func directoryMessage(directory connectionlog.ReceiverDirectory) (*flowlogv1.Flo
 			SiteId: id[:], Prefixes: directoryPrefixes(site.Prefixes), Routers: directoryDeviceIDs(site.Routers),
 		})
 	}
+	for _, alias := range directory.ContractAliases {
+		id := alias.Contract.Bytes()
+		message.ContractAliases = append(message.ContractAliases, &flowlogv1.FlowDirectory_ContractAlias{
+			TrustContractId: id[:], Address: alias.Address.AsSlice(),
+		})
+	}
 	for _, pool := range directory.ExitPools {
 		id := pool.ID.Bytes()
 		message.ExitPools = append(message.ExitPools, &flowlogv1.FlowDirectory_ExitPool{

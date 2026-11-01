@@ -626,19 +626,20 @@ func (x *FlowRevocations) GetGeneratedAtMs() int64 {
 }
 
 type FlowDirectory struct {
-	state         protoimpl.MessageState    `protogen:"open.v1"`
-	Revision      uint64                    `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
-	BuiltAtMs     int64                     `protobuf:"varint,2,opt,name=built_at_ms,json=builtAtMs,proto3" json:"built_at_ms,omitempty"`
-	GeneratedAtMs int64                     `protobuf:"varint,3,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
-	MeshPrefixes  []*FlowDirectory_Prefix   `protobuf:"bytes,4,rep,name=mesh_prefixes,json=meshPrefixes,proto3" json:"mesh_prefixes,omitempty"`
-	AliasPrefixes []*FlowDirectory_Prefix   `protobuf:"bytes,5,rep,name=alias_prefixes,json=aliasPrefixes,proto3" json:"alias_prefixes,omitempty"`
-	Tags          []*FlowDirectory_Name     `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
-	Groups        []*FlowDirectory_Name     `protobuf:"bytes,7,rep,name=groups,proto3" json:"groups,omitempty"`
-	Devices       []*FlowDirectory_Device   `protobuf:"bytes,8,rep,name=devices,proto3" json:"devices,omitempty"`
-	Sites         []*FlowDirectory_Site     `protobuf:"bytes,9,rep,name=sites,proto3" json:"sites,omitempty"`
-	ExitPools     []*FlowDirectory_ExitPool `protobuf:"bytes,10,rep,name=exit_pools,json=exitPools,proto3" json:"exit_pools,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState         `protogen:"open.v1"`
+	Revision        uint64                         `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	BuiltAtMs       int64                          `protobuf:"varint,2,opt,name=built_at_ms,json=builtAtMs,proto3" json:"built_at_ms,omitempty"`
+	GeneratedAtMs   int64                          `protobuf:"varint,3,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
+	MeshPrefixes    []*FlowDirectory_Prefix        `protobuf:"bytes,4,rep,name=mesh_prefixes,json=meshPrefixes,proto3" json:"mesh_prefixes,omitempty"`
+	AliasPrefixes   []*FlowDirectory_Prefix        `protobuf:"bytes,5,rep,name=alias_prefixes,json=aliasPrefixes,proto3" json:"alias_prefixes,omitempty"`
+	Tags            []*FlowDirectory_Name          `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	Groups          []*FlowDirectory_Name          `protobuf:"bytes,7,rep,name=groups,proto3" json:"groups,omitempty"`
+	Devices         []*FlowDirectory_Device        `protobuf:"bytes,8,rep,name=devices,proto3" json:"devices,omitempty"`
+	Sites           []*FlowDirectory_Site          `protobuf:"bytes,9,rep,name=sites,proto3" json:"sites,omitempty"`
+	ExitPools       []*FlowDirectory_ExitPool      `protobuf:"bytes,10,rep,name=exit_pools,json=exitPools,proto3" json:"exit_pools,omitempty"`
+	ContractAliases []*FlowDirectory_ContractAlias `protobuf:"bytes,11,rep,name=contract_aliases,json=contractAliases,proto3" json:"contract_aliases,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *FlowDirectory) Reset() {
@@ -737,6 +738,13 @@ func (x *FlowDirectory) GetSites() []*FlowDirectory_Site {
 func (x *FlowDirectory) GetExitPools() []*FlowDirectory_ExitPool {
 	if x != nil {
 		return x.ExitPools
+	}
+	return nil
+}
+
+func (x *FlowDirectory) GetContractAliases() []*FlowDirectory_ContractAlias {
+	if x != nil {
+		return x.ContractAliases
 	}
 	return nil
 }
@@ -1301,6 +1309,58 @@ func (x *FlowDirectory_Site) GetRouters() [][]byte {
 	return nil
 }
 
+type FlowDirectory_ContractAlias struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TrustContractId []byte                 `protobuf:"bytes,1,opt,name=trust_contract_id,json=trustContractId,proto3" json:"trust_contract_id,omitempty"`
+	Address         []byte                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *FlowDirectory_ContractAlias) Reset() {
+	*x = FlowDirectory_ContractAlias{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowDirectory_ContractAlias) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowDirectory_ContractAlias) ProtoMessage() {}
+
+func (x *FlowDirectory_ContractAlias) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowDirectory_ContractAlias.ProtoReflect.Descriptor instead.
+func (*FlowDirectory_ContractAlias) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{4, 4}
+}
+
+func (x *FlowDirectory_ContractAlias) GetTrustContractId() []byte {
+	if x != nil {
+		return x.TrustContractId
+	}
+	return nil
+}
+
+func (x *FlowDirectory_ContractAlias) GetAddress() []byte {
+	if x != nil {
+		return x.Address
+	}
+	return nil
+}
+
 type FlowDirectory_ExitPool struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ExitPoolId    []byte                 `protobuf:"bytes,1,opt,name=exit_pool_id,json=exitPoolId,proto3" json:"exit_pool_id,omitempty"`
@@ -1311,7 +1371,7 @@ type FlowDirectory_ExitPool struct {
 
 func (x *FlowDirectory_ExitPool) Reset() {
 	*x = FlowDirectory_ExitPool{}
-	mi := &file_flowlog_v1_internal_proto_msgTypes[13]
+	mi := &file_flowlog_v1_internal_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1323,7 +1383,7 @@ func (x *FlowDirectory_ExitPool) String() string {
 func (*FlowDirectory_ExitPool) ProtoMessage() {}
 
 func (x *FlowDirectory_ExitPool) ProtoReflect() protoreflect.Message {
-	mi := &file_flowlog_v1_internal_proto_msgTypes[13]
+	mi := &file_flowlog_v1_internal_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1336,7 +1396,7 @@ func (x *FlowDirectory_ExitPool) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlowDirectory_ExitPool.ProtoReflect.Descriptor instead.
 func (*FlowDirectory_ExitPool) Descriptor() ([]byte, []int) {
-	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{4, 4}
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{4, 5}
 }
 
 func (x *FlowDirectory_ExitPool) GetExitPoolId() []byte {
@@ -1430,7 +1490,7 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"network_id\x18\x01 \x01(\fR\tnetworkId\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\fR\bdeviceId\x12\x1f\n" +
 	"\vmachine_key\x18\x03 \x01(\fR\n" +
-	"machineKey\"\xcd\f\n" +
+	"machineKey\"\x84\x0e\n" +
 	"\rFlowDirectory\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x1e\n" +
 	"\vbuilt_at_ms\x18\x02 \x01(\x03R\tbuiltAtMs\x12&\n" +
@@ -1443,7 +1503,8 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"\x05sites\x18\t \x03(\v2*.meshtransit.flowlog.v1.FlowDirectory.SiteR\x05sites\x12M\n" +
 	"\n" +
 	"exit_pools\x18\n" +
-	" \x03(\v2..meshtransit.flowlog.v1.FlowDirectory.ExitPoolR\texitPools\x1a6\n" +
+	" \x03(\v2..meshtransit.flowlog.v1.FlowDirectory.ExitPoolR\texitPools\x12^\n" +
+	"\x10contract_aliases\x18\v \x03(\v23.meshtransit.flowlog.v1.FlowDirectory.ContractAliasR\x0fcontractAliases\x1a6\n" +
 	"\x06Prefix\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\fR\aaddress\x12\x12\n" +
 	"\x04bits\x18\x02 \x01(\rR\x04bits\x1a*\n" +
@@ -1466,7 +1527,10 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"\x04Site\x12\x17\n" +
 	"\asite_id\x18\x01 \x01(\fR\x06siteId\x12H\n" +
 	"\bprefixes\x18\x02 \x03(\v2,.meshtransit.flowlog.v1.FlowDirectory.PrefixR\bprefixes\x12\x18\n" +
-	"\arouters\x18\x03 \x03(\fR\arouters\x1aL\n" +
+	"\arouters\x18\x03 \x03(\fR\arouters\x1aU\n" +
+	"\rContractAlias\x12*\n" +
+	"\x11trust_contract_id\x18\x01 \x01(\fR\x0ftrustContractId\x12\x18\n" +
+	"\aaddress\x18\x02 \x01(\fR\aaddress\x1aL\n" +
 	"\bExitPool\x12 \n" +
 	"\fexit_pool_id\x18\x01 \x01(\fR\n" +
 	"exitPoolId\x12\x1e\n" +
@@ -1504,28 +1568,29 @@ func file_flowlog_v1_internal_proto_rawDescGZIP() []byte {
 }
 
 var file_flowlog_v1_internal_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_flowlog_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_flowlog_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_flowlog_v1_internal_proto_goTypes = []any{
-	(FlowSigningKeys_State)(0),         // 0: meshtransit.flowlog.v1.FlowSigningKeys.State
-	(FlowDestination_Reason)(0),        // 1: meshtransit.flowlog.v1.FlowDestination.Reason
-	(FlowDestination_Provider)(0),      // 2: meshtransit.flowlog.v1.FlowDestination.Provider
-	(FlowDirectory_Kind)(0),            // 3: meshtransit.flowlog.v1.FlowDirectory.Kind
-	(FlowDirectory_State)(0),           // 4: meshtransit.flowlog.v1.FlowDirectory.State
-	(FlowDirectory_OwnerKind)(0),       // 5: meshtransit.flowlog.v1.FlowDirectory.OwnerKind
-	(*FlowSigningKeys)(nil),            // 6: meshtransit.flowlog.v1.FlowSigningKeys
-	(*FlowNetworks)(nil),               // 7: meshtransit.flowlog.v1.FlowNetworks
-	(*FlowDestination)(nil),            // 8: meshtransit.flowlog.v1.FlowDestination
-	(*FlowRevocations)(nil),            // 9: meshtransit.flowlog.v1.FlowRevocations
-	(*FlowDirectory)(nil),              // 10: meshtransit.flowlog.v1.FlowDirectory
-	(*FlowSigningKeys_Key)(nil),        // 11: meshtransit.flowlog.v1.FlowSigningKeys.Key
-	(*FlowNetworks_Network)(nil),       // 12: meshtransit.flowlog.v1.FlowNetworks.Network
-	(*FlowDestination_Credential)(nil), // 13: meshtransit.flowlog.v1.FlowDestination.Credential
-	(*FlowRevocations_Revocation)(nil), // 14: meshtransit.flowlog.v1.FlowRevocations.Revocation
-	(*FlowDirectory_Prefix)(nil),       // 15: meshtransit.flowlog.v1.FlowDirectory.Prefix
-	(*FlowDirectory_Name)(nil),         // 16: meshtransit.flowlog.v1.FlowDirectory.Name
-	(*FlowDirectory_Device)(nil),       // 17: meshtransit.flowlog.v1.FlowDirectory.Device
-	(*FlowDirectory_Site)(nil),         // 18: meshtransit.flowlog.v1.FlowDirectory.Site
-	(*FlowDirectory_ExitPool)(nil),     // 19: meshtransit.flowlog.v1.FlowDirectory.ExitPool
+	(FlowSigningKeys_State)(0),          // 0: meshtransit.flowlog.v1.FlowSigningKeys.State
+	(FlowDestination_Reason)(0),         // 1: meshtransit.flowlog.v1.FlowDestination.Reason
+	(FlowDestination_Provider)(0),       // 2: meshtransit.flowlog.v1.FlowDestination.Provider
+	(FlowDirectory_Kind)(0),             // 3: meshtransit.flowlog.v1.FlowDirectory.Kind
+	(FlowDirectory_State)(0),            // 4: meshtransit.flowlog.v1.FlowDirectory.State
+	(FlowDirectory_OwnerKind)(0),        // 5: meshtransit.flowlog.v1.FlowDirectory.OwnerKind
+	(*FlowSigningKeys)(nil),             // 6: meshtransit.flowlog.v1.FlowSigningKeys
+	(*FlowNetworks)(nil),                // 7: meshtransit.flowlog.v1.FlowNetworks
+	(*FlowDestination)(nil),             // 8: meshtransit.flowlog.v1.FlowDestination
+	(*FlowRevocations)(nil),             // 9: meshtransit.flowlog.v1.FlowRevocations
+	(*FlowDirectory)(nil),               // 10: meshtransit.flowlog.v1.FlowDirectory
+	(*FlowSigningKeys_Key)(nil),         // 11: meshtransit.flowlog.v1.FlowSigningKeys.Key
+	(*FlowNetworks_Network)(nil),        // 12: meshtransit.flowlog.v1.FlowNetworks.Network
+	(*FlowDestination_Credential)(nil),  // 13: meshtransit.flowlog.v1.FlowDestination.Credential
+	(*FlowRevocations_Revocation)(nil),  // 14: meshtransit.flowlog.v1.FlowRevocations.Revocation
+	(*FlowDirectory_Prefix)(nil),        // 15: meshtransit.flowlog.v1.FlowDirectory.Prefix
+	(*FlowDirectory_Name)(nil),          // 16: meshtransit.flowlog.v1.FlowDirectory.Name
+	(*FlowDirectory_Device)(nil),        // 17: meshtransit.flowlog.v1.FlowDirectory.Device
+	(*FlowDirectory_Site)(nil),          // 18: meshtransit.flowlog.v1.FlowDirectory.Site
+	(*FlowDirectory_ContractAlias)(nil), // 19: meshtransit.flowlog.v1.FlowDirectory.ContractAlias
+	(*FlowDirectory_ExitPool)(nil),      // 20: meshtransit.flowlog.v1.FlowDirectory.ExitPool
 }
 var file_flowlog_v1_internal_proto_depIdxs = []int32{
 	11, // 0: meshtransit.flowlog.v1.FlowSigningKeys.keys:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.Key
@@ -1539,18 +1604,19 @@ var file_flowlog_v1_internal_proto_depIdxs = []int32{
 	16, // 8: meshtransit.flowlog.v1.FlowDirectory.groups:type_name -> meshtransit.flowlog.v1.FlowDirectory.Name
 	17, // 9: meshtransit.flowlog.v1.FlowDirectory.devices:type_name -> meshtransit.flowlog.v1.FlowDirectory.Device
 	18, // 10: meshtransit.flowlog.v1.FlowDirectory.sites:type_name -> meshtransit.flowlog.v1.FlowDirectory.Site
-	19, // 11: meshtransit.flowlog.v1.FlowDirectory.exit_pools:type_name -> meshtransit.flowlog.v1.FlowDirectory.ExitPool
-	0,  // 12: meshtransit.flowlog.v1.FlowSigningKeys.Key.state:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.State
-	2,  // 13: meshtransit.flowlog.v1.FlowDestination.Credential.provider:type_name -> meshtransit.flowlog.v1.FlowDestination.Provider
-	3,  // 14: meshtransit.flowlog.v1.FlowDirectory.Device.kind:type_name -> meshtransit.flowlog.v1.FlowDirectory.Kind
-	4,  // 15: meshtransit.flowlog.v1.FlowDirectory.Device.state:type_name -> meshtransit.flowlog.v1.FlowDirectory.State
-	5,  // 16: meshtransit.flowlog.v1.FlowDirectory.Device.owner_kind:type_name -> meshtransit.flowlog.v1.FlowDirectory.OwnerKind
-	15, // 17: meshtransit.flowlog.v1.FlowDirectory.Site.prefixes:type_name -> meshtransit.flowlog.v1.FlowDirectory.Prefix
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	20, // 11: meshtransit.flowlog.v1.FlowDirectory.exit_pools:type_name -> meshtransit.flowlog.v1.FlowDirectory.ExitPool
+	19, // 12: meshtransit.flowlog.v1.FlowDirectory.contract_aliases:type_name -> meshtransit.flowlog.v1.FlowDirectory.ContractAlias
+	0,  // 13: meshtransit.flowlog.v1.FlowSigningKeys.Key.state:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.State
+	2,  // 14: meshtransit.flowlog.v1.FlowDestination.Credential.provider:type_name -> meshtransit.flowlog.v1.FlowDestination.Provider
+	3,  // 15: meshtransit.flowlog.v1.FlowDirectory.Device.kind:type_name -> meshtransit.flowlog.v1.FlowDirectory.Kind
+	4,  // 16: meshtransit.flowlog.v1.FlowDirectory.Device.state:type_name -> meshtransit.flowlog.v1.FlowDirectory.State
+	5,  // 17: meshtransit.flowlog.v1.FlowDirectory.Device.owner_kind:type_name -> meshtransit.flowlog.v1.FlowDirectory.OwnerKind
+	15, // 18: meshtransit.flowlog.v1.FlowDirectory.Site.prefixes:type_name -> meshtransit.flowlog.v1.FlowDirectory.Prefix
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_flowlog_v1_internal_proto_init() }
@@ -1564,7 +1630,7 @@ func file_flowlog_v1_internal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_flowlog_v1_internal_proto_rawDesc), len(file_flowlog_v1_internal_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

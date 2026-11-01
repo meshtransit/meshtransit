@@ -148,6 +148,10 @@ message FlowDirectory {
   repeated Device devices = 8;
   repeated Site sites = 9;
   repeated ExitPool exit_pools = 10;
+  // contract_aliases are the alias addresses of the shares the Network
+  // consumes, by Trust Contract: a share's record names its contract by
+  // them (C63). Nothing of the provider is listed.
+  repeated ContractAlias contract_aliases = 11;
 
   message Prefix {
     bytes address = 1; // 4 or 16 bytes
@@ -181,6 +185,11 @@ message FlowDirectory {
     bytes site_id = 1;
     repeated Prefix prefixes = 2;
     repeated bytes routers = 3; // Device IDs
+  }
+
+  message ContractAlias {
+    bytes trust_contract_id = 1;
+    bytes address = 2; // 4 or 16 bytes
   }
 
   message ExitPool {

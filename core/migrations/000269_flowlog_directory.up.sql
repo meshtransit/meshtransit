@@ -115,10 +115,67 @@ CREATE POLICY network_exit_node_flowlog_read ON mesh.network_exit_node
                                           FROM mesh.network_connection_log AS logged));
 GRANT SELECT ON mesh.network_exit_node TO mesh_flowlog_reader;
 
+-- Shares this Network consumes (C63): read by their consumer side only,
+-- so the reader never sees a provider's rows of a Network that does not log.
+CREATE POLICY device_alias_lease_flowlog_read ON mesh.device_alias_lease
+    FOR SELECT TO mesh_flowlog_reader
+    USING ((consumer_workspace_id, consumer_network_id) IN (SELECT logged.workspace_id, logged.network_id
+                                                            FROM mesh.network_connection_log AS logged));
+GRANT SELECT ON mesh.device_alias_lease TO mesh_flowlog_reader;
+CREATE POLICY private_endpoint_flowlog_read ON mesh.private_endpoint
+    FOR SELECT TO mesh_flowlog_reader
+    USING ((consumer_workspace_id, consumer_network_id) IN (SELECT logged.workspace_id, logged.network_id
+                                                            FROM mesh.network_connection_log AS logged));
+GRANT SELECT ON mesh.private_endpoint TO mesh_flowlog_reader;
+CREATE POLICY trust_contract_flowlog_read ON mesh.trust_contract
+    FOR SELECT TO mesh_flowlog_reader
+    USING ((consumer_workspace_id, consumer_network_id) IN (SELECT logged.workspace_id, logged.network_id
+                                                            FROM mesh.network_connection_log AS logged));
+GRANT SELECT ON mesh.trust_contract TO mesh_flowlog_reader;
+
+-- The alias addresses of the shares a Network consumes, by Trust Contract
+-- (C63): the lease, its Private Endpoint and its contract, all matched on
+-- the consumer side. A held lease counts; a quarantined one for 25 hours
+-- after it was quarantined or its contract ended, so late records still
+-- name it. A resumed Device's history leases repeat its address: each pair
+-- once (review s4c2b H1, M3).
+CREATE FUNCTION mesh_ops.flowlog_contract_aliases_internal_v1(p_workspace BIGINT, p_network BIGINT,
+    p_now TIMESTAMPTZ)
+RETURNS TABLE (contract_public_id UUID, address INET)
+LANGUAGE sql
+STABLE
+PARALLEL UNSAFE
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $function$
+    SELECT DISTINCT contract.public_id, lease.address
+    FROM mesh.device_alias_lease AS lease
+    JOIN mesh.private_endpoint AS endpoint ON endpoint.id = lease.private_endpoint_id
+     AND endpoint.consumer_workspace_id = lease.consumer_workspace_id
+     AND endpoint.consumer_network_id = lease.consumer_network_id
+    JOIN mesh.trust_contract AS contract ON contract.id = endpoint.trust_contract_id
+     AND contract.consumer_workspace_id = endpoint.consumer_workspace_id
+     AND contract.consumer_network_id = endpoint.consumer_network_id
+    WHERE lease.consumer_workspace_id = p_workspace AND lease.consumer_network_id = p_network
+      AND (lease.state = 'reserved'
+           OR (lease.state = 'quarantined' AND lease.quarantine_until > p_now
+               AND (lease.updated_at >= p_now - INTERVAL '25 hours'
+                    OR contract.ended_at >= p_now - INTERVAL '25 hours')))
+$function$;
+
+-- The helper finds a consumer's leases by index, not by the deployment's
+-- history (review s4c2b M4).
+CREATE INDEX device_alias_lease_consumer_listed_idx
+    ON mesh.device_alias_lease (consumer_workspace_id, consumer_network_id)
+    WHERE state IN ('reserved', 'quarantined');
+
 -- The Network part of the directory (C61): revision, prefixes, the
 -- deployment's alias pools, Sites with routers, Exit Pools with candidates,
--- tag and group names, and how many Devices the pages will list. NULL: no
--- such Network, or no destination.
+-- tag and group names, how many Devices the pages will list, and the alias
+-- addresses of the shares it consumes by Trust Contract (C63): only the
+-- contract's public ID and the address, nothing of the provider (which
+-- aliases count: flowlog_contract_aliases_internal_v1). Past 100 000 aliases the list is NULL with a count over the cap:
+-- refused, never cut. NULL: no such Network, or no destination.
 CREATE FUNCTION mesh_ops.flowlog_directory_network_v1(p_workspace_public_id UUID, p_network_public_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -131,6 +188,7 @@ DECLARE
     v_now TIMESTAMPTZ := pg_catalog.transaction_timestamp();
     v_workspace BIGINT;
     v_network BIGINT;
+    v_aliases JSONB;
 BEGIN
     SELECT settings.workspace_id, settings.network_id INTO v_workspace, v_network
     FROM mesh.network_connection_log AS settings
@@ -140,6 +198,15 @@ BEGIN
     IF v_network IS NULL THEN
         RETURN NULL;
     END IF;
+    -- One bounded scan: one row past the cap tells a full list from a cut
+    -- one (review s4c2b L6).
+    SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('contract', bounded.contract_public_id,
+            'address', pg_catalog.host(bounded.address)) ORDER BY bounded.contract_public_id, bounded.address),
+        '[]'::JSONB)
+    INTO v_aliases
+    FROM (SELECT alias.contract_public_id, alias.address
+          FROM mesh_ops.flowlog_contract_aliases_internal_v1(v_workspace, v_network, v_now) AS alias
+          ORDER BY alias.contract_public_id, alias.address LIMIT 100001) AS bounded;
     RETURN pg_catalog.jsonb_build_object(
         'revision', (SELECT revision.network_revision FROM mesh_ops.network_revision AS revision
                      WHERE revision.workspace_id = v_workspace AND revision.network_id = v_network),
@@ -186,6 +253,8 @@ BEGIN
             FROM mesh.device_group AS grouped
             WHERE grouped.workspace_id = v_workspace AND grouped.network_id = v_network
               AND grouped.deleted_at IS NULL), '[]'::JSONB),
+        'contract_alias_count', pg_catalog.jsonb_array_length(v_aliases),
+        'contract_aliases', CASE WHEN pg_catalog.jsonb_array_length(v_aliases) > 100000 THEN NULL ELSE v_aliases END,
         'devices', (SELECT pg_catalog.count(*) FROM mesh.device AS device
             WHERE device.workspace_id = v_workspace AND device.network_id = v_network
               AND (device.deleted_at IS NULL OR device.deleted_at >= v_now - INTERVAL '25 hours'))
@@ -276,6 +345,10 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION mesh_ops.flowlog_directory_network_v1(UUID, UUID),
+REVOKE ALL ON FUNCTION mesh_ops.flowlog_contract_aliases_internal_v1(BIGINT, BIGINT, TIMESTAMPTZ),
+    mesh_ops.flowlog_directory_network_v1(UUID, UUID),
     mesh_ops.flowlog_directory_devices_v1(UUID, UUID, UUID, INTEGER)
     FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+-- The Network part calls it as its owner, the reader.
+GRANT EXECUTE ON FUNCTION mesh_ops.flowlog_contract_aliases_internal_v1(BIGINT, BIGINT, TIMESTAMPTZ)
+    TO mesh_flowlog_reader;

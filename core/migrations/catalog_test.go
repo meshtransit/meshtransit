@@ -8009,6 +8009,10 @@ func TestMigration269FlowlogDirectory(t *testing.T) {
 		"CREATE FUNCTION mesh_ops.flowlog_directory_devices_v1(p_workspace_public_id UUID, p_network_public_id UUID,",
 		"INTERVAL '25 hours'",
 		"LIMIT 64",
+		"CREATE FUNCTION mesh_ops.flowlog_contract_aliases_internal_v1(",
+		"USING ((consumer_workspace_id, consumer_network_id) IN (SELECT logged.workspace_id, logged.network_id",
+		"jsonb_array_length(v_aliases) > 100000 THEN NULL",
+		"SELECT DISTINCT contract.public_id, lease.address",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("migration 269 lacks %q", want)

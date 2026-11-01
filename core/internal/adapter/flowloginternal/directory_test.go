@@ -38,6 +38,9 @@ func testDirectory(revision int64) *connectionlog.ReceiverDirectory {
 			Routers: []node.ID{node.ID(testID(10))},
 		}},
 		ExitPools: []connectionlog.ReceiverExitPool{{ID: testID(60), Candidates: []node.ID{node.ID(testID(10))}}},
+		ContractAliases: []connectionlog.ReceiverContractAlias{{
+			Contract: testID(70), Address: netip.MustParseAddr("100.127.0.9"),
+		}},
 	}
 }
 
@@ -68,7 +71,9 @@ func TestDirectory(t *testing.T) {
 		devices[0].GetGroups()[0] != 1 || devices[0].GetTags()[0] != 0 || len(devices[0].GetAddresses()[0]) != 4 ||
 		devices[1].GetState() != flowlogv1.FlowDirectory_DELETED || devices[1].GetOwnerPseudonym() != nil ||
 		devices[1].GetKind() != flowlogv1.FlowDirectory_KUBERNETES_GATEWAY ||
-		len(directory.GetSites()[0].GetRouters()) != 1 || len(directory.GetExitPools()[0].GetCandidates()) != 1 {
+		len(directory.GetSites()[0].GetRouters()) != 1 || len(directory.GetExitPools()[0].GetCandidates()) != 1 ||
+		len(directory.GetContractAliases()) != 1 || len(directory.GetContractAliases()[0].GetAddress()) != 4 ||
+		len(directory.GetContractAliases()[0].GetTrustContractId()) != 16 {
 		t.Fatalf("directory = %v", directory)
 	}
 	tag := response.header.Get("ETag")

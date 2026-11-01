@@ -39,15 +39,22 @@ const (
 var ErrFlowlogDirectoryTooLarge = errors.New("postgres: connection log directory too large")
 
 type flowlogDirectoryNetworkRow struct {
-	Revision      int64                  `json:"revision"`
-	BuiltAt       time.Time              `json:"built_at"`
-	MeshPrefixes  []string               `json:"mesh_prefixes"`
-	AliasPrefixes []string               `json:"alias_prefixes"`
-	Sites         []flowlogDirectorySite `json:"sites"`
-	ExitPools     []flowlogDirectoryPool `json:"exit_pools"`
-	Tags          []flowlogDirectoryName `json:"tags"`
-	Groups        []flowlogDirectoryName `json:"groups"`
-	Devices       int                    `json:"devices"`
+	Revision      int64                   `json:"revision"`
+	BuiltAt       time.Time               `json:"built_at"`
+	MeshPrefixes  []string                `json:"mesh_prefixes"`
+	AliasPrefixes []string                `json:"alias_prefixes"`
+	Sites         []flowlogDirectorySite  `json:"sites"`
+	ExitPools     []flowlogDirectoryPool  `json:"exit_pools"`
+	Tags          []flowlogDirectoryName  `json:"tags"`
+	Groups        []flowlogDirectoryName  `json:"groups"`
+	Devices       int                     `json:"devices"`
+	AliasCount    int                     `json:"contract_alias_count"`
+	Aliases       *[]flowlogContractAlias `json:"contract_aliases"`
+}
+
+type flowlogContractAlias struct {
+	Contract string `json:"contract"`
+	Address  string `json:"address"`
 }
 
 type flowlogDirectorySite struct {
@@ -119,7 +126,8 @@ func (store *FlowlogReceiverStore) Directory(ctx context.Context, scope network.
 	if decodeStrictJSON(*document, maxFlowlogDocument, &head) != nil || head.Revision < 1 || head.Devices < 0 {
 		return connectionlog.ReceiverDirectory{}, ErrFlowlogReceiver
 	}
-	if head.Devices > connectionlog.MaxReceiverDirectoryDevices {
+	if head.Devices > connectionlog.MaxReceiverDirectoryDevices ||
+		head.AliasCount > connectionlog.MaxReceiverContractAliases {
 		return connectionlog.ReceiverDirectory{}, ErrFlowlogDirectoryTooLarge
 	}
 	directory, err := newReceiverDirectory(head)
@@ -210,6 +218,18 @@ func newReceiverDirectory(head flowlogDirectoryNetworkRow) (connectionlog.Receiv
 			return connectionlog.ReceiverDirectory{}, err
 		}
 		directory.Sites = append(directory.Sites, site)
+	}
+	if head.Aliases == nil || len(*head.Aliases) != head.AliasCount {
+		return connectionlog.ReceiverDirectory{}, ErrFlowlogReceiver
+	}
+	for _, row := range *head.Aliases {
+		contract, err := publicid.Parse(row.Contract)
+		address, addressErr := netip.ParseAddr(row.Address)
+		if err != nil || addressErr != nil || address.Zone() != "" {
+			return connectionlog.ReceiverDirectory{}, ErrFlowlogReceiver
+		}
+		directory.ContractAliases = append(directory.ContractAliases,
+			connectionlog.ReceiverContractAlias{Contract: contract, Address: address})
 	}
 	for _, row := range head.ExitPools {
 		id, err := publicid.Parse(row.ID)

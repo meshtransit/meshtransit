@@ -148,6 +148,17 @@ type ReceiverExitPool struct {
 	Candidates []node.ID
 }
 
+// MaxReceiverContractAliases bounds the share aliases one directory lists:
+// more are refused, never cut (C63).
+const MaxReceiverContractAliases = 100000
+
+// ReceiverContractAlias is an alias address of a share the Network
+// consumes, and its Trust Contract.
+type ReceiverContractAlias struct {
+	Contract publicid.ID
+	Address  netip.Addr
+}
+
 // ReceiverDirectory is one Network's directory, read in one snapshot at
 // BuiltAt on the database clock (C61).
 type ReceiverDirectory struct {
@@ -160,4 +171,6 @@ type ReceiverDirectory struct {
 	Devices       []ReceiverDevice
 	Sites         []ReceiverSite
 	ExitPools     []ReceiverExitPool
+	// ContractAliases are by contract, then address.
+	ContractAliases []ReceiverContractAlias
 }

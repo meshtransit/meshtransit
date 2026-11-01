@@ -556,6 +556,16 @@ WHERE (device.workspace_id, device.network_id) NOT IN (SELECT logged.workspace_i
 		t.Fatalf("the reader sees %d revisions, %d memberships, %d pseudonyms, %d pools it should not",
 			foreignRevisions, foreignMemberships, foreignPseudonyms, tenantPools)
 	}
+	// The shares a logging Network consumes, by their consumer side only.
+	for _, table := range []string{"device_alias_lease", "private_endpoint", "trust_contract"} {
+		var foreign int
+		if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT pg_catalog.count(*) FROM mesh.%s AS guarded
+WHERE (guarded.consumer_workspace_id, guarded.consumer_network_id) NOT IN (
+    SELECT logged.workspace_id, logged.network_id FROM mesh.network_connection_log AS logged)`, table)).Scan(
+			&foreign); err != nil || foreign != 0 {
+			t.Fatalf("the reader sees %d rows of mesh.%s it should not: %v", foreign, table, err)
+		}
+	}
 	// The directory's Network-scoped tables (schema 269).
 	for _, table := range []string{
 		"device_tag", "device_tag_assignment", "device_group", "device_group_member", "network_site",

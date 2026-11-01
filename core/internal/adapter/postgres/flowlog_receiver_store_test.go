@@ -101,18 +101,31 @@ func TestNewReceiverDirectoryRefusesWhatTheSchemaNeverAnswers(t *testing.T) {
 		ExitPools: []flowlogDirectoryPool{{
 			ID: "01890f00-0000-7000-8000-000000000060", Candidates: []string{"01890f00-0000-7000-8000-000000000010"},
 		}},
+		AliasCount: 1,
+		Aliases: &[]flowlogContractAlias{{
+			Contract: "01890f00-0000-7000-8000-000000000070", Address: "100.127.0.9",
+		}},
 	}
 	directory, err := newReceiverDirectory(head)
 	if err != nil || directory.Revision != 3 || len(directory.Sites[0].Routers) != 1 ||
-		len(directory.ExitPools[0].Candidates) != 1 || directory.AliasPrefixes[0].Bits() != 16 {
+		len(directory.ExitPools[0].Candidates) != 1 || directory.AliasPrefixes[0].Bits() != 16 ||
+		len(directory.ContractAliases) != 1 || directory.ContractAliases[0].Address.String() != "100.127.0.9" {
 		t.Fatalf("directory = %+v, %v", directory, err)
 	}
 	for name, change := range map[string]func(*flowlogDirectoryNetworkRow){
-		"unmasked prefix": func(row *flowlogDirectoryNetworkRow) { row.MeshPrefixes = []string{"100.64.0.1/10"} },
-		"alias prefix":    func(row *flowlogDirectoryNetworkRow) { row.AliasPrefixes = []string{"nope"} },
-		"site":            func(row *flowlogDirectoryNetworkRow) { row.Sites[0].ID = "x" },
-		"router":          func(row *flowlogDirectoryNetworkRow) { row.Sites[0].Routers = []string{"x"} },
-		"tag":             func(row *flowlogDirectoryNetworkRow) { row.Tags = []flowlogDirectoryName{{ID: "x", Name: "a"}} },
+		"unmasked prefix":  func(row *flowlogDirectoryNetworkRow) { row.MeshPrefixes = []string{"100.64.0.1/10"} },
+		"alias prefix":     func(row *flowlogDirectoryNetworkRow) { row.AliasPrefixes = []string{"nope"} },
+		"site":             func(row *flowlogDirectoryNetworkRow) { row.Sites[0].ID = "x" },
+		"router":           func(row *flowlogDirectoryNetworkRow) { row.Sites[0].Routers = []string{"x"} },
+		"tag":              func(row *flowlogDirectoryNetworkRow) { row.Tags = []flowlogDirectoryName{{ID: "x", Name: "a"}} },
+		"alias count":      func(row *flowlogDirectoryNetworkRow) { row.AliasCount = 2 },
+		"aliases withheld": func(row *flowlogDirectoryNetworkRow) { row.Aliases = nil },
+		"alias address": func(row *flowlogDirectoryNetworkRow) {
+			row.Aliases = &[]flowlogContractAlias{{Contract: "01890f00-0000-7000-8000-000000000070", Address: "x"}}
+		},
+		"alias contract": func(row *flowlogDirectoryNetworkRow) {
+			row.Aliases = &[]flowlogContractAlias{{Contract: "x", Address: "100.127.0.9"}}
+		},
 	} {
 		row := head
 		row.Sites = []flowlogDirectorySite{head.Sites[0]}
