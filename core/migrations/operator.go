@@ -251,3 +251,11 @@ var trustContractDeviceRemovalOwnershipSQL string
 // shares of removed provider Devices (schema 178) to the sharing writer and
 // exposes them to the worker role only.
 func TrustContractDeviceRemovalOwnershipSQL() string { return trustContractDeviceRemovalOwnershipSQL }
+
+//go:embed operator/000268_flowlog_reader_ownership.sql
+var flowlogReaderOwnershipSQL string
+
+// FlowlogReaderOwnershipSQL moves the connection log receiver's reads
+// (schema 268) to the receiver reader and exposes them to the runtime role
+// only.
+func FlowlogReaderOwnershipSQL() string { return flowlogReaderOwnershipSQL }

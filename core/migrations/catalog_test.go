@@ -17,8 +17,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 267 {
-		t.Fatalf("len(Catalog()) = %d, want 267", len(catalog))
+	if len(catalog) != 268 {
+		t.Fatalf("len(Catalog()) = %d, want 268", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1613,8 +1613,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 267 {
-		t.Fatalf("LatestVersion() = %d, want 267", LatestVersion())
+	if LatestVersion() != 268 {
+		t.Fatalf("LatestVersion() = %d, want 268", LatestVersion())
 	}
 }
 
@@ -7958,6 +7958,37 @@ func TestMigration267ConnectionLogTickets(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("migration 267 lacks %q", want)
+		}
+	}
+}
+
+func TestMigration268FlowlogInternalReads(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 268 || catalog[267].Version != 268 {
+		t.Fatalf("the catalog has no migration 268 (%d migrations)", len(catalog))
+	}
+	sql := catalog[267].SQL
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.flowlog_networks_v1(p_after UUID, p_limit INTEGER)",
+		"CREATE FUNCTION mesh_ops.flowlog_destination_v1(p_workspace_public_id UUID, p_network_public_id UUID)",
+		"CREATE FUNCTION mesh_ops.flowlog_revocations_v1(p_since TIMESTAMPTZ)",
+		"FOR SELECT TO mesh_flowlog_reader",
+		"LIMIT 100001",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 268 lacks %q", want)
+		}
+	}
+	// The reader never writes; only the operator step lets runtime execute;
+	// no policy guards by an EXISTS whose names could bind to the
+	// sub-select (review s4c1b H1, H3).
+	for _, banned := range []string{
+		"GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "FOR ALL TO mesh_flowlog_reader",
+		"TO mesh_runtime", "USING (EXISTS",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 268 has %q", banned)
 		}
 	}
 }

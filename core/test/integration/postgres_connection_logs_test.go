@@ -8,6 +8,8 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/shared/flowlog"
 )
@@ -183,6 +186,7 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	if read, err := maps.ReadFlowLog(ctx, other); err != nil || read.Enabled {
 		t.Fatalf("ReadFlowLog() of another Network = %+v, %v", read, err)
 	}
+	assertFlowlogReceiverReads(ctx, t, admin, runtimePool, scope, credentialID)
 	// Without the feature the Network stays on but logs nothing (C31).
 	if _, err := postgresadapter.ChangeWorkspaceFeature(ctx, operator, publicid.ID(workspaceID),
 		postgresadapter.WorkspaceFeatureConnectionLogs, false, ""); err != nil {
@@ -190,6 +194,20 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	}
 	if read, err := maps.ReadFlowLog(ctx, scope); err != nil || read.Enabled {
 		t.Fatalf("ReadFlowLog() without the feature = %+v, %v", read, err)
+	}
+	receiverStore, err := postgresadapter.NewFlowlogReceiverStore(runtimePool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination, err := receiverStore.Destination(ctx, scope); err != nil ||
+		destination.Reason != connectionlog.ReasonFeatureRevoked || len(destination.Sealed) == 0 {
+		t.Fatalf("Destination() without the feature = %+v, %v", destination, err)
+	}
+	if listed, err := receiverStore.Networks(ctx, network.ID{}, connectionlog.MaxReceiverNetworks); err != nil ||
+		slices.ContainsFunc(listed.Networks, func(entry connectionlog.ReceiverNetwork) bool {
+			return entry.Network == scope.NetworkID()
+		}) {
+		t.Fatalf("a Network without the feature is listed: %v", err)
 	}
 	if _, err := postgresadapter.ChangeWorkspaceFeature(ctx, operator, publicid.ID(workspaceID),
 		postgresadapter.WorkspaceFeatureConnectionLogs, true, "integration test again"); err != nil {
@@ -226,6 +244,10 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	off, err := settings(1, false, nil, "")
 	if err != nil || !off.Changed || off.Settings.Enabled || off.Settings.Credential != nil {
 		t.Fatalf("off = %+v, %v", off, err)
+	}
+	// Off with no credential is no destination at all.
+	if _, err := receiverStore.Destination(ctx, scope); !errors.Is(err, postgresadapter.ErrFlowlogNotFound) {
+		t.Fatalf("Destination() of a Network without one: %v", err)
 	}
 	if err := store.DeleteCredential(ctx, connectionlog.CredentialDeletion{
 		Session: owner, Workspace: workspaceID,
@@ -322,4 +344,144 @@ WHERE public_id = $1::UUID`, credential.String()).Scan(&sealed, &keyID, &sealedV
 		t.Fatalf("OpenCredential(): %v", err)
 	}
 	return opened
+}
+
+// assertFlowlogReceiverReads qualifies schema 268 (design §16c, s4c1b) on a
+// Network that logs: the receiver lists it, reads its destination for the
+// exact pair only, sees nothing of a Network without a destination, and
+// learns a suspended Device's machine key.
+func assertFlowlogReceiverReads(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool, scope network.Scope, credentialID connectionlog.CredentialID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewFlowlogReceiverStore(runtimePool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFlowlogReaderSeesOnlyLoggingNetworks(ctx, t, admin, scope)
+	listed, err := store.Networks(ctx, network.ID{}, connectionlog.MaxReceiverNetworks)
+	if err != nil || listed.GeneratedAt.IsZero() {
+		t.Fatalf("Networks() = %+v, %v", listed, err)
+	}
+	found := false
+	for _, entry := range listed.Networks {
+		if entry.Network == scope.NetworkID() {
+			found = entry.Enabled && entry.Workspace == scope.WorkspaceID() && entry.Credential == credentialID &&
+				entry.SealedVersion == 1 && entry.SealingKeyID == "meshflow-test"
+		}
+	}
+	if !found {
+		t.Fatalf("the logging Network is not listed right: %+v", listed.Networks)
+	}
+	destination, err := store.Destination(ctx, scope)
+	if err != nil || destination.Reason != connectionlog.ReasonLogging || destination.Credential != credentialID ||
+		destination.SealedVersion != 1 || len(destination.Sealed) == 0 || destination.Bucket != "meshtransit-logs" ||
+		destination.Provider != "aws_s3" {
+		t.Fatalf("Destination() = %+v, %v", destination, err)
+	}
+	other, err := network.NewScope(workspace.ID(newConnectionLogID(t)), scope.NetworkID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Destination(ctx, other); !errors.Is(err, postgresadapter.ErrFlowlogNotFound) {
+		t.Fatalf("the Network under another Workspace: %v", err)
+	}
+	quiet, err := network.NewScope(scope.WorkspaceID(), network.ID(mustIntegrationPublicID(t,
+		"01890f00-0000-7000-8000-000000000204")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Destination(ctx, quiet); !errors.Is(err, postgresadapter.ErrFlowlogNotFound) {
+		t.Fatalf("a Network without a destination: %v", err)
+	}
+	// A suspended Device's current machine key is revoked; restored, it is
+	// live again and never listed as such.
+	var device string
+	var key []byte
+	if err := admin.QueryRow(ctx, `SELECT device.public_id::TEXT, epoch.public_key FROM mesh.device AS device
+JOIN mesh.device_machine_key_epoch AS epoch ON epoch.workspace_id = device.workspace_id
+ AND epoch.network_id = device.network_id AND epoch.device_id = device.id AND epoch.epoch = device.current_machine_key_epoch
+JOIN mesh.network AS network ON network.workspace_id = device.workspace_id AND network.id = device.network_id
+WHERE network.public_id = $1::UUID AND device.state = 'active' AND device.deleted_at IS NULL
+  AND epoch.state = 'active' ORDER BY device.id LIMIT 1`, scope.NetworkID().String()).Scan(&device, &key); err != nil {
+		t.Fatalf("an active Device: %v", err)
+	}
+	revocationBypass(ctx, t, admin, []string{fmt.Sprintf(
+		`UPDATE mesh.device SET state = 'suspended', suspended_reason = 'admin', updated_at = pg_catalog.now()
+WHERE public_id = '%s'::UUID`, device,
+	)})
+	revoked, err := store.Revocations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listedRevocation := func() bool {
+		for _, entry := range revoked.Revocations {
+			if entry.Device.String() == device && bytes.Equal(entry.MachineKey[:], key) && entry.Network == scope.NetworkID() {
+				return true
+			}
+		}
+		return false
+	}
+	if !listedRevocation() {
+		t.Fatalf("the suspended Device's key is not revoked: %+v", revoked)
+	}
+	revocationBypass(ctx, t, admin, []string{fmt.Sprintf(
+		`UPDATE mesh.device SET state = 'active', suspended_reason = NULL WHERE public_id = '%s'::UUID`, device,
+	)})
+	if revoked, err = store.Revocations(ctx); err != nil || listedRevocation() {
+		t.Fatalf("a live Device's key is listed: %v", err)
+	}
+}
+
+// assertFlowlogReaderSeesOnlyLoggingNetworks reads as mesh_flowlog_reader:
+// rows of a Network with no destination, and credentials no destination
+// uses, stay invisible to it (review s4c1b H1, M3).
+func assertFlowlogReaderSeesOnlyLoggingNetworks(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	scope network.Scope,
+) {
+	t.Helper()
+	// The check means something only when such rows exist.
+	var outside int
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.device AS device
+WHERE (device.workspace_id, device.network_id) NOT IN (SELECT logged.workspace_id, logged.network_id
+                                                      FROM mesh.network_connection_log AS logged)`).Scan(&outside); err != nil ||
+		outside == 0 {
+		t.Fatalf("no Device outside a logging Network to hide: %d, %v", outside, err)
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_flowlog_reader`); err != nil {
+		t.Fatal(err)
+	}
+	var foreignDevices, foreignEpochs, foreignNetworks, workspaces, unusedCredentials int
+	if err := tx.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*) FROM mesh.device AS device
+     WHERE (device.workspace_id, device.network_id) NOT IN (SELECT logged.workspace_id, logged.network_id
+                                                           FROM mesh.network_connection_log AS logged)),
+    (SELECT pg_catalog.count(*) FROM mesh.device_machine_key_epoch AS epoch
+     WHERE (epoch.workspace_id, epoch.network_id) NOT IN (SELECT logged.workspace_id, logged.network_id
+                                                         FROM mesh.network_connection_log AS logged)),
+    (SELECT pg_catalog.count(*) FROM mesh.network AS network WHERE network.public_id <> $1::UUID),
+    (SELECT pg_catalog.count(*) FROM mesh.workspace),
+    (SELECT pg_catalog.count(*) FROM mesh.storage_credential AS credential
+     WHERE (credential.workspace_id, credential.id) NOT IN (SELECT logged.workspace_id, logged.credential_id
+                                                           FROM mesh.network_connection_log AS logged
+                                                           WHERE logged.credential_id IS NOT NULL))`,
+		scope.NetworkID().String()).Scan(&foreignDevices, &foreignEpochs, &foreignNetworks, &workspaces,
+		&unusedCredentials); err != nil {
+		t.Fatal(err)
+	}
+	if foreignDevices != 0 || foreignEpochs != 0 || foreignNetworks != 0 || workspaces != 1 || unusedCredentials != 0 {
+		t.Fatalf("the reader sees %d Devices, %d key epochs, %d Networks, %d Workspaces, %d credentials it should not",
+			foreignDevices, foreignEpochs, foreignNetworks, workspaces, unusedCredentials)
+	}
+	var visible int
+	if err := tx.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.device AS device
+JOIN mesh.network AS network ON network.workspace_id = device.workspace_id AND network.id = device.network_id
+WHERE network.public_id = $1::UUID`, scope.NetworkID().String()).Scan(&visible); err != nil || visible == 0 {
+		t.Fatalf("the reader sees no Device of the logging Network: %v", err)
+	}
 }

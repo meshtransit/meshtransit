@@ -907,8 +907,14 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}
 	build := buildinfo.Current()
 	if processConfig.FlowLogInternal != nil {
+		flowlogPool, poolErr := openFlowlogPool(ctx, processConfig.Storage, processConfig.Dependencies.CheckTimeout,
+			resources, logger)
+		if poolErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "flowlog_internal_pool_failure", "error", poolErr)
+			return 1
+		}
 		internal, internalMetrics, internalErr := composeFlowLogInternal(ctx, *processConfig.FlowLogInternal,
-			processConfig.FlowTickets, logger)
+			processConfig.FlowTickets, flowlogPool, storagePools.runtime, logger)
 		if internalErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "flowlog_internal_composition_failure",
 				"error", internalErr)

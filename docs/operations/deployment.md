@@ -64,6 +64,7 @@ CREATE ROLE mesh_direct_map_reader NOLOGIN;
 CREATE ROLE mesh_device_alias_observer NOLOGIN;
 CREATE ROLE mesh_device_alias_writer NOLOGIN;
 CREATE ROLE mesh_device_alias_map_reader NOLOGIN;
+CREATE ROLE mesh_flowlog_reader NOLOGIN;      -- connection log receiver reads (schema 268)
 
 CREATE DATABASE meshtransit OWNER mesh_migrator;
 \connect meshtransit

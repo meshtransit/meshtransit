@@ -149,6 +149,11 @@ type fixture struct {
 
 func startServer(t *testing.T) fixture {
 	t.Helper()
+	return startServerWith(t, &fakeReader{})
+}
+
+func startServerWith(t *testing.T, reader Reader) fixture {
+	t.Helper()
 	dir := t.TempDir()
 	serverCA, clientCA := newAuthority(t, "server CA"), newAuthority(t, "receiver CA")
 	certFile, keyFile := writeKeyPair(t, dir, serverCA.issue(t, "", x509.ExtKeyUsageServerAuth))
@@ -166,6 +171,7 @@ func startServer(t *testing.T) fixture {
 	server, err := NewServer(Options{
 		Address: "127.0.0.1:0", CertFile: certFile, KeyFile: keyFile, ClientCAFile: caFile,
 		ClientURI: must(url.Parse(receiverURI)), Metrics: metrics, Logger: slog.New(slog.DiscardHandler), Now: moment.Now,
+		Reader:    reader,
 		TokenKeys: []TokenKey{{State: "current", Key: public}, {State: "next", Key: next}},
 	})
 	if err != nil {
@@ -472,7 +478,7 @@ func TestNewServerRefusesBadOptions(t *testing.T) {
 	base := Options{
 		Address: "127.0.0.1:0", CertFile: certFile, KeyFile: keyFile, ClientCAFile: receiverCAFile,
 		ClientURI: must(url.Parse(receiverURI)), Metrics: NewMetrics(), Logger: slog.New(slog.DiscardHandler),
-		Now: time.Now, TokenKeys: []TokenKey{{State: "current", Key: key}},
+		Now: time.Now, TokenKeys: []TokenKey{{State: "current", Key: key}}, Reader: &fakeReader{},
 	}
 	for name, change := range map[string]func(*Options){
 		"no current key": func(o *Options) { o.TokenKeys = []TokenKey{{State: "next", Key: key}} },
@@ -481,6 +487,7 @@ func TestNewServerRefusesBadOptions(t *testing.T) {
 		"no identity":    func(o *Options) { o.ClientURI = nil },
 		"no metrics":     func(o *Options) { o.Metrics = nil },
 		"no logger":      func(o *Options) { o.Logger = nil },
+		"no reader":      func(o *Options) { o.Reader = nil },
 		"server cert of the receiver CA": func(o *Options) {
 			// The receiver CA issued the server certificate too.
 			o.ClientCAFile = caFile

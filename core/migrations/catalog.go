@@ -665,6 +665,8 @@ func Catalog() []Migration {
 			connectionLogsSQL),
 		newMigration(267, "Connection log tickets: a map stream reads whether its Network logs",
 			connectionLogTicketsSQL),
+		newMigration(268, "Connection log receiver reads: destinations and revoked machine keys",
+			flowlogInternalReadsSQL),
 	}
 }
 
@@ -1245,3 +1247,6 @@ var connectionLogsSQL string
 
 //go:embed 000267_connection_log_tickets.up.sql
 var connectionLogTicketsSQL string
+
+//go:embed 000268_flowlog_internal_reads.up.sql
+var flowlogInternalReadsSQL string

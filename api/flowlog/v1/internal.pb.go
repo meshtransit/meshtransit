@@ -76,6 +76,119 @@ func (FlowSigningKeys_State) EnumDescriptor() ([]byte, []int) {
 	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{0, 0}
 }
 
+type FlowDestination_Reason int32
+
+const (
+	FlowDestination_REASON_UNSPECIFIED  FlowDestination_Reason = 0
+	FlowDestination_LOGGING             FlowDestination_Reason = 1
+	FlowDestination_DISABLED            FlowDestination_Reason = 2
+	FlowDestination_FEATURE_REVOKED     FlowDestination_Reason = 3
+	FlowDestination_NETWORK_SUSPENDED   FlowDestination_Reason = 4
+	FlowDestination_WORKSPACE_SUSPENDED FlowDestination_Reason = 5
+	FlowDestination_NETWORK_DELETED     FlowDestination_Reason = 6
+	FlowDestination_WORKSPACE_DELETED   FlowDestination_Reason = 7
+)
+
+// Enum value maps for FlowDestination_Reason.
+var (
+	FlowDestination_Reason_name = map[int32]string{
+		0: "REASON_UNSPECIFIED",
+		1: "LOGGING",
+		2: "DISABLED",
+		3: "FEATURE_REVOKED",
+		4: "NETWORK_SUSPENDED",
+		5: "WORKSPACE_SUSPENDED",
+		6: "NETWORK_DELETED",
+		7: "WORKSPACE_DELETED",
+	}
+	FlowDestination_Reason_value = map[string]int32{
+		"REASON_UNSPECIFIED":  0,
+		"LOGGING":             1,
+		"DISABLED":            2,
+		"FEATURE_REVOKED":     3,
+		"NETWORK_SUSPENDED":   4,
+		"WORKSPACE_SUSPENDED": 5,
+		"NETWORK_DELETED":     6,
+		"WORKSPACE_DELETED":   7,
+	}
+)
+
+func (x FlowDestination_Reason) Enum() *FlowDestination_Reason {
+	p := new(FlowDestination_Reason)
+	*p = x
+	return p
+}
+
+func (x FlowDestination_Reason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FlowDestination_Reason) Descriptor() protoreflect.EnumDescriptor {
+	return file_flowlog_v1_internal_proto_enumTypes[1].Descriptor()
+}
+
+func (FlowDestination_Reason) Type() protoreflect.EnumType {
+	return &file_flowlog_v1_internal_proto_enumTypes[1]
+}
+
+func (x FlowDestination_Reason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FlowDestination_Reason.Descriptor instead.
+func (FlowDestination_Reason) EnumDescriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{2, 0}
+}
+
+type FlowDestination_Provider int32
+
+const (
+	FlowDestination_PROVIDER_UNSPECIFIED FlowDestination_Provider = 0
+	FlowDestination_AWS_S3               FlowDestination_Provider = 1
+	FlowDestination_CLOUDFLARE_R2        FlowDestination_Provider = 2
+)
+
+// Enum value maps for FlowDestination_Provider.
+var (
+	FlowDestination_Provider_name = map[int32]string{
+		0: "PROVIDER_UNSPECIFIED",
+		1: "AWS_S3",
+		2: "CLOUDFLARE_R2",
+	}
+	FlowDestination_Provider_value = map[string]int32{
+		"PROVIDER_UNSPECIFIED": 0,
+		"AWS_S3":               1,
+		"CLOUDFLARE_R2":        2,
+	}
+)
+
+func (x FlowDestination_Provider) Enum() *FlowDestination_Provider {
+	p := new(FlowDestination_Provider)
+	*p = x
+	return p
+}
+
+func (x FlowDestination_Provider) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FlowDestination_Provider) Descriptor() protoreflect.EnumDescriptor {
+	return file_flowlog_v1_internal_proto_enumTypes[2].Descriptor()
+}
+
+func (FlowDestination_Provider) Type() protoreflect.EnumType {
+	return &file_flowlog_v1_internal_proto_enumTypes[2]
+}
+
+func (x FlowDestination_Provider) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FlowDestination_Provider.Descriptor instead.
+func (FlowDestination_Provider) EnumDescriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{2, 1}
+}
+
 type FlowSigningKeys struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Keys          []*FlowSigningKeys_Key `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
@@ -128,6 +241,226 @@ func (x *FlowSigningKeys) GetGeneratedAtMs() int64 {
 	return 0
 }
 
+type FlowNetworks struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Networks      []*FlowNetworks_Network `protobuf:"bytes,1,rep,name=networks,proto3" json:"networks,omitempty"`
+	NextAfter     []byte                  `protobuf:"bytes,2,opt,name=next_after,json=nextAfter,proto3" json:"next_after,omitempty"`
+	GeneratedAtMs int64                   `protobuf:"varint,3,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlowNetworks) Reset() {
+	*x = FlowNetworks{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowNetworks) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowNetworks) ProtoMessage() {}
+
+func (x *FlowNetworks) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowNetworks.ProtoReflect.Descriptor instead.
+func (*FlowNetworks) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FlowNetworks) GetNetworks() []*FlowNetworks_Network {
+	if x != nil {
+		return x.Networks
+	}
+	return nil
+}
+
+func (x *FlowNetworks) GetNextAfter() []byte {
+	if x != nil {
+		return x.NextAfter
+	}
+	return nil
+}
+
+func (x *FlowNetworks) GetGeneratedAtMs() int64 {
+	if x != nil {
+		return x.GeneratedAtMs
+	}
+	return 0
+}
+
+type FlowDestination struct {
+	state           protoimpl.MessageState      `protogen:"open.v1"`
+	Reason          FlowDestination_Reason      `protobuf:"varint,1,opt,name=reason,proto3,enum=meshtransit.flowlog.v1.FlowDestination_Reason" json:"reason,omitempty"`
+	Forwarded       bool                        `protobuf:"varint,2,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
+	WindowS         uint32                      `protobuf:"varint,3,opt,name=window_s,json=windowS,proto3" json:"window_s,omitempty"`
+	Bucket          string                      `protobuf:"bytes,4,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	Region          string                      `protobuf:"bytes,5,opt,name=region,proto3" json:"region,omitempty"`
+	Prefix          string                      `protobuf:"bytes,6,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	Credential      *FlowDestination_Credential `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
+	DestinationEtag []byte                      `protobuf:"bytes,8,opt,name=destination_etag,json=destinationEtag,proto3" json:"destination_etag,omitempty"`
+	GeneratedAtMs   int64                       `protobuf:"varint,9,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *FlowDestination) Reset() {
+	*x = FlowDestination{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowDestination) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowDestination) ProtoMessage() {}
+
+func (x *FlowDestination) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowDestination.ProtoReflect.Descriptor instead.
+func (*FlowDestination) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *FlowDestination) GetReason() FlowDestination_Reason {
+	if x != nil {
+		return x.Reason
+	}
+	return FlowDestination_REASON_UNSPECIFIED
+}
+
+func (x *FlowDestination) GetForwarded() bool {
+	if x != nil {
+		return x.Forwarded
+	}
+	return false
+}
+
+func (x *FlowDestination) GetWindowS() uint32 {
+	if x != nil {
+		return x.WindowS
+	}
+	return 0
+}
+
+func (x *FlowDestination) GetBucket() string {
+	if x != nil {
+		return x.Bucket
+	}
+	return ""
+}
+
+func (x *FlowDestination) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *FlowDestination) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
+func (x *FlowDestination) GetCredential() *FlowDestination_Credential {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
+func (x *FlowDestination) GetDestinationEtag() []byte {
+	if x != nil {
+		return x.DestinationEtag
+	}
+	return nil
+}
+
+func (x *FlowDestination) GetGeneratedAtMs() int64 {
+	if x != nil {
+		return x.GeneratedAtMs
+	}
+	return 0
+}
+
+type FlowRevocations struct {
+	state         protoimpl.MessageState        `protogen:"open.v1"`
+	Revocations   []*FlowRevocations_Revocation `protobuf:"bytes,1,rep,name=revocations,proto3" json:"revocations,omitempty"`
+	GeneratedAtMs int64                         `protobuf:"varint,2,opt,name=generated_at_ms,json=generatedAtMs,proto3" json:"generated_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlowRevocations) Reset() {
+	*x = FlowRevocations{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowRevocations) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowRevocations) ProtoMessage() {}
+
+func (x *FlowRevocations) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowRevocations.ProtoReflect.Descriptor instead.
+func (*FlowRevocations) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *FlowRevocations) GetRevocations() []*FlowRevocations_Revocation {
+	if x != nil {
+		return x.Revocations
+	}
+	return nil
+}
+
+func (x *FlowRevocations) GetGeneratedAtMs() int64 {
+	if x != nil {
+		return x.GeneratedAtMs
+	}
+	return 0
+}
+
 type FlowSigningKeys_Key struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kid           string                 `protobuf:"bytes,1,opt,name=kid,proto3" json:"kid,omitempty"`
@@ -139,7 +472,7 @@ type FlowSigningKeys_Key struct {
 
 func (x *FlowSigningKeys_Key) Reset() {
 	*x = FlowSigningKeys_Key{}
-	mi := &file_flowlog_v1_internal_proto_msgTypes[1]
+	mi := &file_flowlog_v1_internal_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -151,7 +484,7 @@ func (x *FlowSigningKeys_Key) String() string {
 func (*FlowSigningKeys_Key) ProtoMessage() {}
 
 func (x *FlowSigningKeys_Key) ProtoReflect() protoreflect.Message {
-	mi := &file_flowlog_v1_internal_proto_msgTypes[1]
+	mi := &file_flowlog_v1_internal_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -188,6 +521,226 @@ func (x *FlowSigningKeys_Key) GetState() FlowSigningKeys_State {
 	return FlowSigningKeys_STATE_UNSPECIFIED
 }
 
+type FlowNetworks_Network struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId       []byte                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	NetworkId         []byte                 `protobuf:"bytes,2,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	Enabled           bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	DestinationEtag   []byte                 `protobuf:"bytes,4,opt,name=destination_etag,json=destinationEtag,proto3" json:"destination_etag,omitempty"`
+	DirectoryRevision uint64                 `protobuf:"varint,5,opt,name=directory_revision,json=directoryRevision,proto3" json:"directory_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *FlowNetworks_Network) Reset() {
+	*x = FlowNetworks_Network{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowNetworks_Network) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowNetworks_Network) ProtoMessage() {}
+
+func (x *FlowNetworks_Network) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowNetworks_Network.ProtoReflect.Descriptor instead.
+func (*FlowNetworks_Network) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{1, 0}
+}
+
+func (x *FlowNetworks_Network) GetWorkspaceId() []byte {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return nil
+}
+
+func (x *FlowNetworks_Network) GetNetworkId() []byte {
+	if x != nil {
+		return x.NetworkId
+	}
+	return nil
+}
+
+func (x *FlowNetworks_Network) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *FlowNetworks_Network) GetDestinationEtag() []byte {
+	if x != nil {
+		return x.DestinationEtag
+	}
+	return nil
+}
+
+func (x *FlowNetworks_Network) GetDirectoryRevision() uint64 {
+	if x != nil {
+		return x.DirectoryRevision
+	}
+	return 0
+}
+
+type FlowDestination_Credential struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	CredentialId  []byte                   `protobuf:"bytes,1,opt,name=credential_id,json=credentialId,proto3" json:"credential_id,omitempty"`
+	Provider      FlowDestination_Provider `protobuf:"varint,2,opt,name=provider,proto3,enum=meshtransit.flowlog.v1.FlowDestination_Provider" json:"provider,omitempty"`
+	AccountId     string                   `protobuf:"bytes,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	Sealed        []byte                   `protobuf:"bytes,4,opt,name=sealed,proto3" json:"sealed,omitempty"`
+	SealedVersion uint64                   `protobuf:"varint,5,opt,name=sealed_version,json=sealedVersion,proto3" json:"sealed_version,omitempty"`
+	SealingKeyId  string                   `protobuf:"bytes,6,opt,name=sealing_key_id,json=sealingKeyId,proto3" json:"sealing_key_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlowDestination_Credential) Reset() {
+	*x = FlowDestination_Credential{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowDestination_Credential) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowDestination_Credential) ProtoMessage() {}
+
+func (x *FlowDestination_Credential) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowDestination_Credential.ProtoReflect.Descriptor instead.
+func (*FlowDestination_Credential) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{2, 0}
+}
+
+func (x *FlowDestination_Credential) GetCredentialId() []byte {
+	if x != nil {
+		return x.CredentialId
+	}
+	return nil
+}
+
+func (x *FlowDestination_Credential) GetProvider() FlowDestination_Provider {
+	if x != nil {
+		return x.Provider
+	}
+	return FlowDestination_PROVIDER_UNSPECIFIED
+}
+
+func (x *FlowDestination_Credential) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *FlowDestination_Credential) GetSealed() []byte {
+	if x != nil {
+		return x.Sealed
+	}
+	return nil
+}
+
+func (x *FlowDestination_Credential) GetSealedVersion() uint64 {
+	if x != nil {
+		return x.SealedVersion
+	}
+	return 0
+}
+
+func (x *FlowDestination_Credential) GetSealingKeyId() string {
+	if x != nil {
+		return x.SealingKeyId
+	}
+	return ""
+}
+
+type FlowRevocations_Revocation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NetworkId     []byte                 `protobuf:"bytes,1,opt,name=network_id,json=networkId,proto3" json:"network_id,omitempty"`
+	DeviceId      []byte                 `protobuf:"bytes,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	MachineKey    []byte                 `protobuf:"bytes,3,opt,name=machine_key,json=machineKey,proto3" json:"machine_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlowRevocations_Revocation) Reset() {
+	*x = FlowRevocations_Revocation{}
+	mi := &file_flowlog_v1_internal_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowRevocations_Revocation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowRevocations_Revocation) ProtoMessage() {}
+
+func (x *FlowRevocations_Revocation) ProtoReflect() protoreflect.Message {
+	mi := &file_flowlog_v1_internal_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowRevocations_Revocation.ProtoReflect.Descriptor instead.
+func (*FlowRevocations_Revocation) Descriptor() ([]byte, []int) {
+	return file_flowlog_v1_internal_proto_rawDescGZIP(), []int{3, 0}
+}
+
+func (x *FlowRevocations_Revocation) GetNetworkId() []byte {
+	if x != nil {
+		return x.NetworkId
+	}
+	return nil
+}
+
+func (x *FlowRevocations_Revocation) GetDeviceId() []byte {
+	if x != nil {
+		return x.DeviceId
+	}
+	return nil
+}
+
+func (x *FlowRevocations_Revocation) GetMachineKey() []byte {
+	if x != nil {
+		return x.MachineKey
+	}
+	return nil
+}
+
 var File_flowlog_v1_internal_proto protoreflect.FileDescriptor
 
 const file_flowlog_v1_internal_proto_rawDesc = "" +
@@ -206,7 +759,64 @@ const file_flowlog_v1_internal_proto_rawDesc = "" +
 	"\aCURRENT\x10\x01\x12\b\n" +
 	"\x04NEXT\x10\x02\x12\f\n" +
 	"\bRETIRING\x10\x03\x12\v\n" +
-	"\aREVOKED\x10\x04B*Z(meshtransit.net/api/flowlog/v1;flowlogv1b\x06proto3"
+	"\aREVOKED\x10\x04\"\xe1\x02\n" +
+	"\fFlowNetworks\x12H\n" +
+	"\bnetworks\x18\x01 \x03(\v2,.meshtransit.flowlog.v1.FlowNetworks.NetworkR\bnetworks\x12\x1d\n" +
+	"\n" +
+	"next_after\x18\x02 \x01(\fR\tnextAfter\x12&\n" +
+	"\x0fgenerated_at_ms\x18\x03 \x01(\x03R\rgeneratedAtMs\x1a\xbf\x01\n" +
+	"\aNetwork\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\fR\vworkspaceId\x12\x1d\n" +
+	"\n" +
+	"network_id\x18\x02 \x01(\fR\tnetworkId\x12\x18\n" +
+	"\aenabled\x18\x03 \x01(\bR\aenabled\x12)\n" +
+	"\x10destination_etag\x18\x04 \x01(\fR\x0fdestinationEtag\x12-\n" +
+	"\x12directory_revision\x18\x05 \x01(\x04R\x11directoryRevision\"\xfb\x06\n" +
+	"\x0fFlowDestination\x12F\n" +
+	"\x06reason\x18\x01 \x01(\x0e2..meshtransit.flowlog.v1.FlowDestination.ReasonR\x06reason\x12\x1c\n" +
+	"\tforwarded\x18\x02 \x01(\bR\tforwarded\x12\x19\n" +
+	"\bwindow_s\x18\x03 \x01(\rR\awindowS\x12\x16\n" +
+	"\x06bucket\x18\x04 \x01(\tR\x06bucket\x12\x16\n" +
+	"\x06region\x18\x05 \x01(\tR\x06region\x12\x16\n" +
+	"\x06prefix\x18\x06 \x01(\tR\x06prefix\x12R\n" +
+	"\n" +
+	"credential\x18\a \x01(\v22.meshtransit.flowlog.v1.FlowDestination.CredentialR\n" +
+	"credential\x12)\n" +
+	"\x10destination_etag\x18\b \x01(\fR\x0fdestinationEtag\x12&\n" +
+	"\x0fgenerated_at_ms\x18\t \x01(\x03R\rgeneratedAtMs\x1a\x83\x02\n" +
+	"\n" +
+	"Credential\x12#\n" +
+	"\rcredential_id\x18\x01 \x01(\fR\fcredentialId\x12L\n" +
+	"\bprovider\x18\x02 \x01(\x0e20.meshtransit.flowlog.v1.FlowDestination.ProviderR\bprovider\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x03 \x01(\tR\taccountId\x12\x16\n" +
+	"\x06sealed\x18\x04 \x01(\fR\x06sealed\x12%\n" +
+	"\x0esealed_version\x18\x05 \x01(\x04R\rsealedVersion\x12$\n" +
+	"\x0esealing_key_id\x18\x06 \x01(\tR\fsealingKeyId\"\xac\x01\n" +
+	"\x06Reason\x12\x16\n" +
+	"\x12REASON_UNSPECIFIED\x10\x00\x12\v\n" +
+	"\aLOGGING\x10\x01\x12\f\n" +
+	"\bDISABLED\x10\x02\x12\x13\n" +
+	"\x0fFEATURE_REVOKED\x10\x03\x12\x15\n" +
+	"\x11NETWORK_SUSPENDED\x10\x04\x12\x17\n" +
+	"\x13WORKSPACE_SUSPENDED\x10\x05\x12\x13\n" +
+	"\x0fNETWORK_DELETED\x10\x06\x12\x15\n" +
+	"\x11WORKSPACE_DELETED\x10\a\"C\n" +
+	"\bProvider\x12\x18\n" +
+	"\x14PROVIDER_UNSPECIFIED\x10\x00\x12\n" +
+	"\n" +
+	"\x06AWS_S3\x10\x01\x12\x11\n" +
+	"\rCLOUDFLARE_R2\x10\x02\"\xfa\x01\n" +
+	"\x0fFlowRevocations\x12T\n" +
+	"\vrevocations\x18\x01 \x03(\v22.meshtransit.flowlog.v1.FlowRevocations.RevocationR\vrevocations\x12&\n" +
+	"\x0fgenerated_at_ms\x18\x02 \x01(\x03R\rgeneratedAtMs\x1ai\n" +
+	"\n" +
+	"Revocation\x12\x1d\n" +
+	"\n" +
+	"network_id\x18\x01 \x01(\fR\tnetworkId\x12\x1b\n" +
+	"\tdevice_id\x18\x02 \x01(\fR\bdeviceId\x12\x1f\n" +
+	"\vmachine_key\x18\x03 \x01(\fR\n" +
+	"machineKeyB*Z(meshtransit.net/api/flowlog/v1;flowlogv1b\x06proto3"
 
 var (
 	file_flowlog_v1_internal_proto_rawDescOnce sync.Once
@@ -220,21 +830,34 @@ func file_flowlog_v1_internal_proto_rawDescGZIP() []byte {
 	return file_flowlog_v1_internal_proto_rawDescData
 }
 
-var file_flowlog_v1_internal_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_flowlog_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_flowlog_v1_internal_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_flowlog_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_flowlog_v1_internal_proto_goTypes = []any{
-	(FlowSigningKeys_State)(0),  // 0: meshtransit.flowlog.v1.FlowSigningKeys.State
-	(*FlowSigningKeys)(nil),     // 1: meshtransit.flowlog.v1.FlowSigningKeys
-	(*FlowSigningKeys_Key)(nil), // 2: meshtransit.flowlog.v1.FlowSigningKeys.Key
+	(FlowSigningKeys_State)(0),         // 0: meshtransit.flowlog.v1.FlowSigningKeys.State
+	(FlowDestination_Reason)(0),        // 1: meshtransit.flowlog.v1.FlowDestination.Reason
+	(FlowDestination_Provider)(0),      // 2: meshtransit.flowlog.v1.FlowDestination.Provider
+	(*FlowSigningKeys)(nil),            // 3: meshtransit.flowlog.v1.FlowSigningKeys
+	(*FlowNetworks)(nil),               // 4: meshtransit.flowlog.v1.FlowNetworks
+	(*FlowDestination)(nil),            // 5: meshtransit.flowlog.v1.FlowDestination
+	(*FlowRevocations)(nil),            // 6: meshtransit.flowlog.v1.FlowRevocations
+	(*FlowSigningKeys_Key)(nil),        // 7: meshtransit.flowlog.v1.FlowSigningKeys.Key
+	(*FlowNetworks_Network)(nil),       // 8: meshtransit.flowlog.v1.FlowNetworks.Network
+	(*FlowDestination_Credential)(nil), // 9: meshtransit.flowlog.v1.FlowDestination.Credential
+	(*FlowRevocations_Revocation)(nil), // 10: meshtransit.flowlog.v1.FlowRevocations.Revocation
 }
 var file_flowlog_v1_internal_proto_depIdxs = []int32{
-	2, // 0: meshtransit.flowlog.v1.FlowSigningKeys.keys:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.Key
-	0, // 1: meshtransit.flowlog.v1.FlowSigningKeys.Key.state:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.State
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	7,  // 0: meshtransit.flowlog.v1.FlowSigningKeys.keys:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.Key
+	8,  // 1: meshtransit.flowlog.v1.FlowNetworks.networks:type_name -> meshtransit.flowlog.v1.FlowNetworks.Network
+	1,  // 2: meshtransit.flowlog.v1.FlowDestination.reason:type_name -> meshtransit.flowlog.v1.FlowDestination.Reason
+	9,  // 3: meshtransit.flowlog.v1.FlowDestination.credential:type_name -> meshtransit.flowlog.v1.FlowDestination.Credential
+	10, // 4: meshtransit.flowlog.v1.FlowRevocations.revocations:type_name -> meshtransit.flowlog.v1.FlowRevocations.Revocation
+	0,  // 5: meshtransit.flowlog.v1.FlowSigningKeys.Key.state:type_name -> meshtransit.flowlog.v1.FlowSigningKeys.State
+	2,  // 6: meshtransit.flowlog.v1.FlowDestination.Credential.provider:type_name -> meshtransit.flowlog.v1.FlowDestination.Provider
+	7,  // [7:7] is the sub-list for method output_type
+	7,  // [7:7] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_flowlog_v1_internal_proto_init() }
@@ -247,8 +870,8 @@ func file_flowlog_v1_internal_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_flowlog_v1_internal_proto_rawDesc), len(file_flowlog_v1_internal_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   2,
+			NumEnums:      3,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

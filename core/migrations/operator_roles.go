@@ -54,6 +54,9 @@ var operatorFunctionOwners = map[string]string{
 	"revoke_resource_share":                               "mesh_share_writer",
 	"set_share_scope":                                     "mesh_share_writer",
 	"withdraw_direct_device_endpoint_on_contract_end":     "mesh_share_writer",
+	"flowlog_networks":                                    "mesh_flowlog_reader",
+	"flowlog_destination":                                 "mesh_flowlog_reader",
+	"flowlog_revocations":                                 "mesh_flowlog_reader",
 }
 
 var operatorFunctionVersion = regexp.MustCompile(`_v[0-9]+$`)

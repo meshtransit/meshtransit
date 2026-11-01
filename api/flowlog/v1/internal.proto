@@ -34,3 +34,85 @@ message FlowSigningKeys {
     REVOKED = 4;
   }
 }
+
+// FlowNetworks answers GET /internal/v1/flowlog/networks?after=&limit=:
+// Networks with a destination whose Workspace has the feature, by Network
+// ID (C47). next_after is set when another page may follow.
+message FlowNetworks {
+  repeated Network networks = 1;
+  bytes next_after = 2;
+  int64 generated_at_ms = 3;
+
+  message Network {
+    bytes workspace_id = 1;
+    bytes network_id = 2;
+    // enabled: the Network takes batches now. A Network listed but not
+    // enabled has a destination to test (C48).
+    bool enabled = 3;
+    // destination_etag changes whenever the destination or its credential
+    // does; the receiver reads the destination again then.
+    bytes destination_etag = 4;
+    // directory_revision: 0 until s4c2, meaning always read again.
+    uint64 directory_revision = 5;
+  }
+}
+
+// FlowDestination answers GET /internal/v1/flowlog/workspaces/{w}/networks/
+// {n}/destination: where the Network's batches go and why it does or does
+// not take them (C44). A deleted Network or Workspace carries no
+// credential.
+message FlowDestination {
+  Reason reason = 1;
+  bool forwarded = 2;
+  uint32 window_s = 3;
+  string bucket = 4;
+  string region = 5;
+  string prefix = 6;
+  Credential credential = 7;
+  bytes destination_etag = 8;
+  int64 generated_at_ms = 9;
+
+  message Credential {
+    bytes credential_id = 1;
+    Provider provider = 2;
+    string account_id = 3; // R2 only
+    // sealed opens with the receiver's credential key named by
+    // sealing_key_id, bound to the Workspace, credential_id,
+    // sealed_version, provider and account_id (flowlog.OpenCredential).
+    bytes sealed = 4;
+    uint64 sealed_version = 5;
+    string sealing_key_id = 6;
+  }
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    LOGGING = 1;
+    DISABLED = 2;
+    FEATURE_REVOKED = 3;
+    NETWORK_SUSPENDED = 4;
+    WORKSPACE_SUSPENDED = 5;
+    NETWORK_DELETED = 6;
+    WORKSPACE_DELETED = 7;
+  }
+
+  enum Provider {
+    PROVIDER_UNSPECIFIED = 0;
+    AWS_S3 = 1;
+    CLOUDFLARE_R2 = 2;
+  }
+}
+
+// FlowRevocations answers GET /internal/v1/flowlog/revocations: machine keys
+// that stopped being valid in the last 18 minutes, by Network and Device
+// (C46). A receiver refuses a token naming one; it fails closed when its
+// last good read is older than 15 seconds.
+message FlowRevocations {
+  repeated Revocation revocations = 1;
+  int64 generated_at_ms = 2;
+
+  message Revocation {
+    bytes network_id = 1;
+    bytes device_id = 2;
+    bytes machine_key = 3;
+  }
+}

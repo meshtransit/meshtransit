@@ -35,6 +35,7 @@ const (
 	postgresOperationMapSessionRevision        postgresOperation = "map_session_revision"
 	postgresOperationMapSessionKubernetesTrust postgresOperation = "map_session_kubernetes_trust"
 	postgresOperationMapSessionFlowLog         postgresOperation = "map_session_flow_log"
+	postgresOperationFlowlogReceiver           postgresOperation = "flowlog_receiver_read"
 	postgresOperationPolicyPublicationBegin    postgresOperation = "policy_publication_begin"
 	postgresOperationPolicyPublicationResolve  postgresOperation = "policy_publication_resolve"
 	postgresOperationPolicyPublicationApply    postgresOperation = "policy_publication_apply"
@@ -217,6 +218,7 @@ var (
 		postgresOperationConsoleDeviceInventory,
 		postgresOperationDeviceDistribution,
 		postgresOperationRelayRevocations,
+		postgresOperationFlowlogReceiver,
 		postgresOperationAccessGraphHistory,
 		postgresOperationEnforcementHistory,
 		postgresOperationMTCPTimestamp,
@@ -552,7 +554,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationAccountSessionScopes ||
 			operation == postgresOperationConsoleDeviceInventory ||
 			operation == postgresOperationDeviceDistribution ||
-			operation == postgresOperationRelayRevocations ||
+			operation == postgresOperationRelayRevocations || operation == postgresOperationFlowlogReceiver ||
 			operation == postgresOperationAccessGraphHistory ||
 			operation == postgresOperationEnforcementHistory ||
 			operation == postgresOperationMTCPTimestamp ||

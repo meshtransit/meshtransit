@@ -235,6 +235,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasProviderReadmissionOwnershipSQL()); err != nil {
 		t.Fatalf("harden provider readmitting alias worker: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.FlowlogReaderOwnershipSQL()); err != nil {
+		t.Fatalf("hand the connection log receiver reads to their reader: %v", err)
+	}
 	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
 		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
 	}

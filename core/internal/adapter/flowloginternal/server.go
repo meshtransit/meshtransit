@@ -53,9 +53,11 @@ type Options struct {
 	// ClientURI is the receiver's identity, a URI SAN of its certificate.
 	ClientURI *url.URL
 	TokenKeys []TokenKey
-	Metrics   *Metrics
-	Logger    *slog.Logger
-	Now       func() time.Time
+	// Reader reads Core's database for the API.
+	Reader  Reader
+	Metrics *Metrics
+	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 // Server is an app.Service serving the internal API on its own listener.
@@ -83,7 +85,7 @@ func NewServer(options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	handler, err := newHandler(options.TokenKeys, options.Metrics, options.Now)
+	handler, err := newHandler(options.TokenKeys, options.Reader, options.Metrics, options.Now)
 	if err != nil {
 		return nil, err
 	}
