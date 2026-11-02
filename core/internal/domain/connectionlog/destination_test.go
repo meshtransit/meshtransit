@@ -177,3 +177,17 @@ func TestPushSettingsChecks(t *testing.T) {
 		}
 	}
 }
+
+// The Console says when no receiver writes to the destination's type yet;
+// rows read before schema 273 say nothing against it.
+func TestStatusViewWritesType(t *testing.T) {
+	t.Parallel()
+	no := false
+	if !(StatusRows{}).View(Settings{}, time.Now()).ReceiverWritesType {
+		t.Fatal("unknown read as not written")
+	}
+	if view := (StatusRows{WritesType: &no, Rejected24h: 5}).View(Settings{}, time.Now()); view.ReceiverWritesType ||
+		view.Rejected24h != 5 {
+		t.Fatalf("view = %+v", view)
+	}
+}

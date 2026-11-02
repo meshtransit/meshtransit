@@ -72,7 +72,16 @@ type ReceiverDestination struct {
 	Sealed        []byte
 	SealedVersion int64
 	SealingKeyID  string
-	GeneratedAt   time.Time
+	// Push is a push credential's endpoint, its CA PEM included: the
+	// receiver binds it to open Sealed (schema 273).
+	Push Destination
+	// The settings' fields of the credential's type.
+	Target       string
+	TargetKind   string
+	Service      string
+	Tags         []string
+	RecordFormat string
+	GeneratedAt  time.Time
 }
 
 // ReceiverRevocation is a machine key of a Device that no longer holds.
@@ -193,23 +202,26 @@ const (
 // names them; a value the receiver names that Core does not know is
 // unspecified.
 const (
-	ReceiverUnspecified            = "unspecified"
-	TestOK                         = "ok"
-	TestAccessDenied               = "access_denied"
-	TestNoSuchBucket               = "no_such_bucket"
-	TestWrongOwner                 = "wrong_owner"
-	TestWrongRegion                = "wrong_region"
-	TestUnreachable                = "unreachable"
-	TestCredentialUnopenable       = "credential_unopenable" //nolint:gosec // a result name, no credential
-	TestOther                      = "other"
-	DeliveryNone                   = "none"
-	DeliveryAccessDenied           = "access_denied"
-	DeliveryNoSuchBucket           = "no_such_bucket"
-	DeliveryWrongOwner             = "wrong_owner"
-	DeliveryWrongRegion            = "wrong_region"
-	DeliveryUnreachable            = "unreachable"
-	DeliveryThrottled              = "throttled"
-	DeliveryOther                  = "other"
+	ReceiverUnspecified      = "unspecified"
+	TestOK                   = "ok"
+	TestAccessDenied         = "access_denied"
+	TestNoSuchBucket         = "no_such_bucket"
+	TestWrongOwner           = "wrong_owner"
+	TestWrongRegion          = "wrong_region"
+	TestUnreachable          = "unreachable"
+	TestCredentialUnopenable = "credential_unopenable" //nolint:gosec // a result name, no credential
+	TestOther                = "other"
+	DeliveryNone             = "none"
+	DeliveryAccessDenied     = "access_denied"
+	DeliveryNoSuchBucket     = "no_such_bucket"
+	DeliveryWrongOwner       = "wrong_owner"
+	DeliveryWrongRegion      = "wrong_region"
+	DeliveryUnreachable      = "unreachable"
+	DeliveryThrottled        = "throttled"
+	DeliveryOther            = "other"
+	// DeliveryEventRejected: a push destination refused a lost, invalid
+	// or overflow event (schema 273).
+	DeliveryEventRejected          = "event_rejected"
 	ReceiverReportOK               = "ok"
 	ReceiverReportStaleClock       = "stale_clock"
 	ReceiverReportTooManyInstances = "too_many_instances"
@@ -227,6 +239,8 @@ type ReceiverNetworkStatus struct {
 	DeliveryError   string
 	Lost            uint64
 	Overflow        uint64
+	// Rejected counts records a push destination refused for good.
+	Rejected uint64
 }
 
 // ReceiverReport is one receiver instance's report: what it can take and
@@ -236,8 +250,10 @@ type ReceiverReport struct {
 	AcceptedVersions  []int
 	NoiseFingerprints [][32]byte
 	SealingKeyIDs     []string
-	ReportedAt        time.Time
-	Networks          []ReceiverNetworkStatus
+	// DestinationTypes are the providers it writes to; none: S3 and R2.
+	DestinationTypes []string
+	ReportedAt       time.Time
+	Networks         []ReceiverNetworkStatus
 }
 
 // ReceiverReportResult is what a report changed: its outcome and, when ok,
@@ -259,4 +275,17 @@ type ReceiverGate struct {
 	Accepting int
 	Newest    time.Time
 	CheckedAt time.Time
+	// DestinationTypes are the providers every accepting receiver writes
+	// to (schema 273): a Network of another type gets no ticket.
+	DestinationTypes []string
+}
+
+// Writes reports whether every accepting receiver writes to provider.
+func (gate ReceiverGate) Writes(provider string) bool {
+	for _, kind := range gate.DestinationTypes {
+		if kind == provider {
+			return true
+		}
+	}
+	return false
 }

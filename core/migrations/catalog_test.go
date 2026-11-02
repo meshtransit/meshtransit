@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 272 {
-		t.Fatalf("len(Catalog()) = %d, want 272", len(catalog))
+	if len(catalog) != 273 {
+		t.Fatalf("len(Catalog()) = %d, want 273", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 272 {
-		t.Fatalf("LatestVersion() = %d, want 272", LatestVersion())
+	if LatestVersion() != 273 {
+		t.Fatalf("LatestVersion() = %d, want 273", LatestVersion())
 	}
 }
 
@@ -8142,5 +8142,53 @@ func TestMigration272ConnectionLogPushDestinations(t *testing.T) {
 	}
 	if strings.Count(sql, "GRANT EXECUTE ON FUNCTION") != 4 || strings.Count(sql, "TO mesh_runtime;") != 4 {
 		t.Error("migration 272 grants the runtime other than its four v2 functions")
+	}
+}
+
+// Migration 273 gates tickets by the destination types receivers write
+// to, serves the receiver its push destination and keeps the v1 functions
+// for schema 272 pods; step 273 hands the new functions to their owners.
+func TestMigration273ConnectionLogPushReceiver(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 273 || catalog[272].Version != 273 {
+		t.Fatalf("the catalog has no migration 273 (%d migrations)", len(catalog))
+	}
+	sql := catalog[272].SQL
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.flowlog_report_status_v2(",
+		"CREATE FUNCTION mesh_ops.flowlog_receiver_gate_v2(",
+		"CREATE FUNCTION mesh_ops.flowlog_destination_v2(",
+		"CREATE FUNCTION mesh_ops.read_connection_log_ticket_v2(",
+		"CREATE FUNCTION mesh_ops.network_connection_log_status_internal_v2(",
+		"DEFAULT ARRAY['aws_s3', 'cloudflare_r2']::TEXT[]",
+		"'event_rejected'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 273 lacks %q", want)
+		}
+	}
+	for _, banned := range []string{
+		"DROP FUNCTION", "OR REPLACE FUNCTION", "_v1(p_workspace_id, p_network_id",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 273 has %q", banned)
+		}
+	}
+	// The status writer has no USAGE on mesh_ops: its function calls none.
+	status := sql[strings.Index(sql, "CREATE FUNCTION mesh_ops.network_connection_log_status_internal_v2("):]
+	status = status[:strings.Index(status, "$function$;")]
+	if strings.Contains(status[strings.Index(status, "AS $function$"):], "mesh_ops.") {
+		t.Error("the status writer's function calls into mesh_ops")
+	}
+	ownership := ConnectionLogPushOwnershipSQL()
+	for _, want := range []string{
+		"flowlog_destination_v2(UUID,UUID) OWNER TO mesh_flowlog_reader",
+		"flowlog_receiver_gate_v2(INTEGER,BYTEA) OWNER TO mesh_flowlog_reader",
+		"OWNER TO mesh_flowlog_status_writer",
+	} {
+		if !strings.Contains(ownership, want) {
+			t.Errorf("operator step 273 lacks %q", want)
+		}
 	}
 }

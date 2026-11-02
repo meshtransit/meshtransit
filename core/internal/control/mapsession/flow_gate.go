@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"hash/fnv"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,31 @@ type FlowGateState struct {
 	Open     bool
 	OpenedAt time.Time
 	Until    time.Time
+	// DestinationTypes are the providers every accepting receiver writes
+	// to, as the gate last read them; TypeOpenedAt when each joined them
+	// while the gate was open.
+	DestinationTypes []string
+	TypeOpenedAt     map[string]time.Time
+}
+
+// OpenedAtFor is when the gate opened for a Network of provider: when it
+// opened, or later, when every receiver came to write to provider. The
+// spread after it holds a type's tickets too, so a type that joins all at
+// once in a rollout does not sign every Device of it in one pass
+// (review p1c M2).
+func (state FlowGateState) OpenedAtFor(provider string) time.Time {
+	if at, ok := state.TypeOpenedAt[provider]; ok && at.After(state.OpenedAt) {
+		return at
+	}
+	return state.OpenedAt
+}
+
+// Writes reports whether the gate is open for a Network of provider: a
+// receiver that does not write to it would only hold its batches back
+// (push destinations design H-4). No provider is a Network with no
+// credential, which gets no ticket anyway.
+func (state FlowGateState) Writes(provider string) bool {
+	return state.Open && (provider == "" || slices.Contains(state.DestinationTypes, provider))
 }
 
 // FlowGateCache is the replica's FlowReceiverGate: one read every
@@ -94,6 +120,20 @@ func (cache *FlowGateCache) FlowGate(ctx context.Context) FlowGateState {
 		cache.state.OpenedAt = now
 	}
 	cache.state.Open, cache.state.Until = open, now.Add(FlowGateAge)
+	opened := make(map[string]time.Time, len(gate.DestinationTypes))
+	if open {
+		for _, kind := range gate.DestinationTypes {
+			at, held := cache.state.TypeOpenedAt[kind]
+			if !held {
+				at = now
+			}
+			opened[kind] = at
+		}
+	}
+	cache.state.DestinationTypes, cache.state.TypeOpenedAt = nil, opened
+	if open {
+		cache.state.DestinationTypes = slices.Clone(gate.DestinationTypes)
+	}
 	cache.read, cache.reading, cache.readAt, cache.last, cache.lastErr = true, false, now, gate, err
 	return cache.state
 }
@@ -161,7 +201,7 @@ func (service *StreamService) gateFlowTicket(ctx context.Context, sink FlowTicke
 		return false, nil
 	}
 	answer := gate.FlowGate(ctx)
-	if !answer.Open {
+	if !answer.Writes(state.settings.Provider) {
 		state.gateUntil = answer.Until
 		if state.gateUntil.IsZero() || !state.gateUntil.After(now) {
 			state.gateUntil = now.Add(flowLogFailureAge)
@@ -182,7 +222,7 @@ func (service *StreamService) gateFlowTicket(ctx context.Context, sink FlowTicke
 		return true, nil
 	}
 	state.withheld = false
-	if hold := answer.OpenedAt.Add(flowGateDelay(grant.Device)); now.Before(hold) {
+	if hold := answer.OpenedAtFor(state.settings.Provider).Add(flowGateDelay(grant.Device)); now.Before(hold) {
 		state.holdUntil = hold
 		return true, nil
 	}

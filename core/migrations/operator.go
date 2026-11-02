@@ -283,3 +283,11 @@ var connectionLogConsoleStatusOwnershipSQL string
 // Network settings read (schema 271) to the status writer, callable only
 // from that read.
 func ConnectionLogConsoleStatusOwnershipSQL() string { return connectionLogConsoleStatusOwnershipSQL }
+
+//go:embed operator/000273_connection_log_push_ownership.sql
+var connectionLogPushOwnershipSQL string
+
+// ConnectionLogPushOwnershipSQL moves the push destination reads and the
+// status report of schema 273 to the receiver reader and status writer,
+// as step 270 and 271 did for their first versions.
+func ConnectionLogPushOwnershipSQL() string { return connectionLogPushOwnershipSQL }

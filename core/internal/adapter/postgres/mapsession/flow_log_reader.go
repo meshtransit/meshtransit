@@ -14,7 +14,7 @@ import (
 
 // loadFlowLogSQL reads the installed scope's connection log setting
 // (schema 267); no row is no logging.
-const loadFlowLogSQL = `SELECT enabled, forwarded, window_s FROM mesh_ops.read_connection_log_ticket_v1()`
+const loadFlowLogSQL = `SELECT enabled, forwarded, window_s, provider FROM mesh_ops.read_connection_log_ticket_v2()`
 
 var _ appmapsession.FlowLogReader = (*Store)(nil)
 
@@ -58,7 +58,8 @@ func (store *Store) ReadFlowLog(ctx context.Context, scope network.Scope) (_ app
 	}
 	var settings appmapsession.FlowLogSettings
 	var window int32
-	err = transaction.QueryRow(ctx, loadFlowLogSQL).Scan(&settings.Enabled, &settings.Forwarded, &window)
+	var provider *string
+	err = transaction.QueryRow(ctx, loadFlowLogSQL).Scan(&settings.Enabled, &settings.Forwarded, &window, &provider)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		settings = appmapsession.FlowLogSettings{}
@@ -68,6 +69,9 @@ func (store *Store) ReadFlowLog(ctx context.Context, scope network.Scope) (_ app
 		return appmapsession.FlowLogSettings{}, ErrSnapshotEvidence
 	default:
 		settings.WindowSeconds = int(window)
+		if provider != nil {
+			settings.Provider = *provider
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return appmapsession.FlowLogSettings{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit flow log read: %w", err))

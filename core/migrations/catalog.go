@@ -673,6 +673,7 @@ func Catalog() []Migration {
 			flowlogReceiverStatusSQL),
 		newMigration(271, "Connection log status in the Network settings read", connectionLogConsoleStatusSQL),
 		newMigration(272, "Connection log push destinations", connectionLogPushDestinationsSQL),
+		newMigration(273, "Connection log push destinations at the receiver", connectionLogPushReceiverSQL),
 	}
 }
 
@@ -1268,3 +1269,6 @@ var connectionLogConsoleStatusSQL string
 
 //go:embed 000272_connection_log_push_destinations.up.sql
 var connectionLogPushDestinationsSQL string
+
+//go:embed 000273_connection_log_push_receiver.up.sql
+var connectionLogPushReceiverSQL string

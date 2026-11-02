@@ -9,15 +9,16 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/connectionlog"
+	"meshtransit.net/shared/flowlog"
 )
 
 // Schema 270: the receiver's reports and the ticket gate (connection logs
 // design §16e, C67–C71).
 const (
-	reportFlowlogStatusSQL = `SELECT mesh_ops.flowlog_report_status_v1($1::BYTEA, $2::INTEGER[], $3::BYTEA[],
-    $4::TEXT[], $5::TIMESTAMPTZ, $6::JSONB)::TEXT`
-	readFlowlogGateSQL = `SELECT gate.fresh, gate.accepting, gate.newest, gate.checked_at
-FROM mesh_ops.flowlog_receiver_gate_v1($1::INTEGER, $2::BYTEA) AS gate`
+	reportFlowlogStatusSQL = `SELECT mesh_ops.flowlog_report_status_v2($1::BYTEA, $2::INTEGER[], $3::BYTEA[],
+    $4::TEXT[], $5::TEXT[], $6::TIMESTAMPTZ, $7::JSONB)::TEXT`
+	readFlowlogGateSQL = `SELECT gate.fresh, gate.accepting, gate.newest, gate.checked_at, gate.destination_types
+FROM mesh_ops.flowlog_receiver_gate_v2($1::INTEGER, $2::BYTEA) AS gate`
 	// flowlogStatusTimeout bounds a report's statement (C68): it never holds
 	// a receiver connection long.
 	flowlogStatusTimeout = "2s"
@@ -42,6 +43,7 @@ type flowlogStatusEntry struct {
 	DeliveryError string     `json:"delivery_error"`
 	Lost          int64      `json:"lost"`
 	Overflow      int64      `json:"overflow"`
+	Rejected      int64      `json:"rejected"`
 }
 
 // ReportStatus writes one receiver report the API validated, its Networks
@@ -68,6 +70,13 @@ func (store *FlowlogReceiverStore) ReportStatus(ctx context.Context, report conn
 		fingerprints = append(fingerprints, append([]byte(nil), fingerprint[:]...))
 	}
 	sealing := append(make([]string, 0, len(report.SealingKeyIDs)), report.SealingKeyIDs...)
+	types := append(make([]string, 0, len(report.DestinationTypes)), report.DestinationTypes...)
+	if report.DestinationTypes == nil {
+		// Unset is a receiver older than push destinations: S3 and R2
+		// (design N-8). An empty list, only types Core does not know, stays
+		// empty and writes no type Core gates (review p1c M1).
+		types = []string{flowlog.ProviderS3, flowlog.ProviderR2}
+	}
 	startedAt := time.Now()
 	defer func() {
 		if store.metrics != nil {
@@ -84,7 +93,7 @@ func (store *FlowlogReceiverStore) ReportStatus(ctx context.Context, report conn
 	}
 	var document string
 	if err := transaction.QueryRow(ctx, reportFlowlogStatusSQL, report.Instance[:], versions, fingerprints, sealing,
-		report.ReportedAt, string(entries)).Scan(&document); err != nil {
+		types, report.ReportedAt, string(entries)).Scan(&document); err != nil {
 		return connectionlog.ReceiverReportResult{}, errors.Join(ErrFlowlogReceiver, err)
 	}
 	var answer struct {
@@ -123,6 +132,7 @@ func flowlogStatusEntries(networks []connectionlog.ReceiverNetworkStatus) ([]byt
 		entry := flowlogStatusEntry{
 			Workspace: status.Workspace.String(), Network: status.Network.String(), TestResult: status.TestResult,
 			DeliveryError: status.DeliveryError, Lost: clampCount(status.Lost), Overflow: clampCount(status.Overflow),
+			Rejected: clampCount(status.Rejected),
 		}
 		switch len(status.TestedETag) {
 		case 0:
@@ -188,7 +198,7 @@ func (store *FlowlogGateStore) ReadReceiverGate(ctx context.Context, version int
 	var gate connectionlog.ReceiverGate
 	var newest *time.Time
 	if err := transaction.QueryRow(ctx, readFlowlogGateSQL, int32(version), fingerprint[:]).Scan(&gate.Fresh,
-		&gate.Accepting, &newest, &gate.CheckedAt); err != nil {
+		&gate.Accepting, &newest, &gate.CheckedAt, &gate.DestinationTypes); err != nil {
 		return connectionlog.ReceiverGate{}, errors.Join(ErrFlowlogReceiver, err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

@@ -76,6 +76,16 @@ message FlowDestination {
   // bucket, sent as x-amz-expected-bucket-owner; empty: the account the
   // credential belongs to (C52).
   string expected_bucket_owner = 10;
+  // A push destination's fields (push destinations design §6), by the
+  // credential's provider: Elasticsearch/OpenSearch target and
+  // target_kind ("data_stream" or "index"); Datadog service and tags;
+  // Kinesis record_format ("ndjson_batch" or "json_line"). Empty for S3
+  // and R2.
+  string target = 11;
+  string target_kind = 12;
+  string service = 13;
+  repeated string tags = 14;
+  string record_format = 15;
 
   message Credential {
     bytes credential_id = 1;
@@ -87,6 +97,20 @@ message FlowDestination {
     bytes sealed = 4;
     uint64 sealed_version = 5;
     string sealing_key_id = 6;
+    // push is a push destination's endpoint, set for ELASTICSEARCH,
+    // DATADOG and KINESIS: sealed then opens with flowlog.OpenSecret bound
+    // to these fields (flowlog.DestinationBinding), never with
+    // OpenCredential.
+    Push push = 7;
+  }
+
+  message Push {
+    string url = 1; // canonical (flowlog.CanonicalURL)
+    string flavor = 2; // "elasticsearch" or "opensearch"
+    bytes ca_pem = 3; // a custom CA, or empty
+    string site = 4; // Datadog
+    string region = 5; // Kinesis: the stream's
+    string stream_arn = 6; // Kinesis
   }
 
   enum Reason {
@@ -104,6 +128,9 @@ message FlowDestination {
     PROVIDER_UNSPECIFIED = 0;
     AWS_S3 = 1;
     CLOUDFLARE_R2 = 2;
+    ELASTICSEARCH = 3;
+    DATADOG = 4;
+    KINESIS = 5;
   }
 }
 
@@ -232,6 +259,11 @@ message FlowStatus {
   repeated string sealing_key_ids = 4;
   int64 reported_at_ms = 5; // the receiver's clock
   repeated Network networks = 6;
+  // supported_destination_types are the providers the receiver writes to;
+  // none reported is AWS_S3 and CLOUDFLARE_R2 (a receiver older than push
+  // destinations). Core signs tickets for a Network only while every fresh
+  // receiver writes to its provider.
+  repeated FlowDestination.Provider supported_destination_types = 7;
 
   message Network {
     bytes workspace_id = 1;
@@ -244,6 +276,9 @@ message FlowStatus {
     DeliveryError delivery_error = 7;
     uint64 lost_24h = 8;
     uint64 overflow_24h = 9;
+    // rejected_24h counts records a push destination refused for good
+    // (flowlog-v1 §5.1).
+    uint64 rejected_24h = 10;
   }
 
   enum TestResult {
@@ -268,5 +303,8 @@ message FlowStatus {
     DELIVERY_UNREACHABLE = 6;
     DELIVERY_THROTTLED = 7;
     DELIVERY_OTHER = 8;
+    // A push destination refused a lost, invalid or overflow event: the
+    // Network holds until the customer fixes it (push destinations D3).
+    DELIVERY_EVENT_REJECTED = 9;
   }
 }

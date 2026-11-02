@@ -176,12 +176,14 @@ func TestConnectionLogStatusBody(t *testing.T) {
 	encoded, err := json.Marshal(newConnectionLogStatusBody(connectionlog.StatusView{
 		ReceiverAvailable: true, Report: connectionlog.ReportCurrent, ReportedAt: &at,
 		Test: connectionlog.TestPending, DeliveredAt: &at, DeliveryError: "throttled",
+		ReceiverWritesType: true, Rejected24h: 3,
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := `{"receiver_available":true,"report":"current","reported_at":"2026-11-01T12:00:00Z","test":"pending",` +
-		`"tested_at":null,"delivered_at":"2026-11-01T12:00:00Z","delivery_error":"throttled"}`
+		`"tested_at":null,"delivered_at":"2026-11-01T12:00:00Z","delivery_error":"throttled",` +
+		`"receiver_writes_type":true,"rejected_24h":3}`
 	if string(encoded) != want {
 		t.Fatalf("status body %s", encoded)
 	}

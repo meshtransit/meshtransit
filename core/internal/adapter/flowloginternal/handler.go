@@ -311,6 +311,9 @@ var destinationReasons = map[string]flowlogv1.FlowDestination_Reason{
 
 var destinationProviders = map[string]flowlogv1.FlowDestination_Provider{
 	flowlog.ProviderS3: flowlogv1.FlowDestination_AWS_S3, flowlog.ProviderR2: flowlogv1.FlowDestination_CLOUDFLARE_R2,
+	flowlog.ProviderElasticsearch: flowlogv1.FlowDestination_ELASTICSEARCH,
+	flowlog.ProviderDatadog:       flowlogv1.FlowDestination_DATADOG,
+	flowlog.ProviderKinesis:       flowlogv1.FlowDestination_KINESIS,
 }
 
 func (handler *handler) serveDestination(response http.ResponseWriter, request *http.Request) {
@@ -338,6 +341,8 @@ func (handler *handler) serveDestination(response http.ResponseWriter, request *
 		WindowS: uint32(destination.WindowSeconds), //nolint:gosec // 60 to 300 by the schema
 		Bucket:  destination.Bucket, Region: destination.Region, Prefix: destination.Prefix,
 		ExpectedBucketOwner: destination.ExpectedBucketOwner,
+		Target:              destination.Target, TargetKind: destination.TargetKind, Service: destination.Service,
+		Tags: destination.Tags, RecordFormat: destination.RecordFormat,
 	}
 	if destination.Sealed != nil {
 		provider, known := destinationProviders[destination.Provider]
@@ -350,6 +355,12 @@ func (handler *handler) serveDestination(response http.ResponseWriter, request *
 			CredentialId: id[:], Provider: provider, AccountId: destination.AccountID, Sealed: destination.Sealed,
 			SealedVersion: uint64(destination.SealedVersion), //nolint:gosec // a version is positive
 			SealingKeyId:  destination.SealingKeyID,
+		}
+		if push := destination.Push; !push.Empty() {
+			message.Credential.Push = &flowlogv1.FlowDestination_Push{
+				Url: push.URL, Flavor: push.Flavor, CaPem: push.CAPEM, Site: push.Site, Region: push.Region,
+				StreamArn: push.StreamARN,
+			}
 		}
 		message.DestinationEtag = connectionlog.DestinationTag(destination.SettingsVersion, destination.Credential,
 			destination.SealedVersion, destination.SealingKeyID, destination.ExpectedBucketOwner)

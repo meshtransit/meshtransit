@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/shared/flowlog"
 )
 
 // Schemas 268 and 269: what the connection log receiver reads (connection
@@ -33,8 +34,10 @@ FROM mesh_ops.flowlog_networks_v1($1::UUID, $2::INTEGER) AS listed`
         'settings_version', found.settings_version, 'credential', found.credential_public_id,
         'provider', found.provider, 'account_id', found.account_id,
         'sealed', pg_catalog.encode(found.sealed, 'hex'), 'sealed_version', found.sealed_version,
-        'sealing_key_id', found.sealing_key_id)
-     FROM mesh_ops.flowlog_destination_v1($1::UUID, $2::UUID) AS found)::TEXT`
+        'sealing_key_id', found.sealing_key_id, 'config', found.config, 'target', found.target,
+        'target_kind', found.target_kind, 'service', found.service, 'tags', found.tags,
+        'record_format', found.record_format)
+     FROM mesh_ops.flowlog_destination_v2($1::UUID, $2::UUID) AS found)::TEXT`
 	readFlowlogRevocationsSQL = `SELECT pg_catalog.transaction_timestamp(), COALESCE(pg_catalog.jsonb_agg(
     pg_catalog.jsonb_build_object('network', revoked.network_public_id, 'device', revoked.device_public_id,
         'machine_key', pg_catalog.encode(revoked.machine_key, 'hex'))
@@ -199,20 +202,26 @@ func (store *FlowlogReceiverStore) Destination(ctx context.Context, scope networ
 		return connectionlog.ReceiverDestination{}, ErrFlowlogNotFound
 	}
 	var row struct {
-		Reason          string  `json:"reason"`
-		Forwarded       bool    `json:"forwarded"`
-		WindowSeconds   int     `json:"window_s"`
-		Bucket          string  `json:"bucket"`
-		Region          string  `json:"region"`
-		Prefix          string  `json:"prefix"`
-		BucketOwner     *string `json:"expected_bucket_owner"`
-		SettingsVersion int64   `json:"settings_version"`
-		Credential      *string `json:"credential"`
-		Provider        *string `json:"provider"`
-		AccountID       *string `json:"account_id"`
-		Sealed          *string `json:"sealed"`
-		SealedVersion   *int64  `json:"sealed_version"`
-		SealingKeyID    *string `json:"sealing_key_id"`
+		Reason          string             `json:"reason"`
+		Forwarded       bool               `json:"forwarded"`
+		WindowSeconds   int                `json:"window_s"`
+		Bucket          string             `json:"bucket"`
+		Region          string             `json:"region"`
+		Prefix          string             `json:"prefix"`
+		BucketOwner     *string            `json:"expected_bucket_owner"`
+		SettingsVersion int64              `json:"settings_version"`
+		Credential      *string            `json:"credential"`
+		Provider        *string            `json:"provider"`
+		AccountID       *string            `json:"account_id"`
+		Sealed          *string            `json:"sealed"`
+		SealedVersion   *int64             `json:"sealed_version"`
+		SealingKeyID    *string            `json:"sealing_key_id"`
+		Config          *destinationConfig `json:"config"`
+		Target          *string            `json:"target"`
+		TargetKind      *string            `json:"target_kind"`
+		Service         *string            `json:"service"`
+		Tags            []string           `json:"tags"`
+		RecordFormat    *string            `json:"record_format"`
 	}
 	if decodeStrictJSON(*document, maxFlowlogDocument, &row) != nil {
 		return connectionlog.ReceiverDestination{}, ErrFlowlogReceiver
@@ -248,7 +257,47 @@ func (store *FlowlogReceiverStore) Destination(ctx context.Context, scope networ
 	if row.AccountID != nil {
 		destination.AccountID = *row.AccountID
 	}
+	if err := receiverPush(&destination, row.Config); err != nil {
+		return connectionlog.ReceiverDestination{}, err
+	}
+	for _, field := range []struct {
+		from *string
+		to   *string
+	}{
+		{row.Target, &destination.Target}, {row.TargetKind, &destination.TargetKind},
+		{row.Service, &destination.Service}, {row.RecordFormat, &destination.RecordFormat},
+	} {
+		if field.from != nil {
+			*field.to = *field.from
+		}
+	}
+	destination.Tags = row.Tags
 	return destination, nil
+}
+
+// receiverPush takes a push credential's config, CA PEM included, and
+// holds it to what the receiver binds; S3 and R2 have an empty config.
+func receiverPush(destination *connectionlog.ReceiverDestination, config *destinationConfig) error {
+	if config == nil {
+		return ErrFlowlogReceiver
+	}
+	if !connectionlog.Push(destination.Provider) {
+		if *config != (destinationConfig{}) {
+			return ErrFlowlogReceiver
+		}
+		return nil
+	}
+	push := connectionlog.Destination{
+		URL: config.URL, Flavor: config.Flavor, Site: config.Site, Region: config.Region, StreamARN: config.StreamARN,
+	}
+	if config.CAPEM != "" {
+		push.CAPEM = []byte(config.CAPEM)
+	}
+	if push.Check(destination.Provider) != nil || flowlog.CAHash(push.CAPEM) != config.CASHA256 {
+		return ErrFlowlogReceiver
+	}
+	destination.Push = push
+	return nil
 }
 
 // Revocations lists the machine keys revoked within the window.

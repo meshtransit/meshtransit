@@ -28,7 +28,7 @@ const (
  $21::UUID)::TEXT`
 	deleteStorageCredentialSQL = `SELECT mesh_ops.delete_storage_credential_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::BIGINT,$13::UUID)::TEXT`
-	readNetworkConnectionLogSQL = `SELECT mesh_ops.read_network_connection_log_v2(` + sessionArguments + `,
+	readNetworkConnectionLogSQL = `SELECT mesh_ops.read_network_connection_log_v3(` + sessionArguments + `,
  $10::UUID,$11::UUID)::TEXT`
 	replaceNetworkConnectionLogSQL = `SELECT mesh_ops.replace_network_connection_log_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::BIGINT,$13::BOOLEAN,$14::UUID,$15::TEXT,$16::TEXT,$17::TEXT,$18::BOOLEAN,$19::INTEGER,
@@ -620,10 +620,16 @@ type connectionLogStatusDocument struct {
 	ReceiverAt    *time.Time `json:"receiver_at"`
 	SealedVersion *int64     `json:"sealed_version"`
 	SealingKeyID  *string    `json:"sealing_key_id"`
+	// Schema 273.
+	Rejected24h *int64 `json:"rejected_24h"`
+	WritesType  *bool  `json:"receiver_writes_type"`
 }
 
 func (document connectionLogStatusDocument) rows() (connectionlog.StatusRows, error) {
-	rows := connectionlog.StatusRows{ReceiverAt: document.ReceiverAt}
+	rows := connectionlog.StatusRows{ReceiverAt: document.ReceiverAt, WritesType: document.WritesType}
+	if document.Rejected24h != nil {
+		rows.Rejected24h = *document.Rejected24h
+	}
 	if document.SealedVersion != nil {
 		rows.SealedVersion = *document.SealedVersion
 	}

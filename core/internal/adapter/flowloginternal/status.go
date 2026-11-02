@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/shared/flowlog"
 )
 
 // The receiver's report (connection logs design §16e, C67, C68): the only
@@ -169,6 +170,7 @@ var (
 		flowlogv1.FlowStatus_DELIVERY_UNREACHABLE:    connectionlog.DeliveryUnreachable,
 		flowlogv1.FlowStatus_DELIVERY_THROTTLED:      connectionlog.DeliveryThrottled,
 		flowlogv1.FlowStatus_DELIVERY_OTHER:          connectionlog.DeliveryOther,
+		flowlogv1.FlowStatus_DELIVERY_EVENT_REJECTED: connectionlog.DeliveryEventRejected,
 	}
 )
 
@@ -211,6 +213,7 @@ func receiverReport(message *flowlogv1.FlowStatus, now time.Time) (connectionlog
 		}
 		report.SealingKeyIDs = append(report.SealingKeyIDs, id)
 	}
+	report.DestinationTypes = destinationTypes(message.GetSupportedDestinationTypes())
 	for _, entry := range message.GetNetworks() {
 		status, ok := receiverNetworkStatus(entry, report.ReportedAt)
 		if !ok {
@@ -243,7 +246,7 @@ func receiverNetworkStatus(entry *flowlogv1.FlowStatus_Network, reportedAt time.
 	status := connectionlog.ReceiverNetworkStatus{
 		Workspace: workspace.ID(workspaceID), Network: network.ID(networkID),
 		TestResult: connectionlog.ReceiverUnspecified, DeliveryError: connectionlog.ReceiverUnspecified,
-		Lost: entry.GetLost_24H(), Overflow: entry.GetOverflow_24H(),
+		Lost: entry.GetLost_24H(), Overflow: entry.GetOverflow_24H(), Rejected: entry.GetRejected_24H(),
 	}
 	if len(tag) != 0 {
 		status.TestedETag = append([]byte(nil), tag...)
@@ -257,6 +260,34 @@ func receiverNetworkStatus(entry *flowlogv1.FlowStatus_Network, reportedAt time.
 	status.TestedAt = believedTime(entry.GetTestedAtMs(), reportedAt)
 	status.LastDeliveredAt = believedTime(entry.GetLastDeliveredAtMs(), reportedAt)
 	return status, true
+}
+
+// destinationTypes are the providers a receiver writes to, each once, in
+// Core's order; a provider Core does not know is left out (a newer
+// receiver's), and none named is S3 and R2: a receiver older than push
+// destinations (design N-8).
+func destinationTypes(named []flowlogv1.FlowDestination_Provider) []string {
+	if len(named) == 0 {
+		return []string{flowlog.ProviderS3, flowlog.ProviderR2}
+	}
+	written := map[string]bool{}
+	for _, provider := range named {
+		for name, value := range destinationProviders {
+			if value == provider {
+				written[name] = true
+			}
+		}
+	}
+	kinds := make([]string, 0, len(written))
+	for _, name := range []string{
+		flowlog.ProviderS3, flowlog.ProviderR2, flowlog.ProviderElasticsearch, flowlog.ProviderDatadog,
+		flowlog.ProviderKinesis,
+	} {
+		if written[name] {
+			kinds = append(kinds, name)
+		}
+	}
+	return kinds
 }
 
 // believedTime is a reported time within the day before the report, or

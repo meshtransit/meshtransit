@@ -237,3 +237,45 @@ func TestFlowGateDelaySpreadsDevices(t *testing.T) {
 		t.Fatalf("only %d distinct delays", len(seen))
 	}
 }
+
+// The gate opens for a Network only when every accepting receiver writes
+// to its type (schema 273); no credential is never held by type.
+func TestFlowGateStateWrites(t *testing.T) {
+	t.Parallel()
+	open := FlowGateState{Open: true, DestinationTypes: []string{"aws_s3", "cloudflare_r2"}}
+	if !open.Writes("aws_s3") || open.Writes("datadog") || !open.Writes("") {
+		t.Fatalf("open gate: %+v", open)
+	}
+	if (FlowGateState{DestinationTypes: []string{"datadog"}}).Writes("datadog") {
+		t.Fatal("a closed gate wrote")
+	}
+}
+
+// A type that joins the receivers' types after the gate opened opens then,
+// so its Devices' tickets are spread from that moment; a type kept keeps
+// its time, one that leaves forgets it (review p1c M2).
+func TestFlowGateTypeOpenedAt(t *testing.T) {
+	t.Parallel()
+	moment := time.Unix(1_900_000_000, 0)
+	reader := &countingGateReader{gate: connectionlog.ReceiverGate{
+		Fresh: 1, Accepting: 1, DestinationTypes: []string{"aws_s3"},
+	}}
+	cache, err := NewFlowGateCache(reader, func() time.Time { return moment })
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := moment
+	cache.FlowGate(t.Context())
+	moment = moment.Add(FlowGateAge)
+	reader.gate.DestinationTypes = []string{"aws_s3", "datadog"}
+	state := cache.FlowGate(t.Context())
+	if !state.OpenedAtFor("aws_s3").Equal(opened) || !state.OpenedAtFor("datadog").Equal(moment) ||
+		!state.OpenedAtFor("").Equal(opened) {
+		t.Fatalf("types joined = %+v", state)
+	}
+	moment = moment.Add(FlowGateAge)
+	reader.gate.DestinationTypes = []string{"aws_s3"}
+	if state := cache.FlowGate(t.Context()); state.Writes("datadog") || len(state.TypeOpenedAt) != 1 {
+		t.Fatalf("a type left = %+v", state)
+	}
+}

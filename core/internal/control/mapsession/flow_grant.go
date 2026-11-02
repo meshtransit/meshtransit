@@ -46,6 +46,9 @@ type FlowLogSettings struct {
 	Enabled       bool
 	Forwarded     bool
 	WindowSeconds int
+	// Provider is the destination's type (schema 273): the gate signs
+	// only while every receiver writes to it. Empty: no credential.
+	Provider string
 }
 
 // FlowLogReader reads a Network's settings.

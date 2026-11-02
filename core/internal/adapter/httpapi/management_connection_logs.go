@@ -181,6 +181,10 @@ type connectionLogStatusBody struct {
 	TestedAt          *string `json:"tested_at"`
 	DeliveredAt       *string `json:"delivered_at"`
 	DeliveryError     *string `json:"delivery_error"`
+	// ReceiverWritesType is false while a receiver cannot write to the
+	// destination's type: nothing is logged until it can (schema 273).
+	ReceiverWritesType bool  `json:"receiver_writes_type"`
+	Rejected24h        int64 `json:"rejected_24h"`
 }
 
 func newConnectionLogStatusBody(view connectionlog.StatusView) connectionLogStatusBody {
@@ -193,6 +197,7 @@ func newConnectionLogStatusBody(view connectionlog.StatusView) connectionLogStat
 	body := connectionLogStatusBody{
 		ReceiverAvailable: view.ReceiverAvailable, Report: view.Report, ReportedAt: moment(view.ReportedAt),
 		Test: view.Test, TestedAt: moment(view.TestedAt), DeliveredAt: moment(view.DeliveredAt),
+		ReceiverWritesType: view.ReceiverWritesType, Rejected24h: view.Rejected24h,
 	}
 	if view.DeliveryError != "" {
 		kind := view.DeliveryError

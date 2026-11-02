@@ -47,6 +47,11 @@ type StatusRows struct {
 	// the Network names none.
 	SealedVersion int64
 	SealingKeyID  string
+	// Rejected24h is the records a push destination refused in the last
+	// day, as last reported; WritesType whether every fresh receiver
+	// writes to the credential's type, nil when not read (schema 273).
+	Rejected24h int64
+	WritesType  *bool
 }
 
 // ReportRow is a receiver's last report for one Network.
@@ -83,6 +88,10 @@ type StatusView struct {
 	// the last failure, empty when none.
 	DeliveredAt   *time.Time
 	DeliveryError string
+	// ReceiverWritesType is false while some receiver does not write to the
+	// destination's type yet: Core then signs no ticket for it.
+	ReceiverWritesType bool
+	Rejected24h        int64
 }
 
 // View derives what the Console shows from rows read with settings.
@@ -90,6 +99,7 @@ func (rows StatusRows) View(settings Settings, now time.Time) StatusView {
 	view := StatusView{
 		ReceiverAvailable: rows.ReceiverAt != nil && now.Sub(*rows.ReceiverAt) <= ReportFreshFor,
 		Report:            ReportNone, Test: TestNone,
+		ReceiverWritesType: rows.WritesType == nil || *rows.WritesType, Rejected24h: max(rows.Rejected24h, 0),
 	}
 	report := rows.Report
 	if report == nil {

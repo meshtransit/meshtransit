@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/connectionlog"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -50,10 +52,22 @@ var pushTestCA = func() string {
 // only with a new secret, and a Network's settings take exactly the fields
 // of its credential's type. The Network's settings are at version and off.
 func assertConnectionLogPushDestinations(ctx context.Context, t *testing.T, admin *pgx.Conn,
-	store *postgresadapter.ConnectionLogStore, receiver *ecdh.PrivateKey, owner accountsession.Session,
-	scope network.Scope, version int64,
+	runtimePool *postgresadapter.Pool, store *postgresadapter.ConnectionLogStore, receiver *ecdh.PrivateKey,
+	owner accountsession.Session, scope network.Scope, version int64,
 ) {
 	t.Helper()
+	receiverStore, err := postgresadapter.NewFlowlogReceiverStore(runtimePool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
+		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
+		RelayDirectory: integrationRelayDirectory(t), RoutePeerLimit: mapsession.DefaultPeerLimit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspaceID := scope.WorkspaceID()
 	networks := []network.ID{scope.NetworkID()}
 	type pushCase struct {
@@ -132,6 +146,31 @@ region = 'eu-central-1' WHERE public_id = $1::UUID`, scope.NetworkID().String())
 		if err != nil || read.Settings.Target != settings.Target || read.Settings.RecordFormat != settings.RecordFormat {
 			t.Fatalf("%s: read %+v, %v", test.provider, read, err)
 		}
+		// Schema 273: the receiver reads the destination it binds the
+		// secret to, CA PEM included, and opens it; the stream reads the
+		// type its ticket gate needs.
+		destination, err := receiverStore.Destination(ctx, scope)
+		if err != nil || destination.Provider != test.provider || destination.Push.URL != test.destination.URL ||
+			string(destination.Push.CAPEM) != string(test.destination.CAPEM) ||
+			destination.Push.StreamARN != test.destination.StreamARN || destination.Target != settings.Target ||
+			destination.Service != settings.Service || destination.RecordFormat != settings.RecordFormat {
+			t.Fatalf("%s: Destination() = %+v, %v", test.provider, destination, err)
+		}
+		push := destination.Push
+		served, err := flowlog.OpenSecret(receiver, destination.Sealed, flowlog.DestinationBinding{
+			WorkspaceID: workspaceID.String(), CredentialID: id.String(), Version: destination.SealedVersion,
+			Provider: destination.Provider, URL: push.URL, Flavor: push.Flavor, CAPEM: push.CAPEM, Site: push.Site,
+			Region: push.Region, StreamARN: push.StreamARN,
+		})
+		if err != nil || served.Key != secret.Key {
+			t.Fatalf("%s: the served destination does not open its secret: %v", test.provider, err)
+		}
+		if ticket, err := maps.ReadFlowLog(ctx, scope); err != nil || ticket.Provider != test.provider {
+			t.Fatalf("%s: ReadFlowLog() = %+v, %v", test.provider, ticket, err)
+		}
+		if read.Status.WritesType == nil {
+			t.Fatalf("%s: the settings read says nothing of the type: %+v", test.provider, read.Status)
+		}
 		// Fields of another type, or an S3 bucket, do not fit.
 		for name, edit := range map[string]func(*connectionlog.Settings){
 			"a bucket": func(s *connectionlog.Settings) { s.Bucket, s.Region = "meshtransit-logs", "eu-central-1" },
@@ -173,6 +212,63 @@ region = 'eu-central-1' WHERE public_id = $1::UUID`, scope.NetworkID().String())
 			flowlog.Credential{AccessKeyID: secret.Key, SecretAccessKey: secret.Key})
 	}
 	assertPushConfigNeedsSecret(ctx, t, admin, store, owner, scope)
+	assertPushReceiverGate(ctx, t, admin, receiverStore, runtimePool)
+}
+
+// assertPushReceiverGate qualifies the gate by type (schema 273): a type
+// opens only while every fresh accepting receiver writes to it, and a
+// receiver that names none writes to S3 and R2.
+func assertPushReceiverGate(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	receiverStore *postgresadapter.FlowlogReceiverStore, runtimePool *postgresadapter.Pool,
+) {
+	t.Helper()
+	gates, err := postgresadapter.NewFlowlogGateStore(runtimePool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := func() {
+		t.Helper()
+		if _, err := admin.Exec(ctx, `UPDATE mesh.connection_log_receiver
+SET received_at = pg_catalog.now() - INTERVAL '1 hour', reported_at = pg_catalog.now() - INTERVAL '1 hour'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale()
+	defer stale()
+	fingerprint := sha256.Sum256([]byte("push gate noise key"))
+	report := func(instance byte, types []string) {
+		t.Helper()
+		if _, err := receiverStore.ReportStatus(ctx, connectionlog.ReceiverReport{
+			Instance: [16]byte{0xfe, instance}, AcceptedVersions: []int{connectionlog.ReceiverProtocolVersion},
+			NoiseFingerprints: [][32]byte{fingerprint}, SealingKeyIDs: []string{"meshflow-test"},
+			DestinationTypes: types, ReportedAt: time.Now().Add(-time.Second),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	every := []string{flowlog.ProviderS3, flowlog.ProviderR2, flowlog.ProviderElasticsearch, flowlog.ProviderDatadog,
+		flowlog.ProviderKinesis}
+	report(1, every)
+	gate, err := gates.ReadReceiverGate(ctx, connectionlog.ReceiverProtocolVersion, fingerprint)
+	if err != nil || gate.Accepting != 1 || !gate.Writes(flowlog.ProviderKinesis) || !gate.Writes(flowlog.ProviderS3) {
+		t.Fatalf("one receiver of every type: %+v, %v", gate, err)
+	}
+	// An older receiver alongside: the push types close, S3 and R2 stay.
+	report(2, nil)
+	gate, err = gates.ReadReceiverGate(ctx, connectionlog.ReceiverProtocolVersion, fingerprint)
+	if err != nil || gate.Accepting != 2 || gate.Writes(flowlog.ProviderElasticsearch) || !gate.Writes(flowlog.ProviderR2) {
+		t.Fatalf("with an older receiver: %+v, %v", gate, err)
+	}
+	// The Console's soft signal agrees: no type a fresh receiver lacks.
+	for provider, want := range map[string]bool{
+		flowlog.ProviderS3: true, flowlog.ProviderDatadog: false,
+	} {
+		var writes bool
+		if err := admin.QueryRow(ctx, `SELECT (mesh_ops.network_connection_log_status_internal_v2(0, 0, 1, $1)
+->> 'receiver_writes_type')::BOOLEAN`, provider).Scan(&writes); err != nil || writes != want {
+			t.Errorf("%s: receiver_writes_type %t, %v", provider, writes, err)
+		}
+	}
 }
 
 // assertPushConfigNeedsSecret writes the v2 function directly: a config
