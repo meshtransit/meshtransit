@@ -9,9 +9,10 @@ ADR-054 in the MeshTransit design repository.
 A node counts the traffic its packet filter allows and denies, aggregates it
 per window and sends one batch per window to the connection log receiver
 (`meshflow`). The receiver names the endpoints from Core's directory and
-writes the records to the customer's S3 or R2 bucket. MeshTransit stores no
-connection logs: a node keeps its batches until the receiver reports them
-written.
+delivers the records to the customer's destination: an S3 or R2 bucket, or a
+push destination (Elasticsearch/OpenSearch, Datadog, Kinesis Data Streams).
+MeshTransit stores no connection logs: a node keeps its batches until the
+receiver reports them committed (§5).
 
 ## 2. Roles
 
@@ -19,7 +20,7 @@ written.
 |---|---|
 | Node (meshd, meshgw) | counts at the packet filter, keeps batches until committed, sends them |
 | Core | decides whether a node may send (Workspace entitlement, Network setting), signs its token, sends `FlowTicket` over MTCP (mtcp-v1 §9.1) |
-| Receiver | checks the token and the Noise key, checks and names records, writes them to the customer's bucket, answers the committed sequence |
+| Receiver | checks the token and the Noise key, checks and names records, delivers them to the customer's destination, answers the committed sequence |
 
 ## 3. Token
 
@@ -154,8 +155,8 @@ backs off as for a plain HTTP error; when `next_sequence` is below
 `held_from` it sends `held_from` next (rule 1 below then applies).
 
 **Receiver.** Per (Network, Device, `boot_id`) the receiver keeps
-`committed`, durable: every sequence at or below it is in the bucket, or
-written as lost or invalid. It also keeps `held`: the highest sequence that is
+`committed`, durable: every sequence at or below it is **delivered** (§5.1),
+or delivered as lost or invalid. It also keeps `held`: the highest sequence that is
 fully read and checked and sits in its writer's buffer, or is committed. `held`
 is volatile; `committed ≤ held`, and after a restart `held = committed`. The
 receiver takes `next = held + 1`. With no state for the `boot_id` (new, the
@@ -165,7 +166,7 @@ receiver lost it, or another replica holds it) it starts with
 - when the request names no `lost` range, `committed = held_from - 1`;
 - when it names one, the receiver buffers one `lost` event for that range,
   with its counts, and starts with `committed = lost.from - 1`: the node keeps
-  naming the range until that event is in the bucket and `committed` moves
+  naming the range until that event is delivered and `committed` moves
   past it, so a receiver without state never erases the evidence of a loss.
 
 Several receivers may hold state for the same `boot_id` (replicas, a
@@ -184,8 +185,7 @@ Then, for a request with sequence `s`:
 3. `s = next`: the receiver reads the batch (§4 steps 6 and 7). Only when
    both pass does it buffer the batch, or its `invalid` event, and set
    `held = s`; when they fail it answers in plain HTTP and nothing changes, so
-   the node sends `s` again. `committed` follows once the buffer is in the
-   bucket.
+   the node sends `s` again. `committed` follows once the buffer is delivered.
 4. `s > next`: **out of order**, answered `OUT_OF_ORDER` with
    `next_sequence = next`; the node sends that sequence first.
 
@@ -195,6 +195,54 @@ where it was. When the receiver lost state and starts again at `held_from`,
 batches the node still holds are written again with the same record IDs; a
 `lost` event may name batches that were in fact written before the state was
 lost, so consumers match `lost` events against the record IDs they have.
+
+### 5.1 Delivered
+
+A batch is **delivered** when every line the receiver made of it (its records
+not dropped under §6, its `overflow` or `invalid` event) is, at the one
+destination the Network uses (the same destination configuration), one of:
+
+- **in the bucket** (S3, R2): in an object the bucket acknowledged;
+- **accepted by a push destination**: Elasticsearch/OpenSearch `_bulk` item
+  2xx, or 409 `version_conflict_engine_exception` for a `create` whose `_id`
+  is already there; Datadog 202 for the request; a Kinesis `PutRecords`
+  result without `ErrorCode`. Accepted means the destination's intake
+  acknowledged it; what the destination does afterwards (ingest pipelines,
+  exclusion filters, quotas, retention; Datadog drops a log whose time is
+  outside its window yet answers 202) is outside this protocol. The receiver
+  keeps the time it sends inside Datadog's window but cannot see a later
+  drop;
+- **rejected by a push destination for good and counted**: only a record
+  (`flow`, `deny`) whose document the destination refuses as malformed
+  (Elasticsearch/OpenSearch `mapper_parsing_exception` or
+  `document_parsing_exception` whose cause is not
+  `illegal_argument_exception`), below the receiver's breaker (a bound past
+  which such refusals count as a refusal of the destination itself); the
+  receiver counts it (`document_rejected`, reported to Core) and does not
+  deliver it again.
+
+A `lost` range is delivered when its `lost` event is in the bucket or
+accepted, never by rejection.
+
+Never delivered by rejection: a `lost`, `invalid` or `overflow` event (they
+are the evidence of a loss), a refusal of the destination itself
+(authorisation, missing target, blocked or read-only cluster, a strict
+mapping (`strict_dynamic_mapping_exception`), mapping limits, a whole request
+refused) and a temporary refusal (throttling, 5xx). In those cases the batch
+stays uncommitted: the receiver tries again, or drops what it holds and sets
+`held = committed`, answering `THROTTLED`; the node keeps the batch within
+its spool bounds (§5).
+
+When the Network's destination changes before a batch is delivered, nothing
+delivered to the old destination counts: the receiver drops what it holds for
+the Network and sets `held = committed`, so the node sends the batch again to
+the new destination, whole. The old destination may keep part of a batch.
+
+Delivery is at least once to the destination in use when a batch is
+committed, except for documents that destination refuses for good.
+Elasticsearch/OpenSearch deduplicates by `_id` = `record_id` only within one
+backing index (a resend after a rollover may duplicate); Datadog and Kinesis
+do not deduplicate. Consumers deduplicate by `record_id`.
 
 ## 6. Records
 
