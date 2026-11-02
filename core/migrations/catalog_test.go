@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 271 {
-		t.Fatalf("len(Catalog()) = %d, want 271", len(catalog))
+	if len(catalog) != 272 {
+		t.Fatalf("len(Catalog()) = %d, want 272", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 271 {
-		t.Fatalf("LatestVersion() = %d, want 271", LatestVersion())
+	if LatestVersion() != 272 {
+		t.Fatalf("LatestVersion() = %d, want 272", LatestVersion())
 	}
 }
 
@@ -8103,5 +8103,44 @@ func TestMigration271ConnectionLogConsoleStatus(t *testing.T) {
 	if !strings.Contains(ownership, "OWNER TO mesh_flowlog_status_writer") ||
 		!strings.Contains(ownership, "TO mesh_migrator;") || strings.Contains(ownership, "TO mesh_runtime") {
 		t.Errorf("operator step 271: %s", ownership)
+	}
+}
+
+// Migration 272 adds push destinations beside v1, never in its place:
+// Core pods of schema 271 keep their functions through the rollout, and a
+// push credential changes its endpoint only with a new secret.
+func TestMigration272ConnectionLogPushDestinations(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog()
+	if len(catalog) < 272 || catalog[271].Version != 272 {
+		t.Fatalf("the catalog has no migration 272 (%d migrations)", len(catalog))
+	}
+	sql := catalog[271].SQL
+	for _, want := range []string{
+		"CHECK (provider IN ('aws_s3', 'cloudflare_r2', 'elasticsearch', 'datadog', 'kinesis'))",
+		"CHECK (mesh_ops.storage_credential_config_is_valid_v1(provider, config))",
+		"CREATE FUNCTION mesh_ops.put_storage_credential_v2(",
+		"changes its endpoint only with its secret",
+		"CREATE FUNCTION mesh_ops.replace_network_connection_log_v2(",
+		"CREATE FUNCTION mesh_ops.read_network_connection_log_v2(",
+		"CREATE FUNCTION mesh_ops.list_storage_credentials_v2(",
+		"p_credential.config - 'ca_pem'",
+		"'storage_credential.manage'",
+		"'connection_log.manage'",
+		"'network.read'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 272 lacks %q", want)
+		}
+	}
+	for _, banned := range []string{
+		"OR REPLACE FUNCTION", "DROP FUNCTION", "'sealed'", "sealed_secret", "GRANT EXECUTE ON FUNCTION mesh_ops.storage_credential_document",
+	} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 272 has %q", banned)
+		}
+	}
+	if strings.Count(sql, "GRANT EXECUTE ON FUNCTION") != 4 || strings.Count(sql, "TO mesh_runtime;") != 4 {
+		t.Error("migration 272 grants the runtime other than its four v2 functions")
 	}
 }

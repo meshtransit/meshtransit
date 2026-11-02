@@ -312,6 +312,8 @@ func assertPostgreSQLConnectionLogs(ctx context.Context, t *testing.T, admin *pg
 	}); err != nil {
 		t.Fatalf("deleting a credential no Network uses: %v", err)
 	}
+	// Schema 272: push destinations, on the same Network (off, version 4).
+	assertConnectionLogPushDestinations(ctx, t, admin, store, receiver, owner, scope, off.Settings.Version)
 	for _, action := range []string{
 		"storage_credential.created", "storage_credential.updated",
 		"storage_credential.rotated", "storage_credential.deleted", "connection_log.settings_replaced",

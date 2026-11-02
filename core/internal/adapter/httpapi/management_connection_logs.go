@@ -132,6 +132,17 @@ type storageCredentialBody struct {
 	UpdatedAt       *string  `json:"updated_at"`
 	Networks        []string `json:"network_ids"`
 	UsedBy          []string `json:"used_by_network_ids"`
+	// Destination is a push credential's fields (schema 272); never its CA.
+	Destination *destinationBody `json:"destination,omitempty"`
+}
+
+type destinationBody struct {
+	URL       string `json:"url,omitempty"`
+	Flavor    string `json:"flavor,omitempty"`
+	CASHA256  string `json:"ca_sha256,omitempty"`
+	Site      string `json:"site,omitempty"`
+	Region    string `json:"region,omitempty"`
+	StreamARN string `json:"stream_arn,omitempty"`
 }
 
 func newStorageCredentialBody(credential connectionlog.Credential) storageCredentialBody {
@@ -150,6 +161,12 @@ func newStorageCredentialBody(credential connectionlog.Credential) storageCreden
 	}
 	for _, id := range credential.UsedBy {
 		body.UsedBy = append(body.UsedBy, id.String())
+	}
+	if destination := credential.Destination; !destination.Empty() {
+		body.Destination = &destinationBody{
+			URL: destination.URL, Flavor: destination.Flavor, CASHA256: destination.CASHA256, Site: destination.Site,
+			Region: destination.Region, StreamARN: destination.StreamARN,
+		}
 	}
 	return body
 }
@@ -185,17 +202,22 @@ func newConnectionLogStatusBody(view connectionlog.StatusView) connectionLogStat
 }
 
 type connectionLogSettingsBody struct {
-	Feature       bool    `json:"feature"`
-	Enabled       bool    `json:"enabled"`
-	CredentialID  *string `json:"credential_id"`
-	Bucket        string  `json:"bucket"`
-	Region        string  `json:"region"`
-	Prefix        string  `json:"prefix"`
-	Forwarded     bool    `json:"forwarded"`
-	WindowSeconds int     `json:"window_seconds"`
-	BucketOwner   *string `json:"expected_bucket_owner"`
-	Version       int64   `json:"version"`
-	UpdatedAt     *string `json:"updated_at"`
+	Feature       bool     `json:"feature"`
+	Enabled       bool     `json:"enabled"`
+	CredentialID  *string  `json:"credential_id"`
+	Bucket        string   `json:"bucket"`
+	Region        string   `json:"region"`
+	Prefix        string   `json:"prefix"`
+	Forwarded     bool     `json:"forwarded"`
+	WindowSeconds int      `json:"window_seconds"`
+	BucketOwner   *string  `json:"expected_bucket_owner"`
+	Target        *string  `json:"target"`
+	TargetKind    *string  `json:"target_kind"`
+	Service       *string  `json:"service"`
+	Tags          []string `json:"tags"`
+	RecordFormat  *string  `json:"record_format"`
+	Version       int64    `json:"version"`
+	UpdatedAt     *string  `json:"updated_at"`
 }
 
 func newConnectionLogSettingsBody(feature bool, settings connectionlog.Settings) connectionLogSettingsBody {
@@ -212,27 +234,126 @@ func newConnectionLogSettingsBody(feature bool, settings connectionlog.Settings)
 		owner := settings.ExpectedBucketOwner
 		body.BucketOwner = &owner
 	}
+	for _, field := range []struct {
+		from string
+		to   **string
+	}{
+		{settings.Target, &body.Target}, {settings.TargetKind, &body.TargetKind}, {settings.Service, &body.Service},
+		{settings.RecordFormat, &body.RecordFormat},
+	} {
+		if field.from != "" {
+			value := field.from
+			*field.to = &value
+		}
+	}
+	if len(settings.Tags) > 0 {
+		body.Tags = append([]string(nil), settings.Tags...)
+	}
 	return body
 }
 
 // storageCredentialRequest is a create's or a PATCH's body. A PATCH names
 // the provider and account it keeps; a secret in it rotates the
-// credential. The secret goes to the store, which seals it at once.
+// credential. The secret goes to the store, which seals it at once. S3 and
+// R2 take access_key_id and secret_access_key; a push destination takes
+// secret and destination, together (the destination is bound into the
+// secret, push destinations design §5 S1).
 type storageCredentialRequest struct {
-	Name            *string   `json:"name"`
-	Provider        *string   `json:"provider"`
-	AccountID       *string   `json:"account_id"`
-	AccessKeyID     *string   `json:"access_key_id"`
-	SecretAccessKey *string   `json:"secret_access_key"`
-	Networks        *[]string `json:"network_ids"`
+	Name            *string             `json:"name"`
+	Provider        *string             `json:"provider"`
+	AccountID       *string             `json:"account_id"`
+	AccessKeyID     *string             `json:"access_key_id"`
+	SecretAccessKey *string             `json:"secret_access_key"`
+	Secret          *pushSecretRequest  `json:"secret"`
+	Destination     *destinationRequest `json:"destination"`
+	Networks        *[]string           `json:"network_ids"`
+}
+
+// pushSecretRequest is a push destination's secret: kind api_key (id,
+// key), basic (id = user name, key = password), datadog_key (key) or
+// aws_keys (id = access key ID, key = secret access key).
+type pushSecretRequest struct {
+	Kind *string `json:"kind"`
+	ID   *string `json:"id"`
+	Key  *string `json:"key"`
+}
+
+// destinationRequest is a push destination: url, flavor and optional
+// ca_pem (Elasticsearch/OpenSearch), site (Datadog) or stream_arn
+// (Kinesis, whose region is the ARN's).
+type destinationRequest struct {
+	URL       *string `json:"url"`
+	Flavor    *string `json:"flavor"`
+	CAPEM     *string `json:"ca_pem"`
+	Site      *string `json:"site"`
+	StreamARN *string `json:"stream_arn"`
+}
+
+var pushSecretKinds = map[string]flowlog.SecretKind{
+	"api_key": flowlog.SecretAPIKey, "basic": flowlog.SecretBasic, "datadog_key": flowlog.SecretDatadogKey,
+	"aws_keys": flowlog.SecretAWSKeys,
+}
+
+// push builds the secret and destination, false for a malformed one.
+func (body storageCredentialRequest) push() (*flowlog.Secret, connectionlog.Destination, bool) {
+	if (body.Secret == nil) != (body.Destination == nil) {
+		return nil, connectionlog.Destination{}, false
+	}
+	if body.Secret == nil {
+		return nil, connectionlog.Destination{}, true
+	}
+	kind, known := pushSecretKinds[deref(body.Secret.Kind)]
+	if !known || body.Secret.Key == nil {
+		return nil, connectionlog.Destination{}, false
+	}
+	secret := &flowlog.Secret{Kind: kind, ID: deref(body.Secret.ID), Key: *body.Secret.Key}
+	if kind == flowlog.SecretDatadogKey {
+		// Datadog keys are lower-case hex; a pasted upper-case one is the same key.
+		secret.Key = strings.ToLower(secret.Key)
+	}
+	destination := connectionlog.Destination{
+		Flavor: deref(body.Destination.Flavor), CAPEM: []byte(deref(body.Destination.CAPEM)),
+		Site: deref(body.Destination.Site), StreamARN: deref(body.Destination.StreamARN),
+	}
+	if len(destination.CAPEM) == 0 {
+		destination.CAPEM = nil
+	}
+	if body.Destination.URL != nil {
+		canonical, err := flowlog.CanonicalURL(*body.Destination.URL)
+		if err != nil {
+			return nil, connectionlog.Destination{}, false
+		}
+		destination.URL = canonical
+	}
+	if destination.StreamARN != "" {
+		region, ok := flowlog.ParseStreamARN(destination.StreamARN)
+		if !ok {
+			return nil, connectionlog.Destination{}, false
+		}
+		destination.Region = region
+	}
+	return secret, destination, true
+}
+
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (body storageCredentialRequest) put(create bool) (connectionlog.CredentialPut, bool) {
 	if body.Name == nil || body.Provider == nil || body.Networks == nil ||
-		(body.AccessKeyID == nil) != (body.SecretAccessKey == nil) || create && body.AccessKeyID == nil {
+		(body.AccessKeyID == nil) != (body.SecretAccessKey == nil) ||
+		create && body.AccessKeyID == nil && body.Secret == nil || body.AccessKeyID != nil && body.Secret != nil {
 		return connectionlog.CredentialPut{}, false
 	}
 	put := connectionlog.CredentialPut{Name: *body.Name, Provider: *body.Provider}
+	secret, destination, ok := body.push()
+	if !ok {
+		return connectionlog.CredentialPut{}, false
+	}
+	put.PushSecret, put.Destination = secret, destination
 	if body.AccountID != nil {
 		put.AccountID = *body.AccountID
 	}
@@ -460,6 +581,13 @@ type connectionLogSettingsRequest struct {
 	WindowSeconds *int    `json:"window_seconds"`
 	// Absent or null: the credential's own account; empty is refused.
 	BucketOwner *string `json:"expected_bucket_owner"`
+	// A push destination's fields (schema 272); absent or null for none,
+	// empty refused.
+	Target       *string  `json:"target"`
+	TargetKind   *string  `json:"target_kind"`
+	Service      *string  `json:"service"`
+	Tags         []string `json:"tags"`
+	RecordFormat *string  `json:"record_format"`
 }
 
 // settings builds the replacement's settings, false for a missing field,
@@ -486,6 +614,23 @@ func (body connectionLogSettingsRequest) settings() (connectionlog.Settings, boo
 		}
 		credential := connectionlog.CredentialID(id)
 		settings.Credential = &credential
+	}
+	for _, field := range []struct {
+		from *string
+		to   *string
+	}{
+		{body.Target, &settings.Target}, {body.TargetKind, &settings.TargetKind}, {body.Service, &settings.Service},
+		{body.RecordFormat, &settings.RecordFormat},
+	} {
+		if field.from != nil {
+			if *field.from == "" {
+				return connectionlog.Settings{}, false
+			}
+			*field.to = *field.from
+		}
+	}
+	if len(body.Tags) > 0 {
+		settings.Tags = append([]string(nil), body.Tags...)
 	}
 	return settings, true
 }

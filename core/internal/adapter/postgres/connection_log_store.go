@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -18,20 +19,20 @@ import (
 	"meshtransit.net/shared/flowlog"
 )
 
-// Schema 266: connection logs.
+// Schema 266: connection logs; schema 272: push destinations (v2).
 const (
-	listStorageCredentialsSQL = `SELECT mesh_ops.list_storage_credentials_v1(` + sessionArguments + `,
+	listStorageCredentialsSQL = `SELECT mesh_ops.list_storage_credentials_v2(` + sessionArguments + `,
  $10::UUID)::TEXT`
-	putStorageCredentialSQL = `SELECT mesh_ops.put_storage_credential_v1(` + sessionArguments + `,
- $10::UUID,$11::UUID,$12::BIGINT,$13::TEXT,$14::TEXT,$15::TEXT,$16::TEXT,$17::BYTEA,$18::TEXT,$19::UUID[],
- $20::UUID)::TEXT`
+	putStorageCredentialSQL = `SELECT mesh_ops.put_storage_credential_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::BIGINT,$13::TEXT,$14::TEXT,$15::TEXT,$16::JSONB,$17::TEXT,$18::BYTEA,$19::TEXT,$20::UUID[],
+ $21::UUID)::TEXT`
 	deleteStorageCredentialSQL = `SELECT mesh_ops.delete_storage_credential_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::BIGINT,$13::UUID)::TEXT`
-	readNetworkConnectionLogSQL = `SELECT mesh_ops.read_network_connection_log_v1(` + sessionArguments + `,
+	readNetworkConnectionLogSQL = `SELECT mesh_ops.read_network_connection_log_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID)::TEXT`
-	replaceNetworkConnectionLogSQL = `SELECT mesh_ops.replace_network_connection_log_v1(` + sessionArguments + `,
+	replaceNetworkConnectionLogSQL = `SELECT mesh_ops.replace_network_connection_log_v2(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::BIGINT,$13::BOOLEAN,$14::UUID,$15::TEXT,$16::TEXT,$17::TEXT,$18::BOOLEAN,$19::INTEGER,
- $20::TEXT,$21::UUID)::TEXT`
+ $20::TEXT,$21::TEXT,$22::TEXT,$23::TEXT,$24::TEXT[],$25::TEXT,$26::UUID)::TEXT`
 )
 
 // CredentialSealer seals storage secrets to the connection log receiver's
@@ -137,17 +138,19 @@ func (store *ConnectionLogStore) beginNetwork(ctx context.Context, scope network
 }
 
 type storageCredentialDocument struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Provider        string    `json:"provider"`
-	AccountID       *string   `json:"account_id"`
-	AccessKeySuffix string    `json:"access_key_suffix"`
-	Version         int64     `json:"version"`
-	SealedVersion   int64     `json:"sealed_version"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	Networks        []string  `json:"networks"`
-	UsedBy          []string  `json:"used_by"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Provider  string  `json:"provider"`
+	AccountID *string `json:"account_id"`
+	// Config is absent from the delete function's v1 document.
+	Config          *destinationConfig `json:"config,omitempty"`
+	AccessKeySuffix string             `json:"access_key_suffix"`
+	Version         int64              `json:"version"`
+	SealedVersion   int64              `json:"sealed_version"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	Networks        []string           `json:"networks"`
+	UsedBy          []string           `json:"used_by"`
 }
 
 func (document storageCredentialDocument) credential() (connectionlog.Credential, error) {
@@ -166,7 +169,18 @@ func (document storageCredentialDocument) credential() (connectionlog.Credential
 		credential.AccountID = *document.AccountID
 	}
 	if (credential.Provider == flowlog.ProviderR2) != connectionlog.ValidAccountID(credential.AccountID) ||
-		credential.Provider != flowlog.ProviderR2 && credential.Provider != flowlog.ProviderS3 {
+		!connectionlog.Storage(credential.Provider) && !connectionlog.Push(credential.Provider) {
+		return connectionlog.Credential{}, connectionlog.ErrInvalid
+	}
+	if document.Config != nil {
+		credential.Destination = document.Config.destination()
+		check := credential.Destination
+		check.CASHA256 = ""
+		if check.Check(credential.Provider) != nil ||
+			credential.Destination.CASHA256 != "" && !validCAHash(credential.Destination.CASHA256) {
+			return connectionlog.Credential{}, connectionlog.ErrInvalid
+		}
+	} else if connectionlog.Push(credential.Provider) {
 		return connectionlog.Credential{}, connectionlog.ErrInvalid
 	}
 	for _, list := range []struct {
@@ -183,6 +197,38 @@ func (document storageCredentialDocument) credential() (connectionlog.Credential
 		}
 	}
 	return credential, nil
+}
+
+// destinationConfig is storage_credential.config (schema 272): a push
+// credential's non-secret fields. The CA PEM goes in, never comes back.
+type destinationConfig struct {
+	URL       string `json:"url,omitempty"`
+	Flavor    string `json:"flavor,omitempty"`
+	CAPEM     string `json:"ca_pem,omitempty"`
+	CASHA256  string `json:"ca_sha256,omitempty"`
+	Site      string `json:"site,omitempty"`
+	Region    string `json:"region,omitempty"`
+	StreamARN string `json:"stream_arn,omitempty"`
+}
+
+func newDestinationConfig(destination connectionlog.Destination) destinationConfig {
+	return destinationConfig{
+		URL: destination.URL, Flavor: destination.Flavor, CAPEM: string(destination.CAPEM),
+		CASHA256: flowlog.CAHash(destination.CAPEM), Site: destination.Site, Region: destination.Region,
+		StreamARN: destination.StreamARN,
+	}
+}
+
+func (config destinationConfig) destination() connectionlog.Destination {
+	return connectionlog.Destination{
+		URL: config.URL, Flavor: config.Flavor, CASHA256: config.CASHA256, Site: config.Site, Region: config.Region,
+		StreamARN: config.StreamARN,
+	}
+}
+
+func validCAHash(hash string) bool {
+	decoded, err := hex.DecodeString(hash)
+	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == hash
 }
 
 // ListCredentials lists a Workspace's credentials (workspace.read).
@@ -239,23 +285,27 @@ func (store *ConnectionLogStore) PutCredential(ctx context.Context, put connecti
 	if err != nil {
 		return connectionlog.Credential{}, connectionlog.ErrUnavailable
 	}
-	var account, suffix, keyID any
+	var account, suffix, keyID, config any
 	var sealed any
 	if put.AccountID != "" {
 		account = put.AccountID
 	}
-	if put.Secret != nil {
+	if put.Secret != nil || put.PushSecret != nil {
 		if store.sealer == nil {
 			return connectionlog.Credential{}, connectionlog.ErrNotConfigured
 		}
-		box, err := flowlog.SealCredential(store.sealer.Key, *put.Secret, flowlog.CredentialBinding{
-			WorkspaceID: put.Workspace.String(), CredentialID: put.ID.String(), Version: put.ExpectedVersion + 1,
-			Provider: put.Provider, AccountID: put.AccountID,
-		})
+		box, shown, err := store.seal(put)
 		if err != nil {
 			return connectionlog.Credential{}, connectionlog.ErrInvalid
 		}
-		sealed, suffix, keyID = box, put.Secret.Suffix(), store.sealer.KeyID
+		sealed, suffix, keyID = box, shown, store.sealer.KeyID
+		// The config is bound into the secret: it goes with it, or not at
+		// all (NULL keeps the stored one).
+		encoded, err := json.Marshal(newDestinationConfig(put.Destination))
+		if err != nil {
+			return connectionlog.Credential{}, connectionlog.ErrInvalid
+		}
+		config = string(encoded)
 	}
 	networks := make([]string, len(put.Networks))
 	for index, id := range put.Networks {
@@ -270,8 +320,8 @@ func (store *ConnectionLogStore) PutCredential(ctx context.Context, put connecti
 	}
 	var encoded string
 	if err := tx.QueryRow(ctx, putStorageCredentialSQL, append(sessionQueryArguments(put.Session),
-		put.Workspace.String(), put.ID.String(), put.ExpectedVersion, put.Name, put.Provider, account, suffix,
-		sealed, keyID, networks, changeID.String())...).Scan(&encoded); err != nil {
+		put.Workspace.String(), put.ID.String(), put.ExpectedVersion, put.Name, put.Provider, account, config,
+		suffix, sealed, keyID, networks, changeID.String())...).Scan(&encoded); err != nil {
 		return connectionlog.Credential{}, connectionLogDatabaseError(err)
 	}
 	var record struct {
@@ -288,7 +338,11 @@ func (store *ConnectionLogStore) PutCredential(ctx context.Context, put connecti
 	saved, err := record.Credential.credential()
 	if err != nil || saved.ID != put.ID || saved.Version != put.ExpectedVersion+1 ||
 		(record.Before == nil) != (put.ExpectedVersion == 0) ||
-		(put.Secret != nil) != (saved.SealedVersion == saved.Version) {
+		(put.Secret != nil || put.PushSecret != nil) != (saved.SealedVersion == saved.Version) {
+		return connectionlog.Credential{}, connectionlog.ErrInvalid
+	}
+	if put.PushSecret != nil && !sameDestination(saved.Destination, put.Destination) {
+		// What is stored is what the secret was sealed to (review p1b L10).
 		return connectionlog.Credential{}, connectionlog.ErrInvalid
 	}
 	action := "storage_credential.updated"
@@ -306,6 +360,26 @@ func (store *ConnectionLogStore) PutCredential(ctx context.Context, put connecti
 		return connectionlog.Credential{}, errors.Join(connectionlog.ErrUnavailable, err)
 	}
 	return saved, nil
+}
+
+// seal seals a put's secret for the version the put makes: an S3/R2
+// secret under the v1 binding, a push secret under the v2 binding with
+// the destination it may be sent to. It returns what Core shows of it.
+func (store *ConnectionLogStore) seal(put connectionlog.CredentialPut) ([]byte, string, error) {
+	if put.Secret != nil {
+		box, err := flowlog.SealCredential(store.sealer.Key, *put.Secret, flowlog.CredentialBinding{
+			WorkspaceID: put.Workspace.String(), CredentialID: put.ID.String(), Version: put.ExpectedVersion + 1,
+			Provider: put.Provider, AccountID: put.AccountID,
+		})
+		return box, put.Secret.Suffix(), err
+	}
+	destination := put.Destination
+	box, err := flowlog.SealSecret(store.sealer.Key, *put.PushSecret, flowlog.DestinationBinding{
+		WorkspaceID: put.Workspace.String(), CredentialID: put.ID.String(), Version: put.ExpectedVersion + 1,
+		Provider: put.Provider, URL: destination.URL, Flavor: destination.Flavor, CAPEM: destination.CAPEM,
+		Site: destination.Site, Region: destination.Region, StreamARN: destination.StreamARN,
+	})
+	return box, put.PushSecret.Suffix(), err
 }
 
 // DeleteCredential deletes a credential no Network sends with.
@@ -355,13 +429,15 @@ func (store *ConnectionLogStore) DeleteCredential(ctx context.Context, deletion 
 // storageCredentialAudited is what the evidence records of a credential:
 // never its secret, never more of the access key than its suffix.
 type storageCredentialAudited struct {
-	CredentialID    string   `json:"credential_id"`
-	Name            string   `json:"name"`
-	Provider        string   `json:"provider"`
-	AccountID       *string  `json:"account_id"`
-	AccessKeySuffix string   `json:"access_key_suffix"`
-	Version         int64    `json:"version"`
-	Networks        []string `json:"networks"`
+	CredentialID string  `json:"credential_id"`
+	Name         string  `json:"name"`
+	Provider     string  `json:"provider"`
+	AccountID    *string `json:"account_id"`
+	// Config is the push destination, without its CA (schema 272).
+	Config          *destinationConfig `json:"config,omitempty"`
+	AccessKeySuffix string             `json:"access_key_suffix"`
+	Version         int64              `json:"version"`
+	Networks        []string           `json:"networks"`
 }
 
 func auditedCredential(document *storageCredentialDocument) *storageCredentialAudited {
@@ -370,8 +446,19 @@ func auditedCredential(document *storageCredentialDocument) *storageCredentialAu
 	}
 	return &storageCredentialAudited{
 		CredentialID: document.ID, Name: document.Name, Provider: document.Provider, AccountID: document.AccountID,
-		AccessKeySuffix: document.AccessKeySuffix, Version: document.Version, Networks: slices.Clone(document.Networks),
+		Config: auditedConfig(document.Config), AccessKeySuffix: document.AccessKeySuffix, Version: document.Version, Networks: slices.Clone(document.Networks),
 	}
+}
+
+// auditedConfig is a push destination as events record it: no CA, and
+// nothing for S3 and R2.
+func auditedConfig(config *destinationConfig) *destinationConfig {
+	if config == nil || *config == (destinationConfig{}) {
+		return nil
+	}
+	audited := *config
+	audited.CAPEM = ""
+	return &audited
 }
 
 func appendStorageCredentialEvent(ctx context.Context, tx accountSessionTransaction, session accountsession.Session,
@@ -419,16 +506,22 @@ func appendStorageCredentialEvent(ctx context.Context, tx accountSessionTransact
 }
 
 type networkConnectionLogDocument struct {
-	Enabled       bool       `json:"enabled"`
-	CredentialID  *string    `json:"credential_id"`
-	Bucket        string     `json:"bucket"`
-	Region        string     `json:"region"`
-	Prefix        string     `json:"prefix"`
-	Forwarded     bool       `json:"forwarded"`
-	WindowSeconds int        `json:"window_seconds"`
-	BucketOwner   *string    `json:"expected_bucket_owner"`
-	Version       int64      `json:"version"`
-	UpdatedAt     *time.Time `json:"updated_at"`
+	Enabled       bool    `json:"enabled"`
+	CredentialID  *string `json:"credential_id"`
+	Bucket        string  `json:"bucket"`
+	Region        string  `json:"region"`
+	Prefix        string  `json:"prefix"`
+	Forwarded     bool    `json:"forwarded"`
+	WindowSeconds int     `json:"window_seconds"`
+	BucketOwner   *string `json:"expected_bucket_owner"`
+	// Schema 272: the push destination's fields, absent for S3 and R2.
+	Target       *string    `json:"target,omitempty"`
+	TargetKind   *string    `json:"target_kind,omitempty"`
+	Service      *string    `json:"service,omitempty"`
+	Tags         []string   `json:"tags,omitempty"`
+	RecordFormat *string    `json:"record_format,omitempty"`
+	Version      int64      `json:"version"`
+	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
 func (document networkConnectionLogDocument) settings() (connectionlog.Settings, error) {
@@ -450,6 +543,21 @@ func (document networkConnectionLogDocument) settings() (connectionlog.Settings,
 		credential := connectionlog.CredentialID(id)
 		settings.Credential = &credential
 	}
+	for _, field := range []struct {
+		from *string
+		to   *string
+	}{
+		{document.Target, &settings.Target}, {document.TargetKind, &settings.TargetKind},
+		{document.Service, &settings.Service}, {document.RecordFormat, &settings.RecordFormat},
+	} {
+		if field.from != nil {
+			if *field.from == "" {
+				return connectionlog.Settings{}, connectionlog.ErrInvalid
+			}
+			*field.to = *field.from
+		}
+	}
+	settings.Tags = slices.Clone(document.Tags)
 	if document.UpdatedAt != nil {
 		settings.UpdatedAt = document.UpdatedAt.UTC()
 	}
@@ -569,7 +677,9 @@ func (store *ConnectionLogStore) ReplaceSettings(ctx context.Context, replacemen
 	if err := tx.QueryRow(ctx, replaceNetworkConnectionLogSQL, append(sessionQueryArguments(replacement.Session),
 		scope.WorkspaceID().String(), scope.NetworkID().String(), replacement.ExpectedVersion, settings.Enabled,
 		credential, settings.Bucket, settings.Region, settings.Prefix, settings.Forwarded, settings.WindowSeconds,
-		optionalText(settings.ExpectedBucketOwner), changeID.String())...).Scan(&encoded); err != nil {
+		optionalText(settings.ExpectedBucketOwner), optionalText(settings.Target), optionalText(settings.TargetKind),
+		optionalText(settings.Service), optionalTags(settings.Tags), optionalText(settings.RecordFormat),
+		changeID.String())...).Scan(&encoded); err != nil {
 		return connectionlog.SettingsResult{}, connectionLogDatabaseError(err)
 	}
 	var record struct {
@@ -650,4 +760,19 @@ func optionalText(value string) any {
 		return nil
 	}
 	return value
+}
+
+// optionalTags is NULL for no tags: Core stores no empty array.
+func optionalTags(tags []string) any {
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
+}
+
+// sameDestination reports the stored destination is the one sent, its CA
+// by hash.
+func sameDestination(saved, sent connectionlog.Destination) bool {
+	return saved.URL == sent.URL && saved.Flavor == sent.Flavor && saved.CASHA256 == flowlog.CAHash(sent.CAPEM) &&
+		saved.Site == sent.Site && saved.Region == sent.Region && saved.StreamARN == sent.StreamARN
 }
