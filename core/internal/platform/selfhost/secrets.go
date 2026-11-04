@@ -27,6 +27,7 @@ const (
 	secretControlKey
 	secretClientSecret
 	secretBrowserKey
+	secretRelayKey
 )
 
 type secretSpec struct {
@@ -62,6 +63,10 @@ var secretCatalog = []secretSpec{
 	{name: "login-subject-active.key", kind: secretIdentitySeed},
 	{name: "login-provider-session.key", kind: secretIdentitySeed},
 	{name: "browser-registration.key", kind: secretBrowserKey},
+	// The relay on this server ("meshrelay genkey" form) and Core's relay
+	// signing seed, whose public key the relay trusts.
+	{name: "relay.key", kind: secretRelayKey},
+	{name: "relay-signing.key", kind: secretIdentitySeed},
 }
 
 // Owner is who owns the generated files: the images run as 65532.
@@ -97,6 +102,9 @@ func GenerateSecrets(config Config, dir string, options GenerateOptions) (Genera
 			report.Kept = append(report.Kept, name)
 		}
 	}
+	if err := refuseLostSuperuserPassword(dir); err != nil {
+		return GenerateReport{}, err
+	}
 	for _, spec := range secretCatalog {
 		value, err := secretValue(dir, spec)
 		if err != nil {
@@ -110,6 +118,16 @@ func GenerateSecrets(config Config, dir string, options GenerateOptions) (Genera
 		record(spec.name, created)
 	}
 	if err := verifyClientSecretCopies(dir); err != nil {
+		return report, err
+	}
+	// The bundled datastores' credential files: a SCRAM verifier and a
+	// SHA-256, never the passwords. PostgreSQL runs its file once, on its
+	// first start (setup migrate keeps the roles' verifiers current after
+	// that); Redis reads its file at every start, so it follows the password.
+	if err := writeDerived(dir, "postgres-init.sql", postgresInitSQL, false, options.Owner, record); err != nil {
+		return report, err
+	}
+	if err := writeDerived(dir, "redis-users.acl", redisACL, true, options.Owner, record); err != nil {
 		return report, err
 	}
 	if err := generateTLS(config, dir, options, record); err != nil {
@@ -162,9 +180,114 @@ func secretValue(dir string, spec secretSpec) ([]byte, error) {
 		return []byte(hex.EncodeToString(random)), nil
 	case secretBrowserKey:
 		return []byte(base64.StdEncoding.EncodeToString(random)), nil
+	case secretRelayKey:
+		return relayKeyText()
 	default:
 		return nil, fmt.Errorf("%w: unknown kind", ErrSecrets)
 	}
+}
+
+// ErrSuperuserPasswordLost reports a database that outlived its superuser's
+// password file.
+var ErrSuperuserPasswordLost = errors.New("postgres-superuser-password is missing but the database exists: " +
+	"restore it from the backup of secrets/")
+
+// refuseLostSuperuserPassword stops setup from generating a new superuser
+// password for a database that already exists: PostgreSQL took the password
+// once, when it created the database, so a new file would lock setup
+// migrate out for good.
+func refuseLostSuperuserPassword(dir string) error {
+	if _, err := os.Lstat(filepath.Join(dir, "postgres-superuser-password")); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(dir), "postgres"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: postgres data: %w", ErrSecrets, err)
+	}
+	if len(entries) != 0 {
+		return ErrSuperuserPasswordLost
+	}
+	return nil
+}
+
+// writeDerived writes a file derived from the passwords when it is absent
+// or, with follow set, when its content no longer matches them; a link is
+// refused.
+func writeDerived(dir, name string, build func(string) ([]byte, error), follow bool, owner *Owner,
+	record func(string, bool),
+) error {
+	if !follow {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			record(name, false)
+			return nil
+		}
+	}
+	contents, err := build(dir)
+	if err != nil {
+		return err
+	}
+	if follow {
+		return replaceDerived(dir, name, contents, owner, record)
+	}
+	created, err := writeIfAbsent(dir, name, contents, 0o600, owner)
+	if err != nil {
+		return err
+	}
+	record(name, created)
+	return nil
+}
+
+// replaceDerived replaces name, atomically, only when its content differs.
+func replaceDerived(dir, name string, contents []byte, owner *Owner, record func(string, bool)) error {
+	existing, err := readRegularFile(filepath.Join(dir, name), 64<<10)
+	if errors.Is(err, fs.ErrNotExist) {
+		created, err := writeIfAbsent(dir, name, contents, 0o600, owner)
+		if err != nil {
+			return err
+		}
+		record(name, created)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrSecrets, name, err)
+	}
+	if bytes.Equal(existing, slices.Concat(contents, []byte("\n"))) {
+		record(name, false)
+		return nil
+	}
+	temporary, err := os.CreateTemp(dir, ".tmp-")
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrSecrets, name, err)
+	}
+	temporaryName := temporary.Name()
+	defer func() { _ = os.Remove(temporaryName) }()
+	if err := writeAndSync(temporary, contents, 0o600, owner); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrSecrets, name, err)
+	}
+	if err := os.Rename(temporaryName, filepath.Join(dir, name)); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrSecrets, name, err)
+	}
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrSecrets, name, err)
+	}
+	record(name, true)
+	return nil
+}
+
+// syncDirectory makes a rename in dir durable.
+func syncDirectory(dir string) error {
+	directory, err := os.Open(dir) // #nosec G304 -- the state directory setup owns.
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	return directory.Close()
 }
 
 // writeIfAbsent writes name only if it does not exist: the content goes to a

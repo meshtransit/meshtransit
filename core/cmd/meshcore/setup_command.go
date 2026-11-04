@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/platform/bootstrap"
+	"meshtransit.net/core/internal/platform/buildinfo"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/core/internal/platform/observability"
 	"meshtransit.net/core/internal/platform/selfhost"
@@ -30,17 +32,19 @@ type setupPaths struct {
 }
 
 type setupCommand struct {
-	ctx    context.Context
-	paths  setupPaths
-	output io.Writer
-	logger *slog.Logger
-	owner  *selfhost.Owner
-	now    func() time.Time
+	ctx         context.Context
+	paths       setupPaths
+	output      io.Writer
+	errorOutput io.Writer
+	logger      *slog.Logger
+	owner       *selfhost.Owner
+	now         func() time.Time
 }
 
-// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply"
+// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply|migrate"
 // (docs: self-host-config-design.md). Output names files and states, never
-// secret values.
+// secret values. migrate runs inside the server's containers, as the image
+// user: it only reads run/ and talks to the database.
 func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer) int {
 	logger, err := observability.NewLogger(errorOutput, slog.LevelInfo)
 	if err != nil || len(args) == 0 {
@@ -55,7 +59,7 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 		return 2
 	}
 	command := setupCommand{
-		ctx: ctx, output: output, logger: logger, now: time.Now,
+		ctx: ctx, output: output, errorOutput: errorOutput, logger: logger, now: time.Now,
 		paths: setupPaths{config: *configPath, layout: selfhost.Layout{
 			SecretsDir: filepath.Join(*stateDir, "secrets"), RunDir: filepath.Join(*stateDir, "run"),
 		}},
@@ -69,7 +73,8 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 		"approve-identity": {command.approve},
 		"render":           {command.render},
 		"check":            {command.check},
-		"apply":            {command.secrets, command.approveIfNew, command.renderApproved, command.check},
+		"apply":            {command.secrets, command.approveIfNew, command.render, command.check},
+		"migrate":          {command.migrateReported},
 	}
 	operation := args[0]
 	run, ok := steps[operation]
@@ -82,8 +87,9 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 			"error", err)
 		return 1
 	}
-	if operation != "init" {
-		// One setup run at a time over the state directory.
+	if operation != "init" && operation != "migrate" {
+		// One setup run at a time over the state directory. migrate writes
+		// nothing there; the database serializes its own migrations.
 		if err := prepareStateDir(*stateDir, command.owner); err != nil {
 			return fail(err)
 		}
@@ -194,18 +200,9 @@ func (command setupCommand) approveIfNew() error {
 	return command.approve()
 }
 
+// render writes run/. While an identity change waits for approval it writes
+// nothing and fails: Core would refuse to start the broker.
 func (command setupCommand) render() error {
-	return command.renderFiles(false)
-}
-
-// renderApproved renders for apply, which leaves run/ untouched and fails
-// while an identity change waits for approval (Core would refuse to start
-// the broker).
-func (command setupCommand) renderApproved() error {
-	return command.renderFiles(true)
-}
-
-func (command setupCommand) renderFiles(requireApproved bool) error {
 	config, err := command.loadConfig()
 	if err != nil {
 		return err
@@ -218,15 +215,25 @@ func (command setupCommand) renderFiles(requireApproved bool) error {
 	if err != nil {
 		return err
 	}
-	if requireApproved && status == selfhost.IdentityChanged {
+	if status == selfhost.IdentityChanged {
 		return errors.New("the identity configuration changed: review it, then run setup approve-identity")
 	}
-	rendered, err := selfhost.Render(config, state, command.paths.layout)
+	keys, err := selfhost.LoadPublicKeys(command.paths.layout.SecretsDir)
+	if err != nil {
+		return err
+	}
+	rendered, err := selfhost.Render(config, state, keys, command.paths.layout)
 	if err != nil {
 		return err
 	}
 	if err := prepareRunDir(command.paths.layout.RunDir, command.owner); err != nil {
 		return err
+	}
+	for _, name := range selfhost.DataDirs {
+		if err := prepareDataDir(filepath.Join(filepath.Dir(command.paths.layout.SecretsDir), name),
+			command.owner); err != nil {
+			return err
+		}
 	}
 	names := make([]string, 0, len(rendered.Files))
 	for name, contents := range rendered.Files {
@@ -236,10 +243,7 @@ func (command setupCommand) renderFiles(requireApproved bool) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	identity := map[selfhost.IdentityStatus]string{
-		selfhost.IdentityApproved: "approved", selfhost.IdentityChanged: "changed: run setup approve-identity",
-	}[status]
-	return command.report(map[string]any{"operation": "render", "files": names, "identity": identity})
+	return command.report(map[string]any{"operation": "render", "files": names, "identity": "approved"})
 }
 
 // prepareRunDir makes the rendered files' directory, owned by the image
@@ -297,6 +301,13 @@ func (command setupCommand) checkStages() (string, error) {
 	if err != nil {
 		return "private-login.json", err
 	}
+	// What serve reads at start: the listener's certificate and key and the
+	// client secret, each with its file mode rules.
+	construction, err := profile.LoadConstruction(command.ctx)
+	if err != nil {
+		return "login listener files", err
+	}
+	construction.Clear()
 	material, err := profile.Keys().Load(command.ctx)
 	if err != nil {
 		return "login keys", err
@@ -331,6 +342,13 @@ func (command setupCommand) checkStages() (string, error) {
 	}
 	if _, err := config.LoadOperatorMigration(settingsLookup(migration)); err != nil {
 		return "migrate.env (operator)", err
+	}
+	identity, err := readEnvFile(filepath.Join(run, "identity-migrate.env"))
+	if err != nil {
+		return "identity-migrate.env", err
+	}
+	if _, err := config.LoadMigration(settingsLookup(identity)); err != nil {
+		return "identity-migrate.env", err
 	}
 	return "", nil
 }
@@ -378,4 +396,173 @@ func nonNil(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// migrateReported runs migrate and names the step that failed in the
+// output (the log redacts error text).
+func (command setupCommand) migrateReported() error {
+	err := command.migrate()
+	if err != nil {
+		_ = command.report(map[string]any{"operation": "migrate", "done": false, "failed": migrateStage(err)})
+	}
+	return err
+}
+
+// migrateStage is the leading "stage:" of a migrate error, never its cause.
+func migrateStage(err error) string {
+	stage, _, _ := strings.Cut(err.Error(), ":")
+	return stage
+}
+
+// migrate installs or upgrades the database in the one safe order
+// (deployment.md): the login roles' passwords, operator steps, schema,
+// operator steps after rollout, verify; then the identity broker's own
+// database and its runtime grants; then, on a new installation only,
+// bootstrap. Every step is idempotent, so the same command installs and
+// upgrades. Core must not serve a newer release before it succeeds.
+func (command setupCommand) migrate() error {
+	run := command.paths.layout.RunDir
+	migration, err := readEnvFile(filepath.Join(run, "migrate.env"))
+	if err != nil {
+		return err
+	}
+	lookup := settingsLookup(migration)
+	if err := command.setLoginPasswords(lookup); err != nil {
+		return err
+	}
+	for _, step := range []struct {
+		name string
+		run  func() int
+	}{
+		{"operator steps", func() int {
+			return runMigrateOperator(command.ctx, []string{"apply"}, lookup, command.output, command.errorOutput,
+				openOperatorService)
+		}},
+		{"migrate up", func() int {
+			return runMigrate(command.ctx, "up", lookup, command.output, command.errorOutput, openMigrationService)
+		}},
+		{"operator steps after rollout", func() int {
+			return runMigrateOperator(command.ctx, []string{"apply", "--after-rollout"}, lookup, command.output,
+				command.errorOutput, openOperatorService)
+		}},
+		{"migrate verify", func() int {
+			return runMigrate(command.ctx, "verify", lookup, command.output, command.errorOutput, openMigrationService)
+		}},
+	} {
+		if step.run() != 0 {
+			return fmt.Errorf("%s failed", step.name)
+		}
+	}
+	if err := command.migrateIdentity(run); err != nil {
+		return err
+	}
+	if err := command.bootstrapIfNew(run); err != nil {
+		return err
+	}
+	return command.report(map[string]any{"operation": "migrate", "done": true})
+}
+
+// setLoginPasswords stores, as the superuser, a fresh verifier of every
+// login role's password file, so a password file setup regenerated never
+// locks its role out (PostgreSQL ran postgres-init.sql only once).
+func (command setupCommand) setLoginPasswords(lookup config.LookupFunc) error {
+	operator, err := config.LoadOperatorMigration(lookup)
+	if err != nil {
+		return fmt.Errorf("login passwords: %w", err)
+	}
+	verifiers, err := selfhost.LoginVerifiers(command.paths.layout)
+	if err != nil {
+		return fmt.Errorf("login passwords: %w", err)
+	}
+	roles := make([]postgresadapter.RoleVerifier, 0, len(verifiers))
+	for _, verifier := range verifiers {
+		roles = append(roles, postgresadapter.RoleVerifier{Role: verifier.Role, Verifier: verifier.Verifier})
+	}
+	if err := postgresadapter.SetLoginRolePasswords(command.ctx, postgresadapter.MigrationOptions{
+		Address: operator.PostgreSQL.Address, Database: operator.PostgreSQL.Database,
+		User: operator.PostgreSQL.User, PasswordFile: operator.PostgreSQL.PasswordFile,
+		CAFile: operator.PostgreSQL.CAFile, ConnectTimeout: operator.ConnectTimeout,
+		LockTimeout: operator.LockTimeout, StatementTimeout: operator.StatementTimeout,
+		Actor: "setup", CodeRelease: buildinfo.Release(),
+	}, roles); err != nil {
+		return fmt.Errorf("login passwords: %w", err)
+	}
+	return command.report(map[string]any{"operation": "login passwords", "roles": len(roles)})
+}
+
+// bootstrapIfNew applies the installation plan only while the database
+// holds no Deployment. After that the Console owns accounts and Workspaces:
+// a later run must not recreate a first admin someone removed, and a
+// Deployment in recovery must not stop Core from starting.
+func (command setupCommand) bootstrapIfNew(run string) error {
+	settings, err := readEnvFile(filepath.Join(run, "bootstrap.env"))
+	if err != nil {
+		return err
+	}
+	lookup := settingsLookup(settings)
+	migration, err := config.LoadMigration(lookup)
+	if err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+	installed, err := postgresadapter.DeploymentInstalled(command.ctx, postgresadapter.MigrationOptions{
+		Address: migration.PostgreSQL.Address, Database: migration.PostgreSQL.Database,
+		User: migration.PostgreSQL.User, PasswordFile: migration.PostgreSQL.PasswordFile,
+		CAFile: migration.PostgreSQL.CAFile, ConnectTimeout: migration.ConnectTimeout,
+		LockTimeout: migration.LockTimeout, StatementTimeout: migration.StatementTimeout,
+		Actor: migration.Actor, CodeRelease: buildinfo.Release(),
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+	if installed {
+		return command.report(map[string]any{"operation": "bootstrap", "skipped": "already installed"})
+	}
+	if runBootstrap(command.ctx, "apply", lookup, command.output, command.errorOutput) != 0 {
+		return errors.New("bootstrap failed")
+	}
+	return nil
+}
+
+func (command setupCommand) migrateIdentity(run string) error {
+	settings, err := readEnvFile(filepath.Join(run, "identity-migrate.env"))
+	if err != nil {
+		return err
+	}
+	migration, err := config.LoadMigration(settingsLookup(settings))
+	if err != nil {
+		return fmt.Errorf("identity-migrate.env: %w", err)
+	}
+	if err := migrateIdentityStorage(command.ctx, migration, command.logger); err != nil {
+		return fmt.Errorf("identity broker schema: %w", err)
+	}
+	if err := postgresadapter.GrantIdentityRuntime(command.ctx, postgresadapter.MigrationOptions{
+		Address: migration.PostgreSQL.Address, Database: migration.PostgreSQL.Database,
+		User: migration.PostgreSQL.User, PasswordFile: migration.PostgreSQL.PasswordFile,
+		CAFile: migration.PostgreSQL.CAFile, ConnectTimeout: migration.ConnectTimeout,
+		LockTimeout: migration.LockTimeout, StatementTimeout: migration.StatementTimeout,
+		Actor: migration.Actor, CodeRelease: buildinfo.Release(),
+	}, selfhost.IdentityRuntimeRole); err != nil {
+		return fmt.Errorf("identity broker grants: %w", err)
+	}
+	return command.report(map[string]any{"operation": "identity storage", "migrated": true})
+}
+
+// prepareDataDir makes a bundled datastore's data directory, owned by the
+// image user and private to it (0700); a link is refused. An existing one
+// keeps its contents.
+func prepareDataDir(dir string, owner *selfhost.Owner) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("%s must be a directory", dir)
+	}
+	if owner == nil {
+		return nil
+	}
+	if err := os.Chown(dir, owner.UID, owner.GID); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700) // #nosec G302 -- a private directory.
 }

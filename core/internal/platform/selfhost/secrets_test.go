@@ -31,7 +31,7 @@ func TestGenerateSecretsWritesEveryKindInItsFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSecrets() error = %v", err)
 	}
-	if len(report.Created) != len(secretCatalog)+len(tlsLeaves)*2+2 || len(report.Kept) != 0 {
+	if len(report.Created) != len(secretCatalog)+len(tlsLeaves)*2+4 || len(report.Kept) != 0 {
 		t.Fatalf("report = %+v", report)
 	}
 	info, err := os.Stat(dir)
@@ -45,6 +45,7 @@ func TestGenerateSecretsWritesEveryKindInItsFormat(t *testing.T) {
 		secretControlKey:   regexp.MustCompile(`^privkey:[0-9a-f]{64}$`),
 		secretClientSecret: regexp.MustCompile(`^[0-9a-f]{64}$`),
 		secretBrowserKey:   regexp.MustCompile(`^[A-Za-z0-9+/]{43}=$`),
+		secretRelayKey:     regexp.MustCompile(`^privkey:[0-9a-f]{64}$`),
 	}
 	for _, spec := range secretCatalog {
 		contents := readFile(t, dir, spec.name)
@@ -106,6 +107,8 @@ func TestGenerateSecretsNeverReplacesWhatExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := readFile(t, dir, "postgres-runtime-password")
+	initSQL := readFile(t, dir, "postgres-init.sql")
+	acl := readFile(t, dir, "redis-users.acl")
 	firstState, err := LoadState(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +120,20 @@ func TestGenerateSecretsNeverReplacesWhatExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Created) != 1 || report.Created[0] != "redis-password" {
+	// Redis's user file follows the new password; PostgreSQL's first-start
+	// file does not change (setup migrate sets the roles' verifiers).
+	if strings.Join(report.Created, ",") != "redis-password,redis-users.acl" {
 		t.Fatalf("second run created %v", report.Created)
+	}
+	if bytes.Equal(readFile(t, dir, "redis-users.acl"), acl) {
+		t.Fatal("the Redis user file kept the old password's digest")
+	}
+	if !bytes.Equal(readFile(t, dir, "postgres-init.sql"), initSQL) {
+		t.Fatal("postgres-init.sql changed")
+	}
+	third, err := GenerateSecrets(testConfig(t), dir, options)
+	if err != nil || len(third.Created) != 0 {
+		t.Fatalf("third run created %v (%v)", third.Created, err)
 	}
 	if string(readFile(t, dir, "postgres-runtime-password")) != string(before) {
 		t.Fatal("an existing secret changed")
@@ -235,6 +250,26 @@ func TestGenerateSecretsRefusesHalfPairsAndDriftedCopies(t *testing.T) {
 	}
 }
 
+func TestGenerateSecretsRefusesLeavesOfOtherNames(t *testing.T) {
+	t.Parallel()
+	dir := secretsDir(t)
+	options := GenerateOptions{Now: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)}
+	if _, err := GenerateSecrets(testConfig(t), dir, options); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := ParseConfig([]byte(strings.Replace(validConfig, "mesh.example.com", "vpn.example.com", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateSecrets(moved, dir, options); !errors.Is(err, ErrSecrets) {
+		t.Fatalf("leaves of the old domain kept: %v", err)
+	}
+	login := parseCertificate(t, readFile(t, dir, "login.crt"))
+	if len(login.DNSNames) != 1 || login.DNSNames[0] != "mesh.example.com" {
+		t.Fatalf("login certificate names %v", login.DNSNames)
+	}
+}
+
 func secretsDir(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "secrets")
@@ -276,4 +311,48 @@ func parseCertificate(t *testing.T, contents []byte) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return certificate
+}
+
+func TestLoginVerifiersCoverEveryLoginRole(t *testing.T) {
+	t.Parallel()
+	dir := secretsDir(t)
+	if _, err := GenerateSecrets(testConfig(t), dir, GenerateOptions{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	verifiers, err := LoginVerifiers(Layout{SecretsDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := make([]string, 0, len(verifiers))
+	for _, verifier := range verifiers {
+		roles = append(roles, verifier.Role)
+		if !strings.HasPrefix(verifier.Verifier, "SCRAM-SHA-256$4096:") {
+			t.Errorf("%s: verifier is not SCRAM", verifier.Role)
+		}
+	}
+	if strings.Join(roles, ",") != "mesh_migrator,mesh_runtime,mesh_worker,identity_migrator,identity_runtime" {
+		t.Fatalf("roles = %v", roles)
+	}
+}
+
+func TestGenerateSecretsRefusesANewSuperuserPasswordForAnExistingDatabase(t *testing.T) {
+	t.Parallel()
+	dir := secretsDir(t)
+	options := GenerateOptions{Now: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)}
+	if _, err := GenerateSecrets(testConfig(t), dir, options); err != nil {
+		t.Fatal(err)
+	}
+	data := filepath.Join(filepath.Dir(dir), "postgres")
+	if err := os.MkdirAll(filepath.Join(data, "pgdata"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "postgres-superuser-password")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateSecrets(testConfig(t), dir, options); !errors.Is(err, ErrSuperuserPasswordLost) {
+		t.Fatalf("GenerateSecrets() error = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "postgres-superuser-password")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a new superuser password was written: %v", err)
+	}
 }

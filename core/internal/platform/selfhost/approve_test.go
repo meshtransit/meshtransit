@@ -56,7 +56,7 @@ func TestApproveIdentityPinsThenAsksAgainOnChange(t *testing.T) {
 	if status, _ := CheckIdentity(changed, first, layout, fakeFingerprint); status != IdentityChanged {
 		t.Fatalf("changed client status = %v", status)
 	}
-	rendered, err := Render(changed, first, layout)
+	rendered, err := Render(changed, first, testKeys, layout)
 	if err != nil || parseEnv(t, rendered.Files["core.env"])["MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT"] !=
 		first.IdentityFingerprint {
 		t.Fatalf("render before approval does not keep the old pin: %v", err)

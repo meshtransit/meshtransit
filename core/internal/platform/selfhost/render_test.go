@@ -14,6 +14,11 @@ import (
 // #nosec G101 -- directory paths, no credentials.
 var testLayout = Layout{SecretsDir: "/var/lib/meshtransit/secrets", RunDir: "/var/lib/meshtransit/run"}
 
+var testKeys = PublicKeys{
+	Relay:   "mtrelay:" + strings.Repeat("1", 64),
+	Signing: "mtsign:" + strings.Repeat("2", 64),
+}
+
 func approvedState() State {
 	return State{
 		Format: stateFormat, DeploymentID: "01890f00-0000-7000-8000-000000000001", RecoveryEpoch: 1,
@@ -44,7 +49,7 @@ func TestRenderNeedsAnApprovedIdentity(t *testing.T) {
 	t.Parallel()
 	state := approvedState()
 	state.IdentityFingerprint = ""
-	if _, err := Render(testConfig(t), state, testLayout); !errors.Is(err, ErrIdentityNotApproved) {
+	if _, err := Render(testConfig(t), state, testKeys, testLayout); !errors.Is(err, ErrIdentityNotApproved) {
 		t.Fatalf("Render() error = %v", err)
 	}
 }
@@ -52,11 +57,11 @@ func TestRenderNeedsAnApprovedIdentity(t *testing.T) {
 func TestRenderIsDeterministicAndOwnsEverySettingItWrites(t *testing.T) {
 	t.Parallel()
 	config := testConfig(t)
-	first, err := Render(config, approvedState(), testLayout)
+	first, err := Render(config, approvedState(), testKeys, testLayout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Render(config, approvedState(), testLayout)
+	second, err := Render(config, approvedState(), testKeys, testLayout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +82,7 @@ func TestRenderIsDeterministicAndOwnsEverySettingItWrites(t *testing.T) {
 
 func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 	t.Parallel()
-	rendered, err := Render(testConfig(t), approvedState(), testLayout)
+	rendered, err := Render(testConfig(t), approvedState(), testKeys, testLayout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +95,10 @@ func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 	var profile struct {
 		Prefixes []string `json:"trusted_proxy_prefixes"`
 	}
+	// The proxy (browser registration) and the Console reach the login
+	// listener, nothing else.
 	if err := json.Unmarshal(rendered.Files["private-login.json"], &profile); err != nil ||
-		len(profile.Prefixes) != 1 || profile.Prefixes[0] != "172.30.0.10/32" {
+		len(profile.Prefixes) != 2 || profile.Prefixes[0] != "172.30.0.10/32" || profile.Prefixes[1] != "172.30.0.11/32" {
 		t.Fatalf("login profile proxies = %v, %v", profile.Prefixes, err)
 	}
 	for name := range parseEnv(t, rendered.Files["bootstrap.env"]) {
@@ -108,14 +115,14 @@ func TestRenderRefusesNewPublicNamesAfterInstallation(t *testing.T) {
 	t.Parallel()
 	state := approvedState()
 	state.ApprovedIssuer, state.ApprovedOrigin = "https://id.mesh.example.com/oauth2", "https://mesh.example.com"
-	if _, err := Render(testConfig(t), state, testLayout); err != nil {
+	if _, err := Render(testConfig(t), state, testKeys, testLayout); err != nil {
 		t.Fatalf("same names: %v", err)
 	}
 	moved, err := ParseConfig([]byte(strings.Replace(validConfig, "mesh.example.com", "vpn.example.com", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Render(moved, state, testLayout); !errors.Is(err, ErrPublicNamesChanged) {
+	if _, err := Render(moved, state, testKeys, testLayout); !errors.Is(err, ErrPublicNamesChanged) {
 		t.Fatalf("new domain: %v", err)
 	}
 }
@@ -124,7 +131,7 @@ func TestRenderPinsTheApprovedFingerprintAndMatchesAcrossFiles(t *testing.T) {
 	t.Parallel()
 	config := testConfig(t)
 	state := approvedState()
-	rendered, err := Render(config, state, testLayout)
+	rendered, err := Render(config, state, testKeys, testLayout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,9 +142,18 @@ func TestRenderPinsTheApprovedFingerprintAndMatchesAcrossFiles(t *testing.T) {
 	if _, ok := core["MESHTRANSIT_OPERATOR_POSTGRES_PASSWORD_FILE"]; ok {
 		t.Fatal("the serving process gets the superuser's password")
 	}
-	digest := sha256.Sum256(rendered.Files["relay-directory.json"])
-	if core["MESHTRANSIT_RELAY_DIRECTORY_SHA256"] != "sha256:"+hex.EncodeToString(digest[:]) {
-		t.Fatal("relay directory digest does not match the rendered file")
+	digest := sha256.Sum256(rendered.Files["relay-map.json"])
+	if core["MESHTRANSIT_RELAY_MAP_SHA256"] != "sha256:"+hex.EncodeToString(digest[:]) ||
+		core["MESHTRANSIT_RELAY_AUTHORITY_ENABLED"] != "true" ||
+		core["MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID"] != state.DeploymentID {
+		t.Fatal("relay authority settings do not match the rendered map")
+	}
+	if !strings.Contains(string(rendered.Files["relay-map.json"]), testKeys.Relay) {
+		t.Fatal("relay map lacks the relay's key")
+	}
+	relay := parseEnv(t, rendered.Files["relay.env"])
+	if relay["MESHRELAY_TRUSTED_SIGNING_KEYS"] != testKeys.Signing || relay["MESHRELAY_CORE_URL"] != "https://mesh.example.com" {
+		t.Fatalf("relay.env = %v", relay)
 	}
 	var profile map[string]json.RawMessage
 	if err := json.Unmarshal(rendered.Files["private-login.json"], &profile); err != nil || len(profile) != 23 {
@@ -164,7 +180,7 @@ func TestRenderAppliesAdvancedTunables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rendered, err := Render(config, approvedState(), testLayout)
+	rendered, err := Render(config, approvedState(), testKeys, testLayout)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,6 +42,13 @@ relay:
   public_ipv4: 203.0.113.10
   # public_ipv6: 2001:db8::10
 
+# The MeshTransit images to run, pinned by digest (the release notes list
+# them). The core image is the one with the identity broker.
+images:
+  core: meshtransit/mesh-core:dexbroker-v1.0.0
+  console: meshtransit/mesh-console:v1.0.0
+  relay: meshtransit/mesh-relay:v1.0.0
+
 # Optional capacity tunables (timeouts, intervals, limits, pool sizes, log
 # level; docs/operations/configuration.md). Anything else is refused.
 # advanced:

@@ -40,7 +40,15 @@ type Config struct {
 	FirstAdmin   FirstAdmin        `yaml:"first_admin"`
 	Mail         *Mail             `yaml:"mail"`
 	Relay        Relay             `yaml:"relay"`
+	Images       Images            `yaml:"images"`
 	Advanced     map[string]string `yaml:"advanced"`
+}
+
+// Images are the MeshTransit images the server runs; pin them by digest.
+type Images struct {
+	Core    string `yaml:"core"`
+	Console string `yaml:"console"`
+	Relay   string `yaml:"relay"`
 }
 
 // Login is the upstream sign-in provider the identity broker federates.
@@ -147,6 +155,7 @@ func unsafeNode(node *yaml.Node) string {
 var (
 	hostLabel    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	settingName  = regexp.MustCompile(`^MESHTRANSIT_[A-Z0-9_]{1,96}$`)
+	imageName    = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,254}(:[A-Za-z0-9._-]{1,128})?(@sha256:[0-9a-f]{64})?$`)
 	emailAddress = regexp.MustCompile(`^[^@\s]{1,64}@[a-z0-9.-]{1,253}$`)
 )
 
@@ -170,6 +179,9 @@ func (config Config) validate() error {
 		{"first_admin.workspace", validValue(config.FirstAdmin.Workspace, 1, 64)},
 		{"relay.public_ipv4", publicAddress(config.Relay.PublicIPv4, true)},
 		{"relay.public_ipv6", !config.Relay.PublicIPv6.IsValid() || publicAddress(config.Relay.PublicIPv6, false)},
+		{"images.core", imageName.MatchString(config.Images.Core)},
+		{"images.console", imageName.MatchString(config.Images.Console)},
+		{"images.relay", imageName.MatchString(config.Images.Relay)},
 	}
 	for _, check := range checks {
 		if !check.ok {

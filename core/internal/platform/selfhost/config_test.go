@@ -19,6 +19,10 @@ first_admin:
   workspace: Example
 relay:
   public_ipv4: 203.0.113.10
+images:
+  core: meshtransit/mesh-core:dexbroker-test
+  console: meshtransit/mesh-console:test
+  relay: meshtransit/mesh-relay:test
 `
 
 func TestParseConfigDerivesHosts(t *testing.T) {
@@ -56,6 +60,7 @@ func TestParseConfigRefusesUnsafeOrUnknownInput(t *testing.T) {
 		"relative secret":     strings.Replace(validConfig, "/etc/meshtransit/google-client-secret", "google-secret", 1),
 		"secret elsewhere":    strings.Replace(validConfig, "/etc/meshtransit/google-client-secret", "/root/google-secret", 1),
 		"private relay ip":    strings.Replace(validConfig, "203.0.113.10", "10.0.0.5", 1),
+		"image with spaces":   strings.Replace(validConfig, "mesh-relay:test", "mesh relay", 1),
 		"no admin subject":    strings.Replace(validConfig, "  subject: \"110169484474386276334\"\n", "", 1),
 		"advanced derived":    validConfig + "advanced:\n  MESHTRANSIT_IDENTITY_ISSUER: https://x.example.com\n",
 		"advanced secret":     validConfig + "advanced:\n  MESHTRANSIT_REDIS_PASSWORD_FILE: /tmp/p\n",

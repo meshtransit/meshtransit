@@ -54,7 +54,9 @@ const (
 	identityDatabase = "meshtransit_identity"
 	connectorID      = "google-v1"
 	coreClientID     = "meshtransit-console"
-	relayTLSPort     = 4443
+	relayUDPPort     = 3479
+	relaySTUNPort    = 3478
+	relaySTUNAltPort = 3480
 )
 
 // Rendered is every file render produces, by name under Layout.RunDir.
@@ -70,7 +72,7 @@ type IdentityFingerprint func(settings map[string]string) (string, error)
 // Render produces the processes' settings and files from config.yaml, the
 // generated secrets and state.json. It reads nothing and writes nothing:
 // the same inputs give the same output.
-func Render(config Config, state State, layout Layout) (Rendered, error) {
+func Render(config Config, state State, keys PublicKeys, layout Layout) (Rendered, error) {
 	if state.IdentityFingerprint == "" {
 		return Rendered{}, ErrIdentityNotApproved
 	}
@@ -80,7 +82,10 @@ func Render(config Config, state State, layout Layout) (Rendered, error) {
 	if !filepath.IsAbs(layout.SecretsDir) || !filepath.IsAbs(layout.RunDir) {
 		return Rendered{}, fmt.Errorf("%w: layout paths must be absolute", ErrInvalidConfig)
 	}
-	relayDirectory, err := relayDirectoryJSON(config)
+	if !strings.HasPrefix(keys.Relay, "mtrelay:") || !strings.HasPrefix(keys.Signing, "mtsign:") {
+		return Rendered{}, fmt.Errorf("%w: relay public keys", ErrInvalidConfig)
+	}
+	relayMap, err := relayMapJSON(config, keys)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -92,26 +97,42 @@ func Render(config Config, state State, layout Layout) (Rendered, error) {
 	if err != nil {
 		return Rendered{}, err
 	}
-	relayDigest := sha256.Sum256(relayDirectory)
+	relayDigest := sha256.Sum256(relayMap)
 	core := coreSettings(config, state, layout, "sha256:"+hex.EncodeToString(relayDigest[:]))
 	migrator := migratorSettings(layout)
-	// Bootstrap needs the migrator, never the superuser.
-	bootstrap := mergeSettings(core, migrator, map[string]string{
+	// Bootstrap runs as the api role with the migrator, never the superuser;
+	// the api role refuses the relay authority's settings.
+	bootstrap := mergeSettings(withoutPrefix(core, "MESHTRANSIT_RELAY_"), migrator, map[string]string{
 		"MESHTRANSIT_ROLE":                "api",
 		"MESHTRANSIT_BOOTSTRAP_PLAN_FILE": filepath.Join(layout.RunDir, "bootstrap-plan.json"),
 	})
 	files := map[string][]byte{
-		"private-login.json":   login,
-		"relay-directory.json": relayDirectory,
-		"bootstrap-plan.json":  plan,
+		"private-login.json":  login,
+		"relay-map.json":      relayMap,
+		"bootstrap-plan.json": plan,
 	}
 	for name, settings := range map[string]map[string]string{
 		"core.env": core, "migrate.env": mergeSettings(migrator, operatorSettings(layout)), "bootstrap.env": bootstrap,
+		"identity-migrate.env": identityMigratorSettings(layout), "relay.env": relaySettings(config, keys, layout),
 	} {
 		contents, err := envFile(settings)
 		if err != nil {
 			return Rendered{}, fmt.Errorf("%s: %w", name, err)
 		}
+		files[name] = contents
+	}
+	envFiles := []string{"migrate.env", "bootstrap.env", "identity-migrate.env"}
+	migrateSettings := mergeSettings(bootstrap, migrator, operatorSettings(layout), identityMigratorSettings(layout))
+	mounts := serviceMounts{
+		core: pathsIn(layout, core, loginFiles(layout)),
+		migrate: pathsIn(layout, migrateSettings, loginFiles(layout),
+			runPaths(layout, envFiles), loginPasswordFiles(layout)),
+	}
+	bundle, err := composeFiles(config, layout, mounts)
+	if err != nil {
+		return Rendered{}, err
+	}
+	for name, contents := range bundle {
 		files[name] = contents
 	}
 	return Rendered{Files: files}, nil
@@ -140,7 +161,7 @@ func IdentitySettings(config Config, state State, layout Layout) map[string]stri
 		"MESHTRANSIT_IDENTITY_CORE_CLIENT_REDIRECT_URI":          consoleOrigin(config) + "/auth/v1/callback",
 		"MESHTRANSIT_IDENTITY_POSTGRES_ADDRESS":                  postgresAddress,
 		"MESHTRANSIT_IDENTITY_POSTGRES_DATABASE":                 identityDatabase,
-		"MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_USER":             "identity_runtime",
+		"MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_USER":             IdentityRuntimeRole,
 		"MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_PASSWORD_FILE":    secret("identity-runtime-password"),
 		"MESHTRANSIT_IDENTITY_POSTGRES_CA_FILE":                  secret("ca.crt"),
 	}
@@ -166,8 +187,12 @@ func coreSettings(config Config, state State, layout Layout, relayDigest string)
 		"MESHTRANSIT_REDIS_USERNAME":                             "meshtransit",
 		"MESHTRANSIT_REDIS_PASSWORD_FILE":                        secret("redis-password"),
 		"MESHTRANSIT_REDIS_CA_FILE":                              secret("ca.crt"),
-		"MESHTRANSIT_RELAY_DIRECTORY_FILE":                       filepath.Join(layout.RunDir, "relay-directory.json"),
-		"MESHTRANSIT_RELAY_DIRECTORY_SHA256":                     relayDigest,
+		"MESHTRANSIT_RELAY_AUTHORITY_ENABLED":                    "true",
+		"MESHTRANSIT_RELAY_SIGNING_KEY_FILE":                     secret("relay-signing.key"),
+		"MESHTRANSIT_RELAY_MAP_FILE":                             filepath.Join(layout.RunDir, "relay-map.json"),
+		"MESHTRANSIT_RELAY_MAP_SHA256":                           relayDigest,
+		"MESHTRANSIT_RELAY_TRUSTED_PROXY_CIDRS":                  trustedProxy,
+		"MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID":                 state.DeploymentID,
 		"MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID":            "enrollment-v1",
 		"MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE":          secret("enrollment-digest.key"),
 		"MESHTRANSIT_CONTROL_ADDRESS":                            controlAddress,
@@ -226,6 +251,24 @@ func migratorSettings(layout Layout) map[string]string {
 	}
 }
 
+// IdentityRuntimeRole is the broker database's runtime role, which setup
+// migrate grants data access after migrating the broker's schema.
+const IdentityRuntimeRole = "identity_runtime"
+
+// identityMigratorSettings migrate the broker's own database with its
+// migration identity, the database's owner (setup migrate).
+func identityMigratorSettings(layout Layout) map[string]string {
+	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
+	return map[string]string{
+		"MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS":       postgresAddress,
+		"MESHTRANSIT_MIGRATION_POSTGRES_DATABASE":      identityDatabase,
+		"MESHTRANSIT_MIGRATION_POSTGRES_USER":          "identity_migrator",
+		"MESHTRANSIT_MIGRATION_POSTGRES_PASSWORD_FILE": secret("identity-migrator-password"),
+		"MESHTRANSIT_MIGRATION_POSTGRES_CA_FILE":       secret("ca.crt"),
+		"MESHTRANSIT_MIGRATION_ACTOR":                  "setup",
+	}
+}
+
 // operatorSettings run "migrate operator" as the bundled PostgreSQL's
 // superuser; only migrate.env holds them.
 func operatorSettings(layout Layout) map[string]string {
@@ -249,20 +292,21 @@ func relayPrefixes(config Config) string {
 	return strings.Join(prefixes, ",")
 }
 
-func relayDirectoryJSON(config Config) ([]byte, error) {
-	ipv6 := ""
-	if config.Relay.PublicIPv6.IsValid() {
-		ipv6 = config.Relay.PublicIPv6.String()
-	}
+// relayMapJSON is the relay authority's map (deployment.md "Relays"): the
+// one relay on this server, by its public key. The revision stays 1 while
+// the relay does not change.
+func relayMapJSON(config Config, keys PublicKeys) ([]byte, error) {
 	type node struct {
-		Name      string `json:"name"`
-		HostName  string `json:"host_name"`
-		CertName  string `json:"cert_name"`
-		IPv4      string `json:"ipv4"`
-		IPv6      string `json:"ipv6"`
-		STUNPort  int    `json:"stun_port"`
-		RelayPort int    `json:"relay_port"`
-		STUNOnly  bool   `json:"stun_only"`
+		Name        string `json:"name"`
+		HostName    string `json:"host_name"`
+		IPv4        string `json:"ipv4"`
+		IPv6        string `json:"ipv6,omitempty"`
+		Key         string `json:"key"`
+		UDPPort     int    `json:"udp_port"`
+		TLSPort     int    `json:"tls_port,omitempty"`
+		STUNPort    int    `json:"stun_port"`
+		STUNAltPort int    `json:"stun_alt_port"`
+		Weight      int    `json:"weight"`
 	}
 	type region struct {
 		ID    int    `json:"id"`
@@ -270,16 +314,45 @@ func relayDirectoryJSON(config Config) ([]byte, error) {
 		Name  string `json:"name"`
 		Nodes []node `json:"nodes"`
 	}
-	directory := struct {
+	relay := node{
+		Name: "own1", HostName: config.Domain, IPv4: config.Relay.PublicIPv4.String(), Key: keys.Relay,
+		UDPPort: relayUDPPort, STUNPort: relaySTUNPort, STUNAltPort: relaySTUNAltPort,
+		Weight: 100,
+	}
+	if config.Relay.PublicIPv6.IsValid() {
+		relay.IPv6 = config.Relay.PublicIPv6.String()
+	}
+	return marshal(struct {
 		SchemaVersion int      `json:"schema_version"`
 		Revision      int      `json:"revision"`
 		Regions       []region `json:"regions"`
-	}{SchemaVersion: 1, Revision: 1, Regions: []region{{ID: 1, Code: "own", Name: "Self-hosted", Nodes: []node{{
-		Name: "1a", HostName: config.Domain, IPv4: config.Relay.PublicIPv4.String(), IPv6: ipv6,
-		STUNPort: 3478, RelayPort: relayTLSPort,
-	}}}}}
-	return marshal(directory)
+	}{SchemaVersion: 1, Revision: 1, Regions: []region{{ID: 1, Code: "own", Name: "Self-hosted", Nodes: []node{relay}}}})
 }
+
+// relaySettings run the relay on this server ("meshrelay serve", every flag
+// as MESHRELAY_<FLAG>). It trusts Core's relay signing key and polls Core
+// through the public name. It serves UDP and STUN only: the public proxy
+// owns TCP 443 and keeps its certificate keys to itself, so the TLS
+// fallback waits for a later slice (TD-CORE-135).
+func relaySettings(config Config, keys PublicKeys, layout Layout) map[string]string {
+	settings := map[string]string{
+		"MESHRELAY_KEY_FILE":             filepath.Join(layout.SecretsDir, "relay.key"),
+		"MESHRELAY_TRUSTED_SIGNING_KEYS": keys.Signing,
+		"MESHRELAY_CORE_URL":             consoleOrigin(config),
+		"MESHRELAY_PUBLIC_IP":            config.Relay.PublicIPv4.String(),
+		"MESHRELAY_UDP":                  "0.0.0.0:" + strconv.Itoa(relayUDPPort),
+		"MESHRELAY_STUN":                 "0.0.0.0:" + strconv.Itoa(relaySTUNPort),
+		"MESHRELAY_STUN_ALT":             "0.0.0.0:" + strconv.Itoa(relaySTUNAltPort),
+	}
+	if config.Relay.PublicIPv6.IsValid() {
+		settings["MESHRELAY_PUBLIC_IPV6"] = config.Relay.PublicIPv6.String()
+	}
+	return settings
+}
+
+// loginKeyPurposes are the login profile's purpose keys.
+var loginKeyPurposes = []string{"initiation", "capture", "continuation", "management_csrf",
+	"transaction_digest", "verifier_encryption", "subject_active", "provider_session"}
 
 func loginProfileJSON(config Config, state State, layout Layout) ([]byte, error) {
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
@@ -288,15 +361,15 @@ func loginProfileJSON(config Config, state State, layout Layout) ([]byte, error)
 		File string `json:"file"`
 	}
 	keys := map[string]key{}
-	for _, purpose := range []string{"initiation", "capture", "continuation", "management_csrf",
-		"transaction_digest", "verifier_encryption", "subject_active", "provider_session"} {
+	for _, purpose := range loginKeyPurposes {
 		file := "login-" + strings.ReplaceAll(purpose, "_", "-") + ".key"
 		keys[purpose] = key{ID: strings.ReplaceAll(purpose, "_", "-") + "-v1", File: secret(file)}
 	}
 	base := issuer(config)
 	profile := map[string]any{
 		"version": 4, "address": loginAddress, "origin": consoleOrigin(config),
-		"trusted_proxy_prefixes": []string{trustedProxy},
+		// The proxy sends browser registration here, the Console the rest.
+		"trusted_proxy_prefixes": []string{trustedProxy, consoleAddress + "/32"},
 		"deployment_id":          state.DeploymentID, "provider_id": state.ProviderID, "client_id": state.ClientID,
 		"provider_generation": state.ProviderGeneration, "recovery_epoch": state.RecoveryEpoch,
 		"issuer": base, "discovery_uri": base + "/.well-known/openid-configuration",
@@ -325,6 +398,54 @@ func marshal(value any) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
 	return append(contents, '\n'), nil
+}
+
+// loginFiles are the files the login profile names.
+func loginFiles(layout Layout) []string {
+	files := []string{"login.crt", "login.key", "login-client-secret"}
+	for _, purpose := range loginKeyPurposes {
+		files = append(files, "login-"+strings.ReplaceAll(purpose, "_", "-")+".key")
+	}
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, filepath.Join(layout.SecretsDir, file))
+	}
+	return paths
+}
+
+func runPaths(layout Layout, names []string) []string {
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(layout.RunDir, name))
+	}
+	return paths
+}
+
+// pathsIn are the setup-owned files the settings name (values under the
+// secrets or run directory) plus extra, sorted and without repeats: the
+// files a container needs and may see.
+func pathsIn(layout Layout, settings map[string]string, extra ...[]string) []string {
+	var paths []string
+	for _, value := range settings {
+		if strings.HasPrefix(value, layout.SecretsDir+"/") || strings.HasPrefix(value, layout.RunDir+"/") {
+			paths = append(paths, value)
+		}
+	}
+	for _, more := range extra {
+		paths = append(paths, more...)
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths)
+}
+
+func withoutPrefix(settings map[string]string, prefix string) map[string]string {
+	kept := make(map[string]string, len(settings))
+	for name, value := range settings {
+		if !strings.HasPrefix(name, prefix) {
+			kept[name] = value
+		}
+	}
+	return kept
 }
 
 func mergeSettings(layers ...map[string]string) map[string]string {

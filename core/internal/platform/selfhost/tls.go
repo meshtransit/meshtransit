@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -36,7 +37,10 @@ var tlsLeaves = []tlsLeaf{
 	{name: "redis", names: fixedNames("redis." + internalDomain)},
 	{name: "api", names: fixedNames("api." + internalDomain)},
 	{name: "control", names: fixedNames("control." + internalDomain)},
-	{name: "login", names: fixedNames("login." + internalDomain)},
+	// The login listener's certificate names only the Console's host (Core
+	// requires it; the Console edge verifies its upstream by that name).
+	{name: "login", names: func(config Config) []string { return []string{config.Domain} }},
+	{name: "console", names: fixedNames("console." + internalDomain)},
 	{name: "identity", names: func(config Config) []string { return []string{config.IdentityHost()} }},
 }
 
@@ -63,7 +67,7 @@ func generateTLS(config Config, dir string, options GenerateOptions, record func
 			return err
 		}
 		if present {
-			if err := verifyLeaf(dir, leaf.name, caCertificate); err != nil {
+			if err := verifyLeaf(dir, leaf.name, caCertificate, leaf.names(config)); err != nil {
 				return err
 			}
 			record(leaf.name+".crt", false)
@@ -79,7 +83,7 @@ func generateTLS(config Config, dir string, options GenerateOptions, record func
 		if err != nil {
 			return err
 		}
-		certificateCreated, err := writeIfAbsent(dir, leaf.name+".crt", certificate, 0o644, options.Owner)
+		certificateCreated, err := writeIfAbsent(dir, leaf.name+".crt", certificate, 0o640, options.Owner)
 		if err != nil {
 			return err
 		}
@@ -132,7 +136,7 @@ func loadOrCreateCA(dir string, options GenerateOptions) (*x509.Certificate, *ec
 		return nil, nil, false, err
 	}
 	certificateCreated, err := writeIfAbsent(dir, "ca.crt",
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644, options.Owner)
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o640, options.Owner)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -203,12 +207,17 @@ func pairPresent(dir, name string) (bool, error) {
 	}
 }
 
-// verifyLeaf checks an existing leaf: its key matches it and the current CA
-// signed it (a replaced CA leaves no leaf of the old one in use).
-func verifyLeaf(dir, name string, ca *x509.Certificate) error {
+// verifyLeaf checks an existing leaf: its key matches it, the current CA
+// signed it (a replaced CA leaves no leaf of the old one in use) and it
+// names exactly the names it must.
+func verifyLeaf(dir, name string, ca *x509.Certificate, names []string) error {
 	certificate, _, err := readPair(filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key"))
 	if err != nil {
 		return err
+	}
+	if !slices.Equal(certificate.DNSNames, names) || len(certificate.IPAddresses) != 0 {
+		return fmt.Errorf("%w: %s.crt names other hosts; remove %s.key and %s.crt to issue them again",
+			ErrSecrets, name, name, name)
 	}
 	if err := certificate.CheckSignatureFrom(ca); err != nil {
 		return fmt.Errorf("%w: %s.crt is not signed by ca.crt; remove %s.key and %s.crt to issue them again",
