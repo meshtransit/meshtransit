@@ -184,7 +184,7 @@ func TestParseOperatorStepRefusesUnknownStatements(t *testing.T) {
 }
 
 // Roles come from fixed sets: an owner is an owner role (one a role step
-// creates, or an install owner), a grantee is a MeshTransit role, PUBLIC
+// creates), a grantee is a MeshTransit role, PUBLIC
 // appears only in a REVOKE, and a role step never names an application role.
 func TestOperatorCatalogRefusesRolesOutsideTheAllowlist(t *testing.T) {
 	t.Parallel()

@@ -10,11 +10,9 @@ import (
 var (
 	// operatorApplicationRoles log in: the migrator and the serving roles.
 	// A step may grant to or revoke from them, never own with or reset them.
+	// Every NOLOGIN owner comes from a role step, the first two
+	// (mesh_audit_writer, mesh_share_writer) from version 2's.
 	operatorApplicationRoles = []string{"mesh_migrator", "mesh_runtime", "mesh_worker", "mesh_observer"}
-	// operatorInstallOwnerRoles are NOLOGIN owners the installation creates
-	// before any migration (see the deployment guide); later owners come
-	// from role steps.
-	operatorInstallOwnerRoles = []string{"mesh_audit_writer", "mesh_share_writer"}
 )
 
 // operatorFunctionOwners maps each function family (the name without its
@@ -77,7 +75,7 @@ func operatorFunctionOwner(signature string) string {
 }
 
 // OperatorManagedRoles returns every MeshTransit role: the application
-// roles, the install owners and the owner roles the role steps create. It
+// roles and the owner roles the role steps create. It
 // fails when the catalog does not parse, so a caller never works from a
 // partial list.
 func OperatorManagedRoles() ([]string, error) {
@@ -85,8 +83,7 @@ func OperatorManagedRoles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	roles := append(slices.Clone(operatorApplicationRoles), operatorInstallOwnerRoles...)
-	return append(roles, operatorStepRoles(steps)...), nil
+	return append(slices.Clone(operatorApplicationRoles), operatorStepRoles(steps)...), nil
 }
 
 // OperatorApplicationRoles returns the roles that log in: the migrator and
@@ -106,12 +103,12 @@ func operatorStepRoles(steps []OperatorStep) []string {
 }
 
 // validateOperatorRoles keeps every role of the catalog in fixed sets: a
-// role step never names an application or install role, an owner is the
+// role step never names an application role, an owner is the
 // owner role its function family maps to, a grantee a MeshTransit role, and
 // PUBLIC appears only in a REVOKE. A step can therefore never hand a function to, or reset, a
 // superuser or any role outside MeshTransit.
 func validateOperatorRoles(steps []OperatorStep) error {
-	owners := append(slices.Clone(operatorInstallOwnerRoles), operatorStepRoles(steps)...)
+	owners := operatorStepRoles(steps)
 	grantees := append(slices.Clone(operatorApplicationRoles), owners...)
 	for _, step := range steps {
 		for _, effect := range step.Effects {
@@ -119,8 +116,7 @@ func validateOperatorRoles(steps []OperatorStep) error {
 			switch effect.Kind {
 			case OperatorEffectRole:
 				allowed = step.Kind == OperatorStepRole && operatorRoleName.MatchString(effect.Role) &&
-					!slices.Contains(operatorApplicationRoles, effect.Role) &&
-					!slices.Contains(operatorInstallOwnerRoles, effect.Role)
+					!slices.Contains(operatorApplicationRoles, effect.Role)
 			case OperatorEffectOwner:
 				allowed = slices.Contains(owners, effect.Role) && operatorFunctionOwner(effect.Function) == effect.Role
 			case OperatorEffectExecute:

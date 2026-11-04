@@ -46,8 +46,10 @@ broker, if used, has its own database.
 
 ### Before the first migration
 
-As a superuser, create the roles and the database, then the extension inside
-that database. Core never creates roles itself.
+As a superuser, create the login roles and the database, then the extension
+inside that database. The NOLOGIN roles that own functions come from
+`meshcore migrate operator apply` (next section); Core's serving roles never
+create roles.
 
 ```sql
 -- Login roles: give each its own password, stored in a file for Core.
@@ -56,15 +58,6 @@ CREATE ROLE mesh_migrator LOGIN PASSWORD '…';
 CREATE ROLE mesh_runtime  LOGIN PASSWORD '…';
 CREATE ROLE mesh_worker   LOGIN PASSWORD '…';
 CREATE ROLE mesh_observer LOGIN;            -- reserved, no grants yet
-
--- Function owners: never log in, never members of anything.
-CREATE ROLE mesh_audit_writer NOLOGIN;
-CREATE ROLE mesh_share_writer NOLOGIN;
-CREATE ROLE mesh_direct_map_reader NOLOGIN;
-CREATE ROLE mesh_device_alias_observer NOLOGIN;
-CREATE ROLE mesh_device_alias_writer NOLOGIN;
-CREATE ROLE mesh_device_alias_map_reader NOLOGIN;
-CREATE ROLE mesh_flowlog_reader NOLOGIN;      -- connection log receiver reads (schema 268)
 
 CREATE DATABASE meshtransit OWNER mesh_migrator;
 \connect meshtransit
@@ -95,8 +88,9 @@ drops a pool whose server became read-only.
 1. As the database operator, run `meshcore migrate operator apply` with the
    operator's settings (`MESHTRANSIT_OPERATOR_*`,
    [configuration](configuration.md#operator-steps)). On a new database it
-   creates the NOLOGIN roles of the `…_role.sql` steps. A fresh install that
-   created every role above already has them.
+   creates every NOLOGIN function owner (`mesh_audit_writer`,
+   `mesh_share_writer` and the later ones); the migration refuses to run
+   without them.
 2. Run `meshcore migrate up` with the migrator's settings (`MESHTRANSIT_MIGRATION_*`).
    It applies every pending migration in one transaction, under an advisory
    lock, so concurrent runs serialize. Core refuses to start on a schema
