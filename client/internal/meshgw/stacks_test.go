@@ -170,7 +170,7 @@ func roundTrip(t *testing.T, conn io.ReadWriter, message string) {
 // device rebuilds. With the same addresses the gateway keeps its stack, so
 // a connection open across the swap carries on.
 func TestStacksKeepConnectionsAcrossReopens(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	clientDevice, clientNet := newClient(t)
 	w := newWire(t, clientDevice)
@@ -209,7 +209,7 @@ func TestStacksKeepConnectionsAcrossReopens(t *testing.T) {
 // A new address set is a new stack: the old one retires, and its
 // listeners stop, so the forwarder knows to bind again.
 func TestStacksReplaceTheStackWhenAddressesChange(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	_ = openTUN(t, stacks, gatewayConfig(gatewayAddr))
 	before, ok := stacks.Current()
@@ -268,7 +268,7 @@ func TestStacksReplaceTheStackWhenAddressesChange(t *testing.T) {
 // A closed TUN ends the data plane's read and refuses writes, and its events
 // end, as wireguard-go expects of any TUN.
 func TestStacksTUNCloses(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	device := openTUN(t, stacks, gatewayConfig(gatewayAddr))
 	if event := <-device.Events(); event != tun.EventUp {
@@ -304,7 +304,7 @@ func TestStacksTUNCloses(t *testing.T) {
 // OpenTUN reports exactly the map's addresses and routes, as the data plane
 // checks, and refuses a map without addresses or a closed opener.
 func TestStacksOpenTUNEchoesTheMap(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	config := gatewayConfig(gatewayAddr, netip.MustParseAddr("fd7a:115c:a1e0::10"))
 	opened, err := stacks.OpenTUN(t.Context(), config)
@@ -417,7 +417,7 @@ func equalPrefixes(a, b []netip.Prefix) bool {
 // without stalling the stack; once the data plane holds the next generation,
 // traffic flows again.
 func TestStacksDropRatherThanStall(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	stuck := openTUN(t, stacks, gatewayConfig(gatewayAddr))
 	current, _ := stacks.Current()

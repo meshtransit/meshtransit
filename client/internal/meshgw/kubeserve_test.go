@@ -43,7 +43,7 @@ func (greetingServer) Serve(ctx context.Context, listener net.Listener) error {
 // The listener serves only while Open allows it, and closing it closes the
 // connections it took (K1b design §3).
 func TestKubeProxyListenerOpensAndCloses(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	clientDevice, clientNet := newClient(t)
 	w := newWire(t, clientDevice)
@@ -109,7 +109,7 @@ func TestKubeProxyListenerOpensAndCloses(t *testing.T) {
 // The replica serves with a valid certificate and a map confirmed within
 // staleAfter.
 func TestKubeOpen(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	var valid atomic.Bool
 	var fresh atomic.Pointer[time.Time]
 	never := time.Time{}
@@ -138,7 +138,7 @@ func TestKubeOpen(t *testing.T) {
 // An address that cannot listen is tried again while the others serve on,
 // and readiness hears of it (review b5b M2, M3).
 func TestKubeProxyListenerRetriesAnAddress(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	second := netip.MustParseAddr("100.64.0.11")
 	stacks := newTestStacks(t)
 	clientDevice, clientNet := newClient(t)

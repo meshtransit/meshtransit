@@ -51,18 +51,19 @@ type Countries struct {
 // Open reads a table from a CSV file, gzip-compressed when its name ends
 // in .gz.
 func Open(path string) (*Countries, error) {
-	file, err := os.Open(path) // #nosec G304 -- the operator configures the path.
+	file, err := os.Open(path) // #nosec G304 G703 -- the operator configures the path.
 	if err != nil {
 		return nil, fmt.Errorf("geoip: open country table: %w", err)
 	}
-	defer file.Close()
+	// A read-only file: a failed close loses nothing.
+	defer func() { _ = file.Close() }()
 	var reader io.Reader = file
 	if strings.HasSuffix(path, ".gz") {
 		decompressed, err := gzip.NewReader(file)
 		if err != nil {
 			return nil, errors.Join(ErrMalformed, err)
 		}
-		defer decompressed.Close()
+		defer func() { _ = decompressed.Close() }()
 		reader = decompressed
 	}
 	return Parse(reader)

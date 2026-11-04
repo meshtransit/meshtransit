@@ -1,5 +1,5 @@
 // Package retention removes what Core no longer needs to keep (schema 274,
-// docs/database-store-separation.md §6): Activity past its months, finished
+// TD-CORE-130/131): Activity past its months, finished
 // outbox events past their days and expired idempotency records. Each kind
 // is removed in bounded batches through a definer function that records
 // itself; a pass that cannot take a lock in time is retried at the next.

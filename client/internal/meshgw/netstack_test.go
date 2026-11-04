@@ -38,7 +38,7 @@ var (
 // client's FIN, then answers over the half-closed connection and closes its
 // own side. The gateway's forwarder rests on exactly this.
 func TestNetstackCarriesTCPBetweenTwoStacks(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	listenerNet, dialerNet := joinedNetstacks(t)
 
 	listener, err := listenerNet.ListenTCPAddrPort(netip.AddrPortFrom(listenerAddr, 443))
@@ -106,7 +106,7 @@ func TestNetstackCarriesTCPBetweenTwoStacks(t *testing.T) {
 // A port with no listener answers with a reset, so a forwarder learns at
 // once that the target is down instead of waiting out its dial timeout.
 func TestNetstackRefusesAClosedPort(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	_, dialerNet := joinedNetstacks(t)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

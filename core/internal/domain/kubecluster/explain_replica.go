@@ -9,7 +9,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
-// ErrNoActiveReplica: the cluster has no active replica to explain through.
+// ErrNoActiveReplica reports a cluster with no active replica to explain through.
 var ErrNoActiveReplica = errors.New("kubernetes cluster: no active replica")
 
 // ReadExplainReplica returns the active replica with the lowest ordinal, the

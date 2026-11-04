@@ -93,4 +93,3 @@ func TestGroupReportsCeiling(t *testing.T) {
 	var unbound *groupReports
 	unbound.bindCeiling(nil)
 }
-

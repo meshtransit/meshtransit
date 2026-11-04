@@ -213,7 +213,7 @@ func (limiter *SharedLimiter) Take(ctx context.Context, workspace, gateway strin
 		// The batch's session ended: nothing to take.
 		taken = false
 	case err != nil:
-		if err != errSharedSkipped {
+		if !errors.Is(err, errSharedSkipped) {
 			limiter.skipUntil.Store(limiter.now().Add(sharedRetry).UnixNano())
 		}
 		if limiter.fellBack != nil {

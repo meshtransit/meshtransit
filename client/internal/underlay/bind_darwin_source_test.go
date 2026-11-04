@@ -74,6 +74,23 @@ func TestPickSourcePrefersAStableUsableAddress(t *testing.T) {
 	if got, ok := pickSource([]netip.Addr{stable, ipv4}, netip.MustParseAddr("203.0.113.1"), read); !ok || got != ipv4 {
 		t.Errorf("pickSource() for IPv4 = %v", got)
 	}
+	// A loopback destination is reached from a loopback address only, and
+	// a loopback address serves nothing else.
+	loopback := netip.MustParseAddr("127.0.0.1")
+	for _, test := range []struct {
+		candidates  []netip.Addr
+		destination string
+		want        netip.Addr
+	}{
+		{[]netip.Addr{loopback}, "127.0.0.1", loopback},
+		{[]netip.Addr{netip.IPv6Loopback(), stable}, "::1", netip.IPv6Loopback()},
+		{[]netip.Addr{loopback}, "203.0.113.1", netip.Addr{}},
+		{[]netip.Addr{ipv4}, "127.0.0.1", netip.Addr{}},
+	} {
+		if got, _ := pickSource(test.candidates, netip.MustParseAddr(test.destination), read); got != test.want {
+			t.Errorf("pickSource(%v, %s) = %v, want %v", test.candidates, test.destination, got, test.want)
+		}
+	}
 }
 
 func TestIPv6AddressFlagsReadsTheKernel(t *testing.T) {

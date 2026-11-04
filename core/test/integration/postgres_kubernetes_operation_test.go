@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -281,10 +282,9 @@ func assertKubernetesOperationStore(ctx context.Context, t *testing.T, runtimePo
 	row := func(last byte) kubeaudit.Row {
 		now := time.Now()
 		var id [16]byte
-		millis := uint64(now.UnixMilli())
-		for index := range 6 {
-			id[5-index] = byte(millis >> (8 * index))
-		}
+		var millis [8]byte
+		binary.BigEndian.PutUint64(millis[:], uint64(now.UnixMilli()))
+		copy(id[:6], millis[2:])
 		id[6], id[8], id[15] = 0x70, 0x80, last
 		return kubeaudit.Row{Gateway: gateway, NetworkRevision: 7,
 			Owner: kubeaudit.Owner{Kind: "member", Ref: "p:1"},
@@ -332,10 +332,9 @@ func assertKubernetesOperationProfiles(ctx context.Context, t *testing.T, admin 
 	gateway := kubeaudit.Gateway{MachineFingerprint: [32]byte(fingerprintOf(keys)), NodeKey: [32]byte(nodeKeyOf(keys))}
 	now := time.Now()
 	var id [16]byte
-	millis := uint64(now.UnixMilli())
-	for index := range 6 {
-		id[5-index] = byte(millis >> (8 * index))
-	}
+	var millis [8]byte
+	binary.BigEndian.PutUint64(millis[:], uint64(now.UnixMilli()))
+	copy(id[:6], millis[2:])
 	id[6], id[8], id[15] = 0x70, 0x80, 0x61
 	scope := [32]byte{0x61, 0x62}
 	answers, err := store.Record(ctx, []kubeaudit.Row{{Gateway: gateway, NetworkRevision: 7,

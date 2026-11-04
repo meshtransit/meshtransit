@@ -105,7 +105,7 @@ func (store *Store) readKubernetesCAsV2(ctx context.Context, transaction databas
 	if !ok {
 		return kubernetesCARead{}, false, nil
 	}
-	store.stats.kubernetesGatewayCAsOmitted.Add(uint64(dropped))
+	store.stats.kubernetesGatewayCAsOmitted.Add(uint64(max(dropped, 0))) // #nosec G115 -- not negative.
 	result.trust = trust
 	return result, true, nil
 }
@@ -304,8 +304,8 @@ func validTLSName(name string) bool {
 		return false
 	}
 	for _, character := range []byte(name) {
-		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' ||
-			character == '.' || character == '-') {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
+			character != '.' && character != '-' {
 			return false
 		}
 	}

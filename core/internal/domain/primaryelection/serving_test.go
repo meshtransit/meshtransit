@@ -157,7 +157,7 @@ func TestWorkerElectsASpreadGroupsServingSet(t *testing.T) {
 			DeliveredAt: started, SeenAt: clock.now, RouteHealthAt: clock.now,
 			RouteHealth: []distribution.SiteHealth{{Ref: group, State: state, Code: code}}}
 	}
-	health := func(observation distribution.Observation, group string, now time.Time) Report {
+	health := func(observation distribution.Observation, group string, _ time.Time) Report {
 		for _, item := range observation.RouteHealth {
 			if item.Ref == group {
 				return Report{ReportedAt: observation.RouteHealthAt, State: item.State, Code: item.Code}

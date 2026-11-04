@@ -153,7 +153,7 @@ func TestPolicyKubernetesAccessBrowserAdmission(t *testing.T) {
 		policyKubernetesAccessURL + "?policy_revision=abc": false,
 		policyKubernetesAccessURL:                          false,
 	} {
-		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 		if got := isPolicyKubernetesAccessRead(request); got != want {
 			t.Errorf("%s: %v", target, got)
 		}
@@ -163,8 +163,8 @@ func TestPolicyKubernetesAccessBrowserAdmission(t *testing.T) {
 			t.Errorf("%s routed to management: %v", target, got)
 		}
 	}
-	if isPolicyKubernetesAccessRead(httptest.NewRequest(http.MethodPost, policyKubernetesAccessURL+"?policy_revision=3",
-		nil)) {
+	if isPolicyKubernetesAccessRead(httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+		policyKubernetesAccessURL+"?policy_revision=3", nil)) {
 		t.Error("a POST admitted")
 	}
 }

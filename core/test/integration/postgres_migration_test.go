@@ -21,7 +21,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.LoadMigration() error = %v", err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	// About 40 s on a fixture database; under -race in a container runner
+	// past one minute (TD-TEST-58).
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 
 	runners := make([]*postgresadapter.MigrationRunner, 2)

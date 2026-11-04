@@ -193,7 +193,7 @@ func (f *forwarderTest) dial(t *testing.T, addr netip.Addr) net.Conn {
 // kubectl's bytes reach the API server and back unchanged, through a
 // half-close, and the log names the Device that connected.
 func TestKubeAPIForwarderCarriesAConnection(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	test := startForwarder(t, echoBackend(t), 16)
 	conn := test.dial(t, gatewayAddr)
 	defer func() { _ = conn.Close() }()
@@ -230,7 +230,7 @@ func TestKubeAPIForwarderCarriesAConnection(t *testing.T) {
 // When the map moves the gateway to new addresses, the forwarder listens
 // on the new stack.
 func TestKubeAPIForwarderFollowsTheStack(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	test := startForwarder(t, echoBackend(t), 16)
 	first := test.dial(t, gatewayAddr)
 	_ = first.Close()
@@ -244,7 +244,7 @@ func TestKubeAPIForwarderFollowsTheStack(t *testing.T) {
 
 // An API server that cannot be reached ends kubectl's connection at once.
 func TestKubeAPIForwarderClosesWhenTheBackendFails(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)
@@ -266,7 +266,7 @@ func TestKubeAPIForwarderClosesWhenTheBackendFails(t *testing.T) {
 // Connections past the limit are refused, so a client cannot exhaust the
 // pod.
 func TestKubeAPIForwarderLimitsConnections(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	test := startForwarder(t, echoBackend(t), 1)
 	held := test.dial(t, gatewayAddr)
 	defer func() { _ = held.Close() }()
@@ -286,7 +286,7 @@ func TestKubeAPIForwarderLimitsConnections(t *testing.T) {
 // Stopping the forwarder closes the connections it carries, so the gateway
 // stops even under a long kubectl watch.
 func TestKubeAPIForwarderStopsWithItsConnections(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	test := startForwarder(t, echoBackend(t), 16)
 	conn := test.dial(t, gatewayAddr)
 	defer func() { _ = conn.Close() }()
@@ -341,7 +341,7 @@ func closeWrite(conn net.Conn) error {
 // The forwarder reports listening once it takes connections on the stack's
 // addresses, and stops reporting it when it stops.
 func TestKubeAPIForwarderReportsListening(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	test := startForwarder(t, echoBackend(t), 16)
 	deadline := time.Now().Add(5 * time.Second)
 	for !test.forwarder.Listening() {
@@ -363,7 +363,7 @@ func TestKubeAPIForwarderReportsListening(t *testing.T) {
 // A port another listener holds fails the bind: the forwarder is not
 // listening, and binds once the port is free again.
 func TestKubeAPIForwarderRetriesAFailedBind(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	_ = openTUN(t, stacks, gatewayConfig(gatewayAddr))
 	current, _ := stacks.Current()
@@ -405,7 +405,7 @@ func (addresslessConn) RemoteAddr() net.Addr { return nil }
 // A connection without a remote address is carried or refused like any
 // other, never a panic that takes the gateway down.
 func TestKubeAPIForwarderSurvivesAConnectionWithoutAnAddress(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	logs := newRecordingHandler()
 	forwarder := &KubeAPIForwarder{Backend: "127.0.0.1:1", MaxConnections: 4, Logger: slog.New(logs)}
 	near, far := net.Pipe()

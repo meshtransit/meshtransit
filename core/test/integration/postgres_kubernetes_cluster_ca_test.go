@@ -240,15 +240,15 @@ WHERE workspace.public_id = $1::UUID`, scope.WorkspaceID().String()).Scan(&insta
 	// so is an intermediate of no active root, and a root that steps down
 	// while its intermediate is active.
 	second := fixture.creation(t, newIntermediate(t, root), rootCreation.ID, kubeca.StateActive, kubeca.ReasonAdmin)
-	fixture.refused(ctx, t, "a second active intermediate", kubeca.Changes{Steps: []kubeca.Step{{Create: second}}})
+	_ = fixture.refused(ctx, t, "a second active intermediate", kubeca.Changes{Steps: []kubeca.Step{{Create: second}}})
 	assertClusterCAState(ctx, t, admin, second.ID, "")
 	// A CA outside the recorded suffix is refused, whatever the worker says.
 	elsewhere := fixture.creation(t, fixture.newRoot(t, "prod.kube."+read.WorkspaceCode+"."+read.NetworkCode+
 		".other.example.net"), publicid.ID{}, kubeca.StateNext, kubeca.ReasonAdmin)
-	fixture.refused(ctx, t, "a CA outside the recorded suffix", kubeca.Changes{Steps: []kubeca.Step{{Create: elsewhere}}})
+	_ = fixture.refused(ctx, t, "a CA outside the recorded suffix", kubeca.Changes{Steps: []kubeca.Step{{Create: elsewhere}}})
 	orphan := fixture.creation(t, newIntermediate(t, root), mustPublicID(t), kubeca.StateActive, kubeca.ReasonAdmin)
-	fixture.refused(ctx, t, "an intermediate of no root", kubeca.Changes{Steps: []kubeca.Step{{Create: orphan}}})
-	fixture.refused(ctx, t, "a root over an active intermediate", kubeca.Changes{Steps: []kubeca.Step{
+	_ = fixture.refused(ctx, t, "an intermediate of no root", kubeca.Changes{Steps: []kubeca.Step{{Create: orphan}}})
+	_ = fixture.refused(ctx, t, "a root over an active intermediate", kubeca.Changes{Steps: []kubeca.Step{
 		move(rootCreation.ID, 1, kubeca.StateRetiring, kubeca.ReasonAdmin),
 	}})
 

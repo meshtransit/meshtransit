@@ -121,9 +121,18 @@ const (
 // elsewhere); a stable one before a temporary one, either before a
 // deprecated or detached one, which only serves when nothing else does
 // (renumbering); a unique local one only to a unique local destination,
-// which alone has a way back to it. flags reads an IPv6 address's flags;
-// one it cannot read counts as a temporary one.
+// which alone has a way back to it; a loopback one to a loopback
+// destination only. flags reads an IPv6 address's flags; one it cannot
+// read counts as a temporary one.
 func pickSource(candidates []netip.Addr, destination netip.Addr, flags func(netip.Addr) (uint32, error)) (netip.Addr, bool) {
+	if destination.IsLoopback() {
+		for _, address := range candidates {
+			if address.IsLoopback() && address.Is6() == destination.Is6() {
+				return address, true
+			}
+		}
+		return netip.Addr{}, false
+	}
 	ipv6, local := destination.Is6(), destination.Is6() && destination.IsPrivate()
 	var best netip.Addr
 	bestRank := -1

@@ -102,7 +102,7 @@ func assertKubernetesCARetireRequests(ctx context.Context, t *testing.T, admin *
 		kubeca.RetireRefusalGuard); err != nil || refused {
 		t.Fatalf("refusing an ended request = %v, %v", refused, err)
 	}
-	fixture.refused(ctx, t, "carrying out a request that no longer waits", kubeca.Changes{
+	_ = fixture.refused(ctx, t, "carrying out a request that no longer waits", kubeca.Changes{
 		Operator: kubeca.RetireRequestOperator(second.Request.ID), Completes: second.Request.ID,
 		Steps: []kubeca.Step{move(rootCreation.ID, 1, kubeca.StateRetired, kubeca.ReasonEmergency)}})
 	assertClusterCAState(ctx, t, admin, rootCreation.ID, "active")

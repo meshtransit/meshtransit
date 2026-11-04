@@ -97,7 +97,7 @@ func assertDataKeyRewrapAndRetire(ctx context.Context, t *testing.T, admin *pgx.
 	// No CA is sealed under a retired data key.
 	next := fixture.creation(t, fixture.newRoot(t, fixture.dnsName), publicid.ID{}, kubeca.StateNext,
 		kubeca.ReasonAdmin)
-	fixture.refused(ctx, t, "a CA under a retired data key", kubeca.Changes{Steps: []kubeca.Step{{Create: next}}})
+	_ = fixture.refused(ctx, t, "a CA under a retired data key", kubeca.Changes{Steps: []kubeca.Step{{Create: next}}})
 	read = fixture.read(ctx, t)
 	if len(read.DataKeys) != 2 || read.DataKeys[0].Active || !read.DataKeys[1].Active ||
 		read.DataKeys[1].ID != dataKeyID {
@@ -178,7 +178,7 @@ func assertDeletedClusterCAs(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		Steps:     []kubeca.Step{{Create: rootCreation}, {Create: intermediate}},
 		Schedules: []kubeca.Schedule{{Cluster: fixture.cluster, At: time.Now().Add(time.Hour)}},
 	})
-	fixture.refused(ctx, t, "ending an active cluster's schedule", kubeca.Changes{
+	_ = fixture.refused(ctx, t, "ending an active cluster's schedule", kubeca.Changes{
 		Schedules: []kubeca.Schedule{{Cluster: fixture.cluster, Done: true}},
 	})
 	if _, err := service.Delete(ctx, kubecluster.Deletion{
@@ -192,8 +192,8 @@ func assertDeletedClusterCAs(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		t.Fatalf("the deleted cluster = %+v", cluster)
 	}
 	late := fixture.creation(t, newIntermediate(t, root), rootCreation.ID, kubeca.StateActive, kubeca.ReasonAdmin)
-	fixture.refused(ctx, t, "a CA for a deleted cluster", kubeca.Changes{Steps: []kubeca.Step{{Create: late}}})
-	fixture.refused(ctx, t, "a root retired before its intermediate", kubeca.Changes{Steps: []kubeca.Step{
+	_ = fixture.refused(ctx, t, "a CA for a deleted cluster", kubeca.Changes{Steps: []kubeca.Step{{Create: late}}})
+	_ = fixture.refused(ctx, t, "a root retired before its intermediate", kubeca.Changes{Steps: []kubeca.Step{
 		move(rootCreation.ID, 1, kubeca.StateRetired, kubeca.ReasonClusterDeleted),
 	}})
 	fixture.change(ctx, t, kubeca.Changes{

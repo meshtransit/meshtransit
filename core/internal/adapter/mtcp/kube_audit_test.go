@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
 	"testing"
 	"time"
@@ -112,10 +113,9 @@ func kubeAuditFixture(t *testing.T, audit *fakeKubeAudit, stood time.Time) *conv
 func auditIntent(id byte, peer string, groups ...string) *mtcpv1.KubeAuditIntent {
 	now := time.Now()
 	intentID := make([]byte, 16)
-	millis := uint64(now.UnixMilli())
-	for index := range 6 {
-		intentID[5-index] = byte(millis >> (8 * index))
-	}
+	var millis [8]byte
+	binary.BigEndian.PutUint64(millis[:], uint64(now.UnixMilli()))
+	copy(intentID[:6], millis[2:])
 	intentID[6], intentID[8], intentID[15] = 0x70, 0x80, id
 	return &mtcpv1.KubeAuditIntent{IntentId: intentID, PeerDeviceId: peer, Groups: groups,
 		Class: mtcpv1.KubeAuditIntent_EXEC, Verb: "create", Resource: "pods", Subresource: "exec",

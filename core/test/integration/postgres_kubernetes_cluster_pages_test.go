@@ -307,7 +307,7 @@ RETURNING first_proven_at`, detail.Replicas[0].DeviceID.String()).Scan(&proven);
 // first, and tell a CA an operator retired, not who did.
 func assertKubernetesCAReads(ctx context.Context, t *testing.T, service *kubecluster.Service,
 	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID, retired publicid.ID,
-	operator kubeca.Operator) {
+	_ kubeca.Operator) {
 	t.Helper()
 	query := kubecluster.PageQuery{Session: owner, Scope: scope, ClusterID: clusterID, Limit: 1}
 	seen := map[publicid.ID]kubecluster.CertificateAuthority{}
@@ -378,7 +378,7 @@ func assertKubernetesOperationReads(ctx context.Context, t *testing.T, admin *pg
 	}
 	for index, operation := range all {
 		if index > 0 && !operation.ReceivedAt.Before(all[index-1].ReceivedAt) &&
-			!(operation.ReceivedAt.Equal(all[index-1].ReceivedAt) && operation.AuditID.String() < all[index-1].AuditID.String()) {
+			(!operation.ReceivedAt.Equal(all[index-1].ReceivedAt) || operation.AuditID.String() >= all[index-1].AuditID.String()) {
 			t.Fatalf("operations out of order at %d", index)
 		}
 		if !operation.GatewayDeviceID.IsValid() || len(operation.Groups) == 0 {
@@ -666,8 +666,8 @@ func assertKubernetesOperationExport(ctx context.Context, t *testing.T, service 
 	for index, record := range records {
 		if record.ReceivedAt.Before(from) || !record.ReceivedAt.Before(to) || len(record.Groups) == 0 ||
 			index > 0 && !records[index-1].ReceivedAt.Before(record.ReceivedAt) &&
-				!(records[index-1].ReceivedAt.Equal(record.ReceivedAt) &&
-					records[index-1].AuditID.String() < record.AuditID.String()) {
+				(!records[index-1].ReceivedAt.Equal(record.ReceivedAt) ||
+					records[index-1].AuditID.String() >= record.AuditID.String()) {
 			t.Fatalf("record %d out of range or order: %+v", index, record)
 		}
 	}

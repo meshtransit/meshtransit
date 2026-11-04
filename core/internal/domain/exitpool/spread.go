@@ -17,7 +17,7 @@ import (
 type Mode string
 
 const (
-	// ModeKeep, in an update, keeps the stored mode: a client that does not
+	// ModeKeep in an update keeps the stored mode: a client that does not
 	// know modes never changes one.
 	ModeKeep Mode = ""
 	// ModeFailover sends every consumer through the elected primary.

@@ -715,7 +715,7 @@ func assertCertificateRestoreGuard(ctx context.Context, t *testing.T, admin, run
 	}
 	stopped := fixture
 	stopped.scope = left[0].Scope
-	stopped.refused(ctx, t, "a worker CA change while a restore is suspected", kubeca.Changes{Steps: []kubeca.Step{
+	_ = stopped.refused(ctx, t, "a worker CA change while a restore is suspected", kubeca.Changes{Steps: []kubeca.Step{
 		move(left[0].CA, left[0].Version, kubeca.StateRetiring, kubeca.ReasonScheduled),
 	}})
 	// Clearing the guard needs every intermediate retired.

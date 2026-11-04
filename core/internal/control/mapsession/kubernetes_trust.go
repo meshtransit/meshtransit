@@ -15,11 +15,11 @@ import (
 type KubernetesAvailability uint8
 
 const (
-	// KubernetesTrustUnread: not read, or the answer could not be trusted.
+	// KubernetesTrustUnread means not read, or read but not trusted.
 	KubernetesTrustUnread KubernetesAvailability = iota
-	// KubernetesTrustAvailable: the clusters are the Network's, complete.
+	// KubernetesTrustAvailable means the clusters are the Network's, complete.
 	KubernetesTrustAvailable
-	// KubernetesTrustRestore: withheld while a database restore is
+	// KubernetesTrustRestore is withheld while a database restore is
 	// suspected.
 	KubernetesTrustRestore
 )
@@ -27,6 +27,9 @@ const (
 // MaximumKubernetesTrustRoots bounds the roots one cluster may name: next,
 // active and retiring.
 const MaximumKubernetesTrustRoots = 3
+
+// maximumTLSName is the longest DNS name a cluster's TLS name can be.
+const maximumTLSName = 253
 
 // KubernetesClusterTrust is what a client trusts one cluster's gateways by:
 // the name their certificates carry and the roots, by fingerprint, in id
@@ -64,7 +67,9 @@ func NewKubernetesTrust(clusters []KubernetesClusterTrust, roots map[[32]byte][]
 	for _, cluster := range clusters {
 		_, duplicateName := byName[cluster.Name]
 		_, duplicateID := ids[cluster.ID]
+		// Names fit the digest's one-byte lengths.
 		if duplicateName || duplicateID || !cluster.ID.IsValid() || cluster.Name.String() == "" ||
+			len(cluster.Name.String()) > kubecluster.MaximumNameLength || len(cluster.TLSName) > maximumTLSName ||
 			len(cluster.Roots) > MaximumKubernetesTrustRoots || cluster.TLSName != "" && len(cluster.Roots) == 0 {
 			return KubernetesTrust{}, false
 		}
@@ -94,10 +99,10 @@ func (trust KubernetesTrust) computeDigest() [32]byte {
 		cluster := trust.clusters[name]
 		id := cluster.ID.String()
 		for _, field := range []string{id, string(name), cluster.TLSName} {
-			hash.Write([]byte{byte(len(field))})
+			hash.Write([]byte{byte(len(field))}) // #nosec G115 -- NewKubernetesTrust bounds each field to 253 bytes.
 			hash.Write([]byte(field))
 		}
-		hash.Write([]byte{byte(len(cluster.Roots))})
+		hash.Write([]byte{byte(len(cluster.Roots))}) // #nosec G115 -- at most MaximumKubernetesTrustRoots.
 		for _, root := range cluster.Roots {
 			held := byte(0)
 			if _, ok := trust.roots[root]; ok {

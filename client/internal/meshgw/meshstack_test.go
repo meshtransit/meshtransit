@@ -26,7 +26,7 @@ import (
 // The gateway's stack keeps its own TCP sizes, not gVisor's 1 MiB
 // (TD-CLI-82).
 func TestMeshStackBufferSizes(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestMeshStackBufferSizes(t *testing.T) {
 // A cluster's sizes reach the stack, and sizes out of bounds are refused
 // (K1c Q88).
 func TestMeshStackConfiguredBuffers(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	buffers := TCPBuffers{Receive: 1 << 20, Send: 512 << 10}
 	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, buffers)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestMeshStackConfiguredBuffers(t *testing.T) {
 
 // An accepted connection probes an idle peer.
 func TestMeshStackKeepAlive(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestMeshStackKeepAlive(t *testing.T) {
 // The stack carries a connection both ways through the data plane's TUN,
 // and its listener stops on Close.
 func TestMeshStackCarriesAConnection(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	clientDevice, clientNet := newClient(t)
 	w := newWire(t, clientDevice)
@@ -173,7 +173,7 @@ func (s *meshStack) DialUDPAddrPort(local, remote netip.AddrPort) (net.Conn, err
 // An accepted connection holds keepalive and the stack's buffer sizes;
 // found among the stack's endpoints, so Accept dropping keepAlive fails it.
 func TestMeshStackAcceptedEndpoint(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	clientDevice, clientNet := newClient(t)
 	w := newWire(t, clientDevice)
@@ -229,7 +229,7 @@ func TestMeshStackAcceptedEndpoint(t *testing.T) {
 
 // Closing the listener wakes an Accept waiting on it.
 func TestMeshStackCloseWakesAccept(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestMeshStackCloseWakesAccept(t *testing.T) {
 // A closed stack reads and writes os.ErrClosed; a packet that is not IP is
 // refused, the batch's others still taken.
 func TestMeshStackReadWrite(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stack, err := newMeshStack([]netip.Addr{gatewayAddr}, netstackMTU, DefaultTCPBuffers())
 	if err != nil {
 		t.Fatal(err)
@@ -316,6 +316,8 @@ func echoRequest(source, target netip.Addr) []byte {
 // a map gone stale closes it and a fresh one opens it again at once, and
 // it serves; reusing the address is never two listeners on it (K1f, Q189).
 func TestMeshStackListensAgainAfterClosing(t *testing.T) {
+	// The subtests take the netstack slots; this one holding one too could
+	// starve them.
 	t.Parallel()
 	for name, closing := range map[string]func(served, client net.Conn){
 		"gateway first": func(served, client net.Conn) {
@@ -331,7 +333,7 @@ func TestMeshStackListensAgainAfterClosing(t *testing.T) {
 		"still open": func(net.Conn, net.Conn) {},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+			parallelNetstack(t)
 			stacks := newTestStacks(t)
 			clientDevice, clientNet := newClient(t)
 			w := newWire(t, clientDevice)

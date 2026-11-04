@@ -2,6 +2,7 @@ package mapsession
 
 import (
 	"crypto/sha256"
+	"strings"
 	"testing"
 
 	"meshtransit.net/core/internal/domain/dnsname"
@@ -81,6 +82,17 @@ func TestNewKubernetesTrust(t *testing.T) {
 			roots:    map[[32]byte][]byte{printB: rootB},
 		},
 		"no id": {clusters: []KubernetesClusterTrust{{Name: "alpha"}}},
+		// The digest writes each name's length in one byte.
+		"name over the limit": {clusters: []KubernetesClusterTrust{func() KubernetesClusterTrust {
+			cluster := testClusterTrust(t, first, "alpha")
+			cluster.Name = kubecluster.Name(strings.Repeat("a", kubecluster.MaximumNameLength+1))
+			return cluster
+		}()}},
+		"TLS name over 253 bytes": {clusters: []KubernetesClusterTrust{func() KubernetesClusterTrust {
+			cluster := testClusterTrust(t, first, "alpha", printA)
+			cluster.TLSName = strings.Repeat("a", 254)
+			return cluster
+		}()}},
 	} {
 		if _, ok := NewKubernetesTrust(test.clusters, test.roots); ok {
 			t.Errorf("%s: accepted", name)

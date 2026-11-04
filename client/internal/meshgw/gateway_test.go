@@ -89,7 +89,7 @@ func (r failingRunner) Run(context.Context) error { return r.err }
 // A daemon that stops on its own stops the gateway, forwarder and all,
 // instead of leaving it up and serving nothing.
 func TestServeStopsWhenTheDaemonStops(t *testing.T) {
-	t.Parallel()
+	parallelNetstack(t)
 	stacks := newTestStacks(t)
 	_ = openTUN(t, stacks, gatewayConfig(gatewayAddr))
 	forwarder := &KubeAPIForwarder{

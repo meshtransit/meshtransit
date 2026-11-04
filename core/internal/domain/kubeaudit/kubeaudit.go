@@ -118,7 +118,7 @@ func intentIDInWindow(id [16]byte, now time.Time) bool {
 	}
 	var millis [8]byte
 	copy(millis[2:], id[:6])
-	at := time.UnixMilli(int64(binary.BigEndian.Uint64(millis[:])))
+	at := time.UnixMilli(int64(binary.BigEndian.Uint64(millis[:]))) // #nosec G115 -- 48 bits fit int64.
 	return at.After(now.Add(-intentWindow)) && at.Before(now.Add(intentWindow))
 }
 
@@ -144,7 +144,7 @@ func (intent Intent) Digest() [32]byte {
 	hash := sha256.New()
 	write := func(value string) {
 		var size [4]byte
-		binary.BigEndian.PutUint32(size[:], uint32(len(value)))
+		binary.BigEndian.PutUint32(size[:], uint32(len(value))) // #nosec G115 -- Validate bounds each field.
 		hash.Write(size[:])
 		hash.Write([]byte(value))
 	}
@@ -153,7 +153,7 @@ func (intent Intent) Digest() [32]byte {
 	hash.Write(peer[:])
 	write(string(intent.Class))
 	var count [4]byte
-	binary.BigEndian.PutUint32(count[:], uint32(len(intent.Groups)))
+	binary.BigEndian.PutUint32(count[:], uint32(len(intent.Groups))) // #nosec G115 -- at most MaximumGroups.
 	hash.Write(count[:])
 	for _, value := range append(slices.Clone(intent.Groups), intent.Verb, intent.APIGroup, intent.Resource, intent.Subresource,
 		intent.Namespace, intent.Name, intent.Impersonated, string(intent.TokenID)) {

@@ -156,7 +156,7 @@ func kubeClusterListDigest(list []*mtcpv1.KubernetesCluster) ([32]byte, bool) {
 			return [32]byte{}, false
 		}
 		var size [4]byte
-		binary.BigEndian.PutUint32(size[:], uint32(len(encoded)))
+		binary.BigEndian.PutUint32(size[:], uint32(len(encoded))) // #nosec G115 -- a map message is far below 4 GiB.
 		hash.Write(size[:])
 		hash.Write(encoded)
 	}
