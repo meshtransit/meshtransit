@@ -8219,6 +8219,12 @@ func TestMigration274Retention(t *testing.T) {
 			t.Errorf("migration 274 lacks %q", want)
 		}
 	}
+	// The strongest lock comes first, before any index or policy (a lock
+	// upgraded under live writers deadlocks).
+	if lock, index := strings.Index(sql, "IN ACCESS EXCLUSIVE MODE;"), strings.Index(sql, "CREATE INDEX"); lock < 0 ||
+		lock > index {
+		t.Error("migration 274 changes its tables before locking them")
+	}
 	// The four evidence tables move to v2; nothing else loses immutability.
 	if got := strings.Count(sql, "EXECUTE FUNCTION mesh_audit.reject_immutable_change_v2()"); got != 4 {
 		t.Errorf("migration 274 puts %d tables on the v2 trigger, want 4", got)

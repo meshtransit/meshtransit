@@ -18,6 +18,16 @@
 --
 -- Run operator role step 274 (mesh_retention) before this migration.
 
+-- Every table below changes under an ACCESS EXCLUSIVE lock (policies,
+-- triggers), and the indexes take SHARE first: taking the weaker lock and
+-- then the stronger one under live writers deadlocked on the POC
+-- (2026-11-04). So the strongest lock is taken first, on every table, in
+-- the order a change transaction writes them; the runner's lock_timeout
+-- fails the migration rather than queue writers for long.
+LOCK TABLE mesh_audit.authority_mutation, mesh_audit.audit_event_identity, mesh_audit.audit_event,
+    mesh_ops.outbox_event, mesh_ops.outbox_attempt, mesh_ops.idempotency_record
+    IN ACCESS EXCLUSIVE MODE;
+
 -- Oldest first for each pass, so a pass with nothing to remove reads one
 -- index entry instead of a table. Built before any trigger changes, while
 -- the tables take writes as usual.
