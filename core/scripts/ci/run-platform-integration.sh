@@ -7,7 +7,7 @@ case "${go_runner}" in
 	host | container) ;;
 	*) printf '%s\n' 'Invalid platform Go runner mode.' >&2; exit 2 ;;
 esac
-go_runner_image='golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c'
+go_runner_image='golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb'
 source_dir="$(pwd -P)"
 postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
 # PLATFORM_SCALE=1 runs the opt-in map-stream scale test in place of the

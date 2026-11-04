@@ -6,9 +6,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq docker.io openssl rsync >/dev/null
 systemctl enable --now docker >/dev/null
-GO_VERSION=1.26.9
-# SHA-256 of go1.26.9.linux-amd64.tar.gz as published on go.dev/dl.
-GO_SHA256=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
+GO_VERSION=1.26.10
+# SHA-256 of go1.26.10.linux-amd64.tar.gz as published on go.dev/dl.
+GO_SHA256=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
 if [[ "$(/usr/local/go/bin/go version 2>/dev/null || true)" != "go version go${GO_VERSION} linux/amd64" ]]; then
 	download="$(mktemp -d)"
 	trap 'rm -rf "${download:?}"' EXIT

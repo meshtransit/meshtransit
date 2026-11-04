@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Go 1.26.10 toolchain baseline and `github.com/go-jose/go-jose/v4` v4.1.4.
+  Go 1.26.9's `crypto/x509` still trusted compromised intermediate
+  certificates (GO-2026-6809, reachable from the flowlog receiver's TLS
+  check), and go-jose v4.1.3 could panic decrypting JWE (GO-2026-4945, in the
+  Kubernetes token verifier's dependency graph). Core, relay, meshgw, the
+  identity broker image and the clients build with the new release; the Dex
+  broker evidence stays qualified at Go 1.26.9, which accepts a later patch.
+- Core (schema 275): renaming a Workspace and assigning or revoking a
+  Workspace role lock the Workspace's own audit head instead of the
+  Deployment stream every sign-in queues on; the worker exports
+  `meshtransit_audit_deployment_events_total`.
 - Core (schema 231): a Kubernetes cluster has one mesh DNS name,
   `<cluster>.kube.<workspace code>.<network code>.<suffix>`, which resolves to
   the addresses of the cluster's replicas a Device's map holds (in Device
