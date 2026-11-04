@@ -228,6 +228,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		additionalMetrics = append(additionalMetrics, retentionMetrics...)
 		roleServices = append(roleServices, app.OwnedService{Name: "retention-maintainer", Service: retentionMaintainer})
+		auditVolume, auditVolumeMetrics, composeErr := composeAuditVolume(storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "audit_volume_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, auditVolumeMetrics...)
+		roleServices = append(roleServices, app.OwnedService{Name: "audit-volume-sampler", Service: auditVolume})
 		operationPartitions, operationMetrics, composeErr := composeKubeOperationPartitions(storagePools.worker, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_operation_partition_composition_failure")

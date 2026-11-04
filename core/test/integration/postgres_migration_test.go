@@ -313,6 +313,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
 	assertWorkerCannotSetPublicNetworkScope(ctx, t, workerConnection)
 	assertWorkerCannotLockNetworkRevision(ctx, t, workerConnection)
+	assertDeploymentAuditVolume(ctx, t, adminConnection, workerConnection)
 	assertWorkerCannotLockNetworkAuditStream(ctx, t, workerConnection)
 	assertWorkerCannotAdvanceNetworkInventoryRevision(ctx, t, workerConnection)
 	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)

@@ -675,6 +675,8 @@ func Catalog() []Migration {
 		newMigration(272, "Connection log push destinations", connectionLogPushDestinationsSQL),
 		newMigration(273, "Connection log push destinations at the receiver", connectionLogPushReceiverSQL),
 		newMigration(274, "Retention of Activity, outbox events and idempotency records", retentionSQL),
+		newMigration(275, "Workspace changes lock their own audit head; Deployment audit volume for the worker",
+			workspaceAuditHeadAndVolumeSQL),
 	}
 }
 
@@ -1276,3 +1278,6 @@ var connectionLogPushReceiverSQL string
 
 //go:embed 000274_retention.up.sql
 var retentionSQL string
+
+//go:embed 000275_workspace_audit_head_and_volume.up.sql
+var workspaceAuditHeadAndVolumeSQL string

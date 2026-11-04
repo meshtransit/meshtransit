@@ -67,3 +67,32 @@ WHERE inheritance.inhparent = 'mesh_audit.audit_event'::REGCLASS
 	err = transaction.QueryRow(ctx, `SELECT mesh_ops.ensure_audit_event_partitions_v1(1)`).Scan(&ignored)
 	assertPostgreSQLCode(t, err, "42501")
 }
+
+// assertDeploymentAuditVolume checks schema 275: the worker reads the
+// Deployment streams' event count, and Workspace management locks its own
+// audit head instead of the Deployment stream.
+func assertDeploymentAuditVolume(ctx context.Context, t *testing.T, admin, worker *pgx.Conn) {
+	t.Helper()
+	var want, got int64
+	if err := admin.QueryRow(ctx, `SELECT COALESCE(sum(next_sequence - 1), 0)::BIGINT
+FROM mesh_audit.audit_stream WHERE scope_kind = 'deployment'`).Scan(&want); err != nil {
+		t.Fatalf("count Deployment audit events: %v", err)
+	}
+	if err := worker.QueryRow(ctx, `SELECT mesh_ops.deployment_audit_events_v1()`).Scan(&got); err != nil {
+		t.Fatalf("worker reads Deployment audit volume: %v", err)
+	}
+	if got != want || got <= 0 {
+		t.Fatalf("Deployment audit events = %d, want %d (> 0)", got, want)
+	}
+	var stale int
+	if err := admin.QueryRow(ctx, `SELECT count(*)::INTEGER FROM pg_catalog.pg_proc AS proc
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = proc.pronamespace
+WHERE namespace.nspname = 'mesh_ops'
+  AND proc.proname IN ('rename_owned_workspace_v1', 'assign_workspace_role_v1', 'revoke_workspace_role_v1')
+  AND pg_catalog.pg_get_functiondef(proc.oid) LIKE '%lock_deployment_stream_head%'`).Scan(&stale); err != nil {
+		t.Fatalf("read Workspace management functions: %v", err)
+	}
+	if stale != 0 {
+		t.Fatalf("%d Workspace management functions still lock the Deployment stream", stale)
+	}
+}

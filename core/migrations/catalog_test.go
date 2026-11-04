@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 274 {
-		t.Fatalf("len(Catalog()) = %d, want 274", len(catalog))
+	if len(catalog) != 275 {
+		t.Fatalf("len(Catalog()) = %d, want 275", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 274 {
-		t.Fatalf("LatestVersion() = %d, want 274", LatestVersion())
+	if LatestVersion() != 275 {
+		t.Fatalf("LatestVersion() = %d, want 275", LatestVersion())
 	}
 }
 
@@ -8260,6 +8260,39 @@ func TestMigration274Retention(t *testing.T) {
 	}
 	if got := strings.Count(sql, "pg_try_advisory_xact_lock("); got != 4 {
 		t.Errorf("%d functions pass on a busy lock, want 4", got)
+	}
+}
+
+func TestMigration275WorkspaceAuditHead(t *testing.T) {
+	t.Parallel()
+	sql := migrationVersion(t, 275).SQL
+	// Workspace management no longer queues on the Deployment stream.
+	if strings.Contains(sql, "lock_deployment_stream_head") {
+		t.Error("migration 275 still locks the Deployment stream")
+	}
+	for _, name := range []string{"rename_owned_workspace_v1", "assign_workspace_role_v1", "revoke_workspace_role_v1"} {
+		start := strings.Index(sql, "CREATE OR REPLACE FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Errorf("migration 275 lacks %s", name)
+			continue
+		}
+		body := sql[start:]
+		body = body[:strings.Index(body, "$function$\n;")]
+		lock := strings.Index(body, "FROM mesh_audit.lock_workspace_stream_head(p_deployment_public_id, p_workspace_public_id)")
+		// The head is locked before the final expiry decision.
+		decision := strings.Index(strings.ReplaceAll(body, " := ", ":="), "evaluated_at:=pg_catalog.clock_timestamp()")
+		if lock < 0 || decision < 0 || strings.Index(strings.ReplaceAll(body, " := ", ":="), "lock_workspace_stream_head") > decision {
+			t.Errorf("%s does not lock its Workspace head before deciding", name)
+		}
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.deployment_audit_events_v1()",
+		"WHERE stream.scope_kind = 'deployment'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.deployment_audit_events_v1() TO mesh_worker;",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 275 lacks %q", want)
+		}
 	}
 }
 
