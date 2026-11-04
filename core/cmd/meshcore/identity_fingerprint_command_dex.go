@@ -48,3 +48,14 @@ func runIdentityFingerprint(
 	}
 	return 0
 }
+
+// identityFingerprintFromSettings fingerprints identity settings given as a
+// table (meshcore setup), exactly as "identity fingerprint" does from the
+// environment.
+func identityFingerprintFromSettings(settings map[string]string) (string, error) {
+	identity, err := config.LoadIdentityFingerprintInput(settingsLookup(settings))
+	if err != nil {
+		return "", err
+	}
+	return dexbroker.CalculateConfigurationFingerprint(identityServiceOptions(identity))
+}

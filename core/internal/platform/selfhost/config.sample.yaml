@@ -1,0 +1,48 @@
+# MeshTransit self-host configuration. Edit this file, then run
+# "meshcore setup apply". Secrets, keys and internal addresses are generated;
+# never put a secret in this file, only the path of a file that holds it.
+version: 1
+
+# The public host name of this server. The Console, the API and node control
+# are served under it; the identity broker under id.<domain> (identity_host
+# overrides that). Point both DNS names at this server.
+domain: mesh.example.com
+
+# Let's Encrypt account email for the public certificates.
+acme_email: ops@example.com
+
+# The sign-in provider. Create an OAuth client (Web application) with the
+# redirect URI https://id.<domain>/oauth2/callback. Secret files live in
+# /etc/meshtransit, which every MeshTransit container mounts.
+login:
+  provider: google
+  client_id: 1234567890-example.apps.googleusercontent.com
+  client_secret_file: /etc/meshtransit/google-client-secret
+
+# The first administrator, by Google account subject (the "sub" claim, a
+# number), and the Workspace created for them.
+first_admin:
+  subject: "100000000000000000000"
+  display_name: Ada Admin
+  workspace: Example
+
+# Optional: send invitations by mail.
+# mail:
+#   from: mesh@example.com
+#   smtp:
+#     host: smtp.example.com
+#     port: 587
+#     tls: starttls
+#     username: mesh
+#     password_file: /etc/meshtransit/smtp-password
+
+# The relay on this server: its public addresses (UDP 3479, 3478, 3480 and
+# TCP 443 must reach it).
+relay:
+  public_ipv4: 203.0.113.10
+  # public_ipv6: 2001:db8::10
+
+# Optional capacity tunables (timeouts, intervals, limits, pool sizes, log
+# level; docs/operations/configuration.md). Anything else is refused.
+# advanced:
+#   MESHTRANSIT_LOG_LEVEL: info

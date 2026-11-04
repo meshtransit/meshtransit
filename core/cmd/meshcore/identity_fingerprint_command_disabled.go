@@ -17,3 +17,9 @@ func runIdentityFingerprint(
 ) int {
 	return 1
 }
+
+// identityFingerprintFromSettings needs the dexbroker build, where meshcore
+// setup runs.
+func identityFingerprintFromSettings(map[string]string) (string, error) {
+	return "", errIdentityBrokerUnavailable
+}
