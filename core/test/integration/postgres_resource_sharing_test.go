@@ -337,6 +337,7 @@ func assertPostgreSQLResourceSharing(
 	assertNetworkDeviceLifetime(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
 	assertNetworkAddressUsage(ctx, t, admin, runtimePool, session, consumerScope)
 	assertAuditPartitionsAndStreams(ctx, t, admin, workerPool)
+	assertRetention(ctx, t, admin, workerPool)
 	assertAuditHistory(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
 	// The fixtures above share this Device repeatedly into the same Network,
 	// which schema 151 refuses once its operator step runs; sameWorkspaceShare

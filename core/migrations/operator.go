@@ -291,3 +291,10 @@ var connectionLogPushOwnershipSQL string
 // status report of schema 273 to the receiver reader and status writer,
 // as step 270 and 271 did for their first versions.
 func ConnectionLogPushOwnershipSQL() string { return connectionLogPushOwnershipSQL }
+
+//go:embed operator/000274_retention_ownership.sql
+var retentionOwnershipSQL string
+
+// RetentionOwnershipSQL hands the row retention functions of schema 274 to
+// mesh_retention, the one role the immutable evidence trigger lets delete.
+func RetentionOwnershipSQL() string { return retentionOwnershipSQL }

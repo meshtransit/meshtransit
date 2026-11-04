@@ -221,6 +221,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		roleServices = append(roleServices, app.OwnedService{Name: "audit-partition-maintainer", Service: auditPartitions})
+		retentionMaintainer, retentionMetrics, composeErr := composeRetention(storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "retention_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, retentionMetrics...)
+		roleServices = append(roleServices, app.OwnedService{Name: "retention-maintainer", Service: retentionMaintainer})
 		operationPartitions, operationMetrics, composeErr := composeKubeOperationPartitions(storagePools.worker, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "kubernetes_operation_partition_composition_failure")

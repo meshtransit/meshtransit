@@ -250,6 +250,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.ConnectionLogPushOwnershipSQL()); err != nil {
 		t.Fatalf("hand the push destination reads and reports to their owners: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.RetentionOwnershipSQL()); err != nil {
+		t.Fatalf("hand the row retention functions to mesh_retention: %v", err)
+	}
 	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
 		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
 	}

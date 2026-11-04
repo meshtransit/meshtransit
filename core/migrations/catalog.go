@@ -674,6 +674,7 @@ func Catalog() []Migration {
 		newMigration(271, "Connection log status in the Network settings read", connectionLogConsoleStatusSQL),
 		newMigration(272, "Connection log push destinations", connectionLogPushDestinationsSQL),
 		newMigration(273, "Connection log push destinations at the receiver", connectionLogPushReceiverSQL),
+		newMigration(274, "Retention of Activity, outbox events and idempotency records", retentionSQL),
 	}
 }
 
@@ -1272,3 +1273,6 @@ var connectionLogPushDestinationsSQL string
 
 //go:embed 000273_connection_log_push_receiver.up.sql
 var connectionLogPushReceiverSQL string
+
+//go:embed 000274_retention.up.sql
+var retentionSQL string

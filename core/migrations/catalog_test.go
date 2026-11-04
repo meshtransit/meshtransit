@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 273 {
-		t.Fatalf("len(Catalog()) = %d, want 273", len(catalog))
+	if len(catalog) != 274 {
+		t.Fatalf("len(Catalog()) = %d, want 274", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 273 {
-		t.Fatalf("LatestVersion() = %d, want 273", LatestVersion())
+	if LatestVersion() != 274 {
+		t.Fatalf("LatestVersion() = %d, want 274", LatestVersion())
 	}
 }
 
@@ -8189,6 +8189,94 @@ func TestMigration273ConnectionLogPushReceiver(t *testing.T) {
 	} {
 		if !strings.Contains(ownership, want) {
 			t.Errorf("operator step 273 lacks %q", want)
+		}
+	}
+}
+
+// Migration 274 lets only mesh_retention delete evidence: the immutable
+// trigger v2 (an invoker function) admits a DELETE from that role with the
+// purge mark and nothing else; the row functions are the worker's alone,
+// bound their inputs and pass on a lock held by another worker; each
+// removing pass records itself; old months leave as whole partitions.
+func TestMigration274Retention(t *testing.T) {
+	t.Parallel()
+	sql := migrationVersion(t, 274).SQL
+	for _, want := range []string{
+		"CREATE TABLE mesh_audit.retention_run (",
+		"CREATE TABLE mesh_audit.audit_retention_checkpoint (",
+		"CREATE TRIGGER retention_run_immutable",
+		"CREATE FUNCTION mesh_audit.reject_immutable_change_v2()",
+		"AND current_user = 'mesh_retention'",
+		"pg_catalog.current_setting('mesh.retention_purge', TRUE) = 'on'",
+		"CREATE FUNCTION mesh_ops.prune_idempotency_records_v1(",
+		"CREATE FUNCTION mesh_ops.prune_outbox_events_v1(",
+		"CREATE FUNCTION mesh_ops.drop_audit_event_partitions_v1(",
+		"CREATE FUNCTION mesh_ops.prune_audit_rows_v1(",
+		"WHERE record.outbox_public_id = event.public_id",
+		"INSERT INTO mesh_audit.retention_run",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("migration 274 lacks %q", want)
+		}
+	}
+	// The four evidence tables move to v2; nothing else loses immutability.
+	if got := strings.Count(sql, "EXECUTE FUNCTION mesh_audit.reject_immutable_change_v2()"); got != 4 {
+		t.Errorf("migration 274 puts %d tables on the v2 trigger, want 4", got)
+	}
+	trigger := sql[strings.Index(sql, "CREATE FUNCTION mesh_audit.reject_immutable_change_v2()"):]
+	trigger = trigger[:strings.Index(trigger, "$function$;")]
+	if strings.Contains(trigger, "SECURITY DEFINER") {
+		t.Error("the v2 trigger runs as its owner: current_user would always match")
+	}
+	for _, banned := range []string{"OR REPLACE FUNCTION", "DROP FUNCTION", "TO mesh_runtime", "DISABLE TRIGGER",
+		"SET mesh.retention_purge", "OWNER TO", "GRANT UPDATE ON", "WITH GRANT OPTION", "GRANT mesh_"} {
+		if strings.Contains(sql, banned) {
+			t.Errorf("migration 274 has %q", banned)
+		}
+	}
+	for _, name := range []string{"prune_idempotency_records_v1", "prune_outbox_events_v1",
+		"drop_audit_event_partitions_v1", "prune_audit_rows_v1"} {
+		signature := functionSignature(t, sql, name)
+		for _, want := range []string{"SECURITY DEFINER", "SET search_path = pg_catalog", "SET lock_timeout = '200ms'"} {
+			if !strings.Contains(signature, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+		if !strings.Contains(sql, "GRANT EXECUTE ON FUNCTION mesh_ops."+name+"(") {
+			t.Errorf("%s is granted to no one", name)
+		}
+	}
+	// Two row functions set the purge mark and set it off again; the
+	// partition function never does: DROP removes no row one by one.
+	if on, off := strings.Count(sql, "'mesh.retention_purge', 'on', TRUE"),
+		strings.Count(sql, "'mesh.retention_purge', 'off', TRUE"); on != 2 || off != 2 {
+		t.Errorf("purge marks on %d, off %d, want 2 and 2", on, off)
+	}
+	if got := strings.Count(sql, "pg_try_advisory_xact_lock("); got != 4 {
+		t.Errorf("%d functions pass on a busy lock, want 4", got)
+	}
+}
+
+// Only schema 274's retention functions delete from the immutable evidence
+// tables; a later migration that does needs a reviewed change here.
+func TestOnlyRetentionDeletesEvidence(t *testing.T) {
+	t.Parallel()
+	evidence := regexp.MustCompile(`(?i)(DELETE\s+FROM|TRUNCATE(\s+TABLE)?)\s+mesh_(audit\.(audit_event\w*|` +
+		`authority_mutation|retention_run|audit_retention_checkpoint)|ops\.outbox_attempt)\b`)
+	// The trigger is the gate: a later migration that replaces it, drops or
+	// disables an immutable trigger needs a reviewed change here.
+	gate := regexp.MustCompile(`(?i)reject_immutable_change_v2|DROP\s+TRIGGER\s+\w*_immutable|DISABLE\s+TRIGGER`)
+	for _, migration := range Catalog() {
+		sql := stripSQLComments(migration.SQL)
+		if migration.Version != 274 {
+			if match := evidence.FindString(sql); match != "" {
+				t.Errorf("migration %d deletes evidence: %q", migration.Version, match)
+			}
+		}
+		if migration.Version > 274 {
+			if match := gate.FindString(sql); match != "" {
+				t.Errorf("migration %d touches the evidence trigger: %q", migration.Version, match)
+			}
 		}
 	}
 }
