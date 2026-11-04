@@ -510,4 +510,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLDeviceDNSLabels(ctx, t, adminConnection)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
+	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)
 }
