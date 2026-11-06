@@ -117,7 +117,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 	}
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
 	waitOperatorStepGauge(ctx, t, worker, 0)
-	if version := aliasWorkerVersion(ctx, t, worker); version != 5 {
+	if version := aliasWorkerVersion(ctx, t, worker); version != 6 {
 		t.Fatalf("alias worker version after the operator steps = %v", version)
 	}
 	result, err = operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true})

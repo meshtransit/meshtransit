@@ -47,7 +47,9 @@ func TestDeviceAliasWorkReadOwnsCleanupBeforeReleasingHints(t *testing.T) {
 }
 
 // TestDeviceAliasWorkReadsReadmittingWorkOnceGranted: discovery goes through
-// load work v4 (schema 171) only once the worker may run it and prepare v5,
+// load work v5 (schema 276, live endpoints only) once the worker may run it
+// and prepare v5, else through load work v4 (schema 171) once it may run that
+// and prepare v5,
 // else through load work v3 (schema 170) once it may run that and prepare v4,
 // and through v2 until then.
 func TestDeviceAliasWorkReadsReadmittingWorkOnceGranted(t *testing.T) {
@@ -56,7 +58,7 @@ func TestDeviceAliasWorkReadsReadmittingWorkOnceGranted(t *testing.T) {
 		version int
 		want    string
 	}{{2, loadDeviceAliasWorkSQL}, {3, loadDeviceAliasWorkSQL}, {4, loadReadmittingDeviceAliasWorkSQL},
-		{5, loadProviderReadmittingDeviceAliasWorkSQL}} {
+		{5, loadProviderReadmittingDeviceAliasWorkSQL}, {6, loadPendingDeviceAliasWorkSQL}} {
 		intent := aliasWorkerIntentFixture(t)
 		tx := &aliasWorkTestTransaction{mode: "valid", version: test.version}
 		store := &DeviceAliasWorkerStore{database: &fakeOutboxDatabase{transaction: tx}}
@@ -84,7 +86,8 @@ func (tx *aliasWorkTestTransaction) QueryRow(_ context.Context, query string, _ 
 			*values[0].(*int) = max(tx.version, 2)
 			return nil
 		}
-		if query != loadDeviceAliasWorkSQL && query != loadReadmittingDeviceAliasWorkSQL && query != loadProviderReadmittingDeviceAliasWorkSQL {
+		if query != loadDeviceAliasWorkSQL && query != loadReadmittingDeviceAliasWorkSQL && query != loadProviderReadmittingDeviceAliasWorkSQL &&
+			query != loadPendingDeviceAliasWorkSQL {
 			return errors.New("unexpected work query")
 		}
 		tx.loaded = query

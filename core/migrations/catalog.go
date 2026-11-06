@@ -677,6 +677,8 @@ func Catalog() []Migration {
 		newMigration(274, "Retention of Activity, outbox events and idempotency records", retentionSQL),
 		newMigration(275, "Workspace changes lock their own audit head; Deployment audit volume for the worker",
 			workspaceAuditHeadAndVolumeSQL),
+		newMigration(276, "Device alias work skips ended endpoints left with nothing to clean up",
+			deviceAliasPendingWorkSQL),
 	}
 }
 
@@ -1281,3 +1283,6 @@ var retentionSQL string
 
 //go:embed 000275_workspace_audit_head_and_volume.up.sql
 var workspaceAuditHeadAndVolumeSQL string
+
+//go:embed 000276_device_alias_pending_work.up.sql
+var deviceAliasPendingWorkSQL string

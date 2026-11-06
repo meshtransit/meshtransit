@@ -21,7 +21,7 @@ func TestDeviceAliasWorkerReportsTheSelectedFunctionVersion(t *testing.T) {
 	var logs bytes.Buffer
 	metrics := newPostgresPoolMetrics(PoolRoleWorker, func() postgresPoolStats { return postgresPoolStats{} })
 	metrics.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	for _, version := range []int{3, 3, 5} {
+	for _, version := range []int{3, 3, 6} {
 		intent := aliasWorkerIntentFixture(t)
 		tx := &aliasWorkTestTransaction{mode: "valid", version: version}
 		store := &DeviceAliasWorkerStore{database: &fakeOutboxDatabase{transaction: tx}, metrics: metrics}
@@ -39,9 +39,9 @@ func TestDeviceAliasWorkerReportsTheSelectedFunctionVersion(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[0], `"level":"WARN"`) ||
-		!strings.Contains(lines[0], `"operator_step":"000171_device_alias_provider_readmission_ownership"`) ||
+		!strings.Contains(lines[0], `"operator_step":"000276_device_alias_pending_work_ownership"`) ||
 		!strings.Contains(lines[0], `"version":3`) || !strings.Contains(lines[1], `"level":"INFO"`) ||
-		!strings.Contains(lines[1], `"version":5`) {
+		!strings.Contains(lines[1], `"version":6`) {
 		t.Fatalf("logs = %s", logs.String())
 	}
 }

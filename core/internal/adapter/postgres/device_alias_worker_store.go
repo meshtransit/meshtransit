@@ -61,15 +61,20 @@ const prepareReadmittingDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_a
 
 // prepareProviderReadmittingDeviceAliasChangeSQL is v4 that also gives a
 // resumed provider Device the endpoint's own Resource aliases back (schema
-// 171); used with load work v4.
+// 171); used with load work v4, and with v5 from schema 276.
 const prepareProviderReadmittingDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v5(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
 
-// deviceAliasWorkerVersionSQL reports the newest prepare the operator granted
-// to the worker: 5 when prepare v5 and load work v4 (schema 171) both are, 4
+// deviceAliasWorkerVersionSQL reports the newest pair the operator granted to
+// the worker: 6 when prepare v5 and load work v5 (schema 276) both are, 5
+// when prepare v5 and load work v4 (schema 171) both are, 4
 // when prepare v4 and load work v3 (schema 170) both are, which the worker
 // then uses together, else 3 (schema 147) or 2.
 const deviceAliasWorkerVersionSQL = `SELECT CASE
+ WHEN COALESCE(pg_catalog.has_function_privilege(
+  pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v5(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'), 'EXECUTE'), FALSE)
+  AND COALESCE(pg_catalog.has_function_privilege(
+  pg_catalog.to_regprocedure('mesh_ops.load_device_alias_work_v5(uuid,uuid,uuid,integer)'), 'EXECUTE'), FALSE) THEN 6
  WHEN COALESCE(pg_catalog.has_function_privilege(
   pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v5(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'), 'EXECUTE'), FALSE)
   AND COALESCE(pg_catalog.has_function_privilege(
@@ -138,7 +143,7 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	}
 	store.metrics.observeFunctionVersion(ctx, functionPathDeviceAliasWorker, version)
 	switch version {
-	case 5:
+	case 6, 5: // schema 276 changed only the loader
 		prepareQuery = prepareProviderReadmittingDeviceAliasChangeSQL
 	case 4:
 		prepareQuery = prepareReadmittingDeviceAliasChangeSQL

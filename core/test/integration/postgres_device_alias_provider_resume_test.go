@@ -239,10 +239,7 @@ func runAliasEndpointWorkerUntilIdle(ctx context.Context, t *testing.T, tx pgx.T
 		if _, err := tx.Exec(ctx, `RESET ROLE; SET LOCAL ROLE mesh_worker`); err != nil {
 			t.Fatal(err)
 		}
-		var encoded []byte
-		if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_`+aliasWorkLoadVersion+`($1::UUID,NULL,NULL,128)`, deploymentID).Scan(&encoded); err != nil {
-			t.Fatalf("load alias work: %v", err)
-		}
+		encoded := loadComparedAliasWork(ctx, t, tx, deploymentID)
 		var page struct {
 			Items []aliasWorkItem `json:"items"`
 		}

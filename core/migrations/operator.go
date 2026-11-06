@@ -298,3 +298,10 @@ var retentionOwnershipSQL string
 // RetentionOwnershipSQL hands the row retention functions of schema 274 to
 // mesh_retention, the one role the immutable evidence trigger lets delete.
 func RetentionOwnershipSQL() string { return retentionOwnershipSQL }
+
+//go:embed operator/000276_device_alias_pending_work_ownership.sql
+var deviceAliasPendingWorkOwnershipSQL string
+
+// DeviceAliasPendingWorkOwnershipSQL hands load_device_alias_work_v5 to the
+// alias writer and grants it to the worker (schema 276).
+func DeviceAliasPendingWorkOwnershipSQL() string { return deviceAliasPendingWorkOwnershipSQL }

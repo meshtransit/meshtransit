@@ -245,6 +245,10 @@ func TestDeviceAliasWorkerUsesNewestPrepareGranted(t *testing.T) {
 		{devicealias.Withdraw, 5, prepareDeviceAliasWithdrawalSQL},
 		{devicealias.QuarantineResource, 5, prepareDeviceAliasResourceQuarantineSQL},
 		{devicealias.Withdraw, 4, prepareDeviceAliasWithdrawalSQL},
+		// Schema 276 changes only the loader: prepare stays v5.
+		{devicealias.Reserve, 6, prepareProviderReadmittingDeviceAliasChangeSQL},
+		{devicealias.Ready, 6, prepareProviderReadmittingDeviceAliasChangeSQL},
+		{devicealias.Withdraw, 6, prepareDeviceAliasWithdrawalSQL},
 	} {
 		intent := aliasWorkerIntentFixture(t)
 		intent.Mode = test.mode

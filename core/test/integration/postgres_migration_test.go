@@ -255,6 +255,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.RetentionOwnershipSQL()); err != nil {
 		t.Fatalf("hand the row retention functions to mesh_retention: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasPendingWorkOwnershipSQL()); err != nil {
+		t.Fatalf("harden pending-only alias worker loader: %v", err)
+	}
 	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
 		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
 	}

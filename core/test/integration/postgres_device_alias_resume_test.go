@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 
 // The worker functions the alias worker uses once the operator granted them.
 const (
-	aliasWorkLoadVersion    = "v4"
+	aliasWorkLoadVersion    = "v5"
 	aliasWorkPrepareVersion = "v5"
 )
 
@@ -175,10 +176,7 @@ func runAliasWorkerUntilIdle(ctx context.Context, t *testing.T, tx pgx.Tx, deplo
 		if _, err := tx.Exec(ctx, `RESET ROLE; SET LOCAL ROLE mesh_worker`); err != nil {
 			t.Fatal(err)
 		}
-		var encoded []byte
-		if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_`+aliasWorkLoadVersion+`($1::UUID,NULL,NULL,128)`, deploymentID).Scan(&encoded); err != nil {
-			t.Fatalf("load alias work: %v", err)
-		}
+		encoded := loadComparedAliasWork(ctx, t, tx, deploymentID)
 		var page struct {
 			Items []aliasWorkItem `json:"items"`
 		}
@@ -315,5 +313,82 @@ func assertAliasMapPeers(ctx context.Context, t *testing.T, tx pgx.Tx, name stri
 	}
 	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// loadComparedAliasWork reads one page of alias work with the loader the
+// worker uses, and checks that load v4 hands out exactly the same items: v5
+// (schema 276) only skips endpoints that can yield no work.
+func loadComparedAliasWork(ctx context.Context, t *testing.T, tx pgx.Tx, deploymentID string) []byte {
+	t.Helper()
+	load := func(version string) ([]byte, []aliasWorkItem) {
+		var encoded []byte
+		if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_`+version+`($1::UUID,NULL,NULL,128)`, deploymentID).Scan(&encoded); err != nil {
+			t.Fatalf("load alias work %s: %v", version, err)
+		}
+		var page struct {
+			Items []aliasWorkItem `json:"items"`
+			Done  bool            `json:"done"`
+		}
+		if err := json.Unmarshal(encoded, &page); err != nil {
+			t.Fatal(err)
+		}
+		if !page.Done {
+			t.Fatalf("alias work %s does not fit one page", version)
+		}
+		return encoded, page.Items
+	}
+	encoded, newest := load(aliasWorkLoadVersion)
+	if _, previous := load("v4"); !reflect.DeepEqual(newest, previous) {
+		t.Fatalf("alias work %s = %+v, v4 = %+v", aliasWorkLoadVersion, newest, previous)
+	}
+	return encoded
+}
+
+// assertAliasWorkSkipsEndedEndpoint: an endpoint that ended while its share
+// was ready still gets its leftovers cleaned up (withdraw and quarantine),
+// identically by load v4 and v5; once nothing is left, v5 skips it on every
+// pass while still agreeing with v4 (schema 276).
+func assertAliasWorkSkipsEndedEndpoint(ctx context.Context, t *testing.T, tx pgx.Tx, deploymentID, endpointID, consumerID string) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `RESET ROLE; SAVEPOINT alias_ended`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := tx.Exec(ctx, `RESET ROLE; ROLLBACK TO SAVEPOINT alias_ended`); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	leftovers := func() (reserved, ready int) {
+		if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT
+  (SELECT count(*) FROM mesh.device_alias_lease AS lease WHERE lease.private_endpoint_id=endpoint.id AND lease.state='reserved'),
+  (SELECT count(*) FROM mesh.device_alias_client_readiness AS shown WHERE shown.private_endpoint_id=endpoint.id AND shown.state='ready')
+FROM mesh.private_endpoint AS endpoint WHERE endpoint.public_id=$1::UUID`, endpointID).Scan(&reserved, &ready); err != nil {
+			t.Fatal(err)
+		}
+		return reserved, ready
+	}
+	if reserved, ready := leftovers(); reserved == 0 || ready == 0 {
+		t.Fatalf("before the endpoint ends: reserved leases %d, ready consumers %d; want both", reserved, ready)
+	}
+	execAsReplica(ctx, t, tx, `UPDATE mesh.private_endpoint SET state='revoked',ended_at=clock_timestamp(),
+  updated_at=clock_timestamp() WHERE public_id=$1::UUID`, endpointID)
+	marker := int64(4700)
+	modes := runAliasEndpointWorkerUntilIdle(ctx, t, tx, deploymentID, endpointID, consumerID, &marker)
+	for _, want := range []string{"quarantine_resource", "withdraw", "quarantine_consumer"} {
+		if !slices.Contains(modes, want) {
+			t.Fatalf("worker on the ended endpoint ran %v, want %s among them", modes, want)
+		}
+	}
+	// Nothing is left: v5 now takes the skip on this endpoint, and both
+	// loaders still agree (loadComparedAliasWork) that there is no work.
+	if reserved, ready := leftovers(); reserved != 0 || ready != 0 {
+		t.Fatalf("after cleanup: reserved leases %d, ready consumers %d; want none", reserved, ready)
+	}
+	if modes := runAliasEndpointWorkerUntilIdle(ctx, t, tx, deploymentID, endpointID, consumerID, &marker); len(modes) != 0 {
+		t.Fatalf("worker on the cleaned-up endpoint ran %v, want nothing", modes)
 	}
 }

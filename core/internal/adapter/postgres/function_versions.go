@@ -39,8 +39,8 @@ var functionPathSpecs = map[functionPath]functionPathSpec{
 	functionPathImportedPolicyDestinations: {newest: 2, step: "000148_policy_imported_resource_scale_ownership"},
 	// decide_resource_share_offer_v6 (one live share of a Device per Network, MT013).
 	functionPathShareDecision: {newest: 6, step: "000151_device_shared_once_ownership"},
-	// prepare_device_alias_change_v5 with load_device_alias_work_v4.
-	functionPathDeviceAliasWorker: {newest: 5, step: "000171_device_alias_provider_readmission_ownership"},
+	// prepare_device_alias_change_v5 with load_device_alias_work_v5.
+	functionPathDeviceAliasWorker: {newest: 6, step: "000276_device_alias_pending_work_ownership"},
 	// load_device_alias_map_edges_v7 (the map peer limit, key lookup).
 	functionPathAliasMapEdges: {newest: 7, step: "000155_share_reader_key_lookup_ownership"},
 	// load_device_sharing_dependencies_v6 (each remote Network once).

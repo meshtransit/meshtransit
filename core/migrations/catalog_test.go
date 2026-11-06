@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 275 {
-		t.Fatalf("len(Catalog()) = %d, want 275", len(catalog))
+	if len(catalog) != 276 {
+		t.Fatalf("len(Catalog()) = %d, want 276", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 275 {
-		t.Fatalf("LatestVersion() = %d, want 275", LatestVersion())
+	if LatestVersion() != 276 {
+		t.Fatalf("LatestVersion() = %d, want 276", LatestVersion())
 	}
 }
 
@@ -8293,6 +8293,50 @@ func TestMigration275WorkspaceAuditHead(t *testing.T) {
 		if !strings.Contains(sql, want) {
 			t.Errorf("migration 275 lacks %q", want)
 		}
+	}
+}
+
+// Schema 276: load v5 is load v4 plus one early skip of ended endpoints that
+// hold no reserved lease and no ready readiness, checked after the
+// endpoint's scope is set; nothing else in the body changes.
+func TestMigration276DeviceAliasPendingWork(t *testing.T) {
+	t.Parallel()
+	v4 := migrationVersion(t, 171).SQL
+	start := strings.Index(v4, "CREATE FUNCTION mesh_ops.load_device_alias_work_v4(")
+	end := strings.Index(v4[start:], "$function$;") + start
+	v5 := migrationVersion(t, 276).SQL
+	start5 := strings.Index(v5, "CREATE FUNCTION mesh_ops.load_device_alias_work_v5(")
+	if start < 0 || start5 < 0 {
+		t.Fatal("load v4 or v5 not found")
+	}
+	end5 := strings.Index(v5[start5:], "$function$;") + start5
+	skipStart := strings.Index(v5, "  -- Schema 276: an ended endpoint")
+	skipEnd := strings.Index(v5, "   CONTINUE;\n  END IF;\n")
+	if skipStart < 0 || skipEnd < skipStart {
+		t.Fatal("the ended-endpoint skip is not found")
+	}
+	skip := v5[skipStart : skipEnd+len("   CONTINUE;\n  END IF;\n")]
+	got := strings.Replace(v5[start5:end5], skip, "", 1)
+	want := strings.Replace(v4[start:end], "load_device_alias_work_v4(", "load_device_alias_work_v5(", 1)
+	if got != want {
+		t.Error("load v5 differs from load v4 beyond the ended-endpoint skip")
+	}
+	scope := strings.Index(v5, "endpoint:=mesh_ops.derive_device_alias_worker_scope_v1(p_deployment,selected.public_id);")
+	if scope < 0 || scope > strings.Index(v5, skip) {
+		t.Error("the skip runs before the endpoint's scope is set")
+	}
+	for _, want := range []string{
+		"IF endpoint.state<>'provisioning'",
+		"held.private_endpoint_id=endpoint.id AND held.state='reserved'",
+		"shown.private_endpoint_id=endpoint.id AND shown.state='ready'",
+		"REVOKE ALL ON FUNCTION mesh_ops.load_device_alias_work_v5(UUID,UUID,UUID,INTEGER) FROM PUBLIC,mesh_runtime,mesh_worker,",
+	} {
+		if !strings.Contains(v5, want) {
+			t.Errorf("migration 276 lacks %q", want)
+		}
+	}
+	if strings.Contains(v5, "GRANT ") {
+		t.Error("migration 276 grants: operator step 276 does")
 	}
 }
 
