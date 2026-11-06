@@ -119,3 +119,36 @@ func TestCaddyUsesItsOwnCAWithoutAnACMEEmail(t *testing.T) {
 		t.Fatal("no local_certs without an ACME email")
 	}
 }
+
+func TestComposeSizesPostgresForThePools(t *testing.T) {
+	t.Parallel()
+	command := func(config Config) string {
+		rendered, err := Render(config, approvedState(), testKeys, testLayout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var compose struct {
+			Services map[string]struct {
+				Command []string `yaml:"command"`
+			} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal(rendered.Files["compose.yaml"], &compose); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(compose.Services["postgres"].Command, " ")
+	}
+	// 4 runtime + 2 worker + 4 broker + 10 reserved.
+	base := command(testConfig(t))
+	for _, want := range []string{"max_connections=20", "shared_buffers=128MB", "autovacuum_work_mem=32MB"} {
+		if !strings.Contains(base, want) {
+			t.Errorf("postgres command lacks %s: %s", want, base)
+		}
+	}
+	larger, err := ParseConfig([]byte(validConfig + "advanced:\n  MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS: \"8\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := command(larger); !strings.Contains(got, "max_connections=24") {
+		t.Errorf("a larger runtime pool did not raise max_connections: %s", got)
+	}
+}

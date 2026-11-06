@@ -44,7 +44,7 @@ type serviceMounts struct {
 
 // composeFiles are the files of the one-server installation: compose.yaml,
 // the proxy's Caddyfile, PostgreSQL's pg_hba.conf and the Console's env.
-func composeFiles(config Config, layout Layout, mounts serviceMounts) (map[string][]byte, error) {
+func composeFiles(config Config, layout Layout, mounts serviceMounts, connections int) (map[string][]byte, error) {
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
 	console, err := envFile(map[string]string{
 		"MESH_CONSOLE_LISTEN_HOST":         "0.0.0.0",
@@ -59,7 +59,7 @@ func composeFiles(config Config, layout Layout, mounts serviceMounts) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("console.env: %w", err)
 	}
-	compose, err := composeYAML(config, layout, mounts)
+	compose, err := composeYAML(config, layout, mounts, connections)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func readOnly(paths ...string) []string {
 	return mounts
 }
 
-func composeYAML(config Config, layout Layout, mounts serviceMounts) ([]byte, error) {
+func composeYAML(config Config, layout Layout, mounts serviceMounts, connections int) ([]byte, error) {
 	stateDir := filepath.Dir(layout.SecretsDir)
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
 	run := func(name string) string { return filepath.Join(layout.RunDir, name) }
@@ -114,7 +114,14 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts) ([]byte, er
 			},
 			"command": []string{"postgres", "-c", "ssl=on", "-c", "ssl_cert_file=" + secret("postgres.crt"),
 				"-c", "ssl_key_file=" + secret("postgres.key"), "-c", "hba_file=" + run("pg_hba.conf"),
-				"-c", "password_encryption=scram-sha-256"},
+				"-c", "password_encryption=scram-sha-256",
+				// Sized for one server (docs: runbooks/self-host-setup.md): the
+				// connection count Core's pools need, the default 128 MB of
+				// shared buffers, and vacuum memory that cannot spike.
+				"-c", "max_connections=" + strconv.Itoa(connections),
+				"-c", "shared_buffers=128MB",
+				"-c", "autovacuum_work_mem=32MB",
+				"-c", "maintenance_work_mem=64MB"},
 			"volumes": append([]string{filepath.Join(stateDir, "postgres") + ":/var/lib/postgresql/data",
 				secret("postgres-init.sql") + ":/docker-entrypoint-initdb.d/10-meshtransit.sql:ro"},
 				readOnly(secret("postgres-superuser-password"), secret("postgres.crt"), secret("postgres.key"),

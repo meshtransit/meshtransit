@@ -128,7 +128,11 @@ func Render(config Config, state State, keys PublicKeys, layout Layout) (Rendere
 		migrate: pathsIn(layout, migrateSettings, loginFiles(layout),
 			runPaths(layout, envFiles), loginPasswordFiles(layout)),
 	}
-	bundle, err := composeFiles(config, layout, mounts)
+	connections, err := postgresConnections(core)
+	if err != nil {
+		return Rendered{}, err
+	}
+	bundle, err := composeFiles(config, layout, mounts, connections)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -169,6 +173,31 @@ func IdentitySettings(config Config, state State, layout Layout) map[string]stri
 
 func issuer(config Config) string        { return "https://" + config.IdentityHost() + "/oauth2" }
 func consoleOrigin(config Config) string { return "https://" + config.Domain }
+
+// postgresConnections is the bundled PostgreSQL's max_connections: every
+// pool Core may open (after advanced:) plus room for setup migrate,
+// bootstrap and an operator's psql. A higher value only costs a little
+// shared memory; a lower one would refuse Core's own pools.
+func postgresConnections(core map[string]string) (int, error) {
+	total := postgresReserved
+	for _, name := range []string{
+		"MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS",
+		"MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS",
+		"MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS",
+	} {
+		value, err := strconv.Atoi(core[name])
+		if err != nil || value < 1 || value > 50 {
+			return 0, fmt.Errorf("%w: %s must be 1 to 50", ErrInvalidConfig, name)
+		}
+		total += value
+	}
+	return total, nil
+}
+
+// postgresReserved are connections beyond Core's pools: migrate's
+// migrator and superuser, bootstrap, the broker's migration and an
+// operator's psql.
+const postgresReserved = 10
 
 // onePostgresBudget are the connection pools of the one-server installation.
 var onePostgresBudget = map[string]string{

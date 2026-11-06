@@ -231,3 +231,25 @@ func TestRenderSizesThePoolsForOneServerAndAdvancedRaisesThem(t *testing.T) {
 			raised["MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS"], raised["MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS"])
 	}
 }
+
+func TestPostgresConnectionsRefusesPoolsOutsideCoresBounds(t *testing.T) {
+	t.Parallel()
+	base := map[string]string{
+		"MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS":       "4",
+		"MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS":        "2",
+		"MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS": "4",
+	}
+	if got, err := postgresConnections(base); err != nil || got != 20 {
+		t.Fatalf("postgresConnections = %d, %v; want 20", got, err)
+	}
+	for _, bad := range []string{"0", "51", "", "x"} {
+		settings := map[string]string{}
+		for name, value := range base {
+			settings[name] = value
+		}
+		settings["MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS"] = bad
+		if _, err := postgresConnections(settings); err == nil {
+			t.Errorf("worker pool %q was accepted", bad)
+		}
+	}
+}

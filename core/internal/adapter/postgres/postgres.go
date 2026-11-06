@@ -22,9 +22,14 @@ import (
 )
 
 const (
-	maxConnectionLifetime       = 30 * time.Minute
-	maxConnectionLifetimeJitter = 5 * time.Minute
-	maxConnectionIdleTime       = 5 * time.Minute
+	// A backend keeps the compiled functions, plans and relcache of every
+	// call it served until it closes: 30–45 MiB on a busy Network, more on a
+	// large one (docs: database-capacity.md). Short lifetimes return that
+	// memory soon after load passes; reconnecting (TLS and SCRAM) costs a few
+	// milliseconds once every ten minutes per connection.
+	maxConnectionLifetime       = 10 * time.Minute
+	maxConnectionLifetimeJitter = 2 * time.Minute
+	maxConnectionIdleTime       = time.Minute
 	healthCheckPeriod           = 30 * time.Second
 	// plannerJoinLimit bounds join_collapse_limit and from_collapse_limit on
 	// Core's connections (default 8). The authority functions join a dozen to

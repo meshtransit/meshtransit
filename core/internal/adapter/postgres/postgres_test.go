@@ -57,6 +57,13 @@ func TestBuildPoolConfigAppliesSecurityAndPoolBounds(t *testing.T) {
 	if poolConfig.ConnConfig.ConnectTimeout != 2*time.Second || poolConfig.PingTimeout != 2*time.Second {
 		t.Fatal("connect and ping timeouts were not bounded")
 	}
+	// Connections are returned soon after load passes: each one holds the
+	// caches of every call it served (database-capacity.md).
+	if poolConfig.MaxConnIdleTime != time.Minute || poolConfig.MaxConnLifetime != 10*time.Minute ||
+		poolConfig.MaxConnLifetimeJitter != 2*time.Minute {
+		t.Fatalf("connection recycling = idle %s, lifetime %s ± %s, want 1m, 10m ± 2m",
+			poolConfig.MaxConnIdleTime, poolConfig.MaxConnLifetime, poolConfig.MaxConnLifetimeJitter)
+	}
 	for _, name := range []string{"join_collapse_limit", "from_collapse_limit"} {
 		if got := poolConfig.ConnConfig.RuntimeParams[name]; got != "4" {
 			t.Fatalf("%s = %q, want 4 (bounded planner memory)", name, got)
