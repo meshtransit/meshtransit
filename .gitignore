@@ -16,3 +16,4 @@
 /dist/
 *.prof
 /core/meshcore
+/pgmemgate

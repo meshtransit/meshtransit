@@ -29,6 +29,14 @@ fi
 # qualification grows a PostgreSQL backend by more than this many MB (a
 # backend keeps that memory until it closes); 0 disables the gate.
 memory_gate_mb="${PLATFORM_PG_MEMORY_GATE_MB:-64}"
+# PLATFORM_PG_BACKEND_GATE_MB: fail when one runtime or worker backend's
+# private memory (RssAnon, sampled every second while the suite runs) passes
+# this many MiB; the database's memory budget multiplies it by the pool sizes
+# (docs: database-capacity.md). 0 disables the gate. 200 is a ratchet: the
+# qualification suite measured 191 MiB for one runtime backend (2026-11-06);
+# lower it as TD-CORE-139 brings that down, toward 48.
+backend_gate_mb="${PLATFORM_PG_BACKEND_GATE_MB:-200}"
+sampler_pid=''
 postgres_command=(postgres)
 if [[ "${memory_gate_mb}" != 0 ]]; then
 	postgres_command+=(-c log_statement_stats=on)
@@ -64,6 +72,10 @@ control_key_not_after="$(date -u -d '+1 day' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null |
 	date -u -v+1d '+%Y-%m-%dT%H:%M:%SZ')"
 
 cleanup() {
+	if [[ -n "${sampler_pid}" ]]; then
+		kill "${sampler_pid}" >/dev/null 2>&1 || true
+		wait "${sampler_pid}" 2>/dev/null || true
+	fi
 	docker rm --force "${runner_container}" >/dev/null 2>&1 || true
 	docker rm --force "${redis_container}" >/dev/null 2>&1 || true
 	docker rm --force "${postgres_container}" >/dev/null 2>&1 || true
@@ -312,6 +324,12 @@ for _ in $(seq 1 60); do
 	fi
 	sleep 1
 done
+# The scale modes exit before the gate, so they are not sampled.
+if [[ "${backend_gate_mb}" != 0 && "${scale_mode}" == 0 && "${share_scale}" == 0 ]]; then
+	"$(dirname "${BASH_SOURCE[0]}")/pg-backend-sampler.sh" "${fixture_dir}/postgres-backends.txt" \
+		-- docker exec "${postgres_container}" &
+	sampler_pid=$!
+fi
 printf \
 	"CREATE ROLE mesh_migrator LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_worker LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_share_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_direct_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_observer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_status_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_retention NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_observer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" \
 	"${migration_password}" \
@@ -747,4 +765,12 @@ if [[ "${go_runner}" == container ]]; then
 		psql --username postgres --dbname meshtransit --set ON_ERROR_STOP=1 \
 		--quiet --no-align --tuples-only \
 		--command "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT 'owned base expiry candidates after private scopes: ' || jsonb_array_length(mesh_ops.list_due_oidc_browser_v1('01890f00-0000-7000-8000-000000000001'::UUID,128)); ROLLBACK"
+fi
+
+if [[ -n "${sampler_pid}" ]]; then
+	kill "${sampler_pid}" >/dev/null 2>&1 || true
+	wait "${sampler_pid}" 2>/dev/null || true
+	sampler_pid=''
+	run_go run ./core/tools/pgmemgate -backend-samples "${fixture_dir}/postgres-backends.txt" \
+		-max-backend-mb "${backend_gate_mb}"
 fi
