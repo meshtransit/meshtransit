@@ -72,8 +72,9 @@ func TestRenderIsDeterministicAndOwnsEverySettingItWrites(t *testing.T) {
 	}
 	for _, file := range []string{"core.env", "migrate.env", "bootstrap.env"} {
 		for name := range parseEnv(t, first.Files[file]) {
-			// advanced: may never override what render derives.
-			if tunableSetting(name) {
+			// advanced: may never override what render derives; the pool
+			// budget is a default it is meant to raise.
+			if _, budget := onePostgresBudget[name]; tunableSetting(name) && !budget {
 				t.Errorf("%s writes %s, which advanced: could override", file, name)
 			}
 		}
@@ -194,5 +195,39 @@ func TestIdentitySettingsLeaveOutTheFingerprint(t *testing.T) {
 	settings := IdentitySettings(testConfig(t), approvedState(), testLayout)
 	if _, ok := settings["MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT"]; ok || settings["MESHTRANSIT_ROLE"] != "identity" {
 		t.Fatalf("identity settings = %v", settings)
+	}
+}
+
+func TestRenderSizesThePoolsForOneServerAndAdvancedRaisesThem(t *testing.T) {
+	t.Parallel()
+	rendered, err := Render(testConfig(t), approvedState(), testKeys, testLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := parseEnv(t, rendered.Files["core.env"])
+	for name, want := range map[string]string{
+		"MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS":       "4",
+		"MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS":        "2",
+		"MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS": "4",
+		"MESHTRANSIT_IDENTITY_POSTGRES_MAX_IDLE_CONNECTIONS": "2",
+	} {
+		if core[name] != want {
+			t.Errorf("core.env %s = %q, want %q", name, core[name], want)
+		}
+	}
+	config, err := ParseConfig([]byte(validConfig + "advanced:\n  MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS: \"8\"\n" +
+		"  MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS: \"6\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	larger, err := Render(config, approvedState(), testKeys, testLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raised := parseEnv(t, larger.Files["core.env"])
+	if raised["MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS"] != "8" ||
+		raised["MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS"] != "6" {
+		t.Fatalf("advanced: did not raise the pools: runtime %q, identity %q",
+			raised["MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS"], raised["MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS"])
 	}
 }

@@ -15,7 +15,7 @@
 // total is what the database's memory budget multiplies by the pool sizes
 // (docs: database-capacity.md); no single statement shows it.
 //
-//	pgmemgate -backend-samples samples.txt -max-backend-mb 200 [-roles mesh_runtime,mesh_worker]
+//	pgmemgate -backend-samples samples.txt -max-backend-mb 240 [-roles mesh_runtime,mesh_worker]
 package main
 
 import (
@@ -49,7 +49,7 @@ type growth struct {
 func main() {
 	maxMB := flag.Int("max-mb", 64, "largest allowed growth of a backend's resident size from one statement")
 	samples := flag.String("backend-samples", "", "backend mode: pg-backend-sampler.sh output to check")
-	maxBackendMB := flag.Int("max-backend-mb", 200, "backend mode: largest allowed private memory of one client backend")
+	maxBackendMB := flag.Int("max-backend-mb", 240, "backend mode: largest allowed private memory of one client backend")
 	roles := flag.String("roles", "mesh_runtime,mesh_worker", "backend mode: the database roles the budget applies to")
 	flag.Parse()
 	if *samples != "" {

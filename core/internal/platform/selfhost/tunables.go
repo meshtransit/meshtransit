@@ -5,8 +5,9 @@ import "strings"
 // tunableSettings are the only settings config.yaml's advanced: may set:
 // timeouts, intervals, limits and pool sizes that change capacity, never
 // trust, identity, addresses, keys or anything that must match across
-// processes. Identity tunables are left out because they are part of the
-// approved broker fingerprint. Anything not listed is refused (fail closed).
+// processes. Identity settings that feed the approved broker fingerprint are
+// left out; the broker's database pool sizes are not fingerprinted, so they
+// are listed. Anything not listed is refused (fail closed).
 var tunableSettings = map[string]bool{
 	"MESHTRANSIT_LOG_LEVEL":                               true,
 	"MESHTRANSIT_SHUTDOWN_TIMEOUT":                        true,
@@ -39,6 +40,8 @@ var tunableSettings = map[string]bool{
 	"MESHTRANSIT_NETWORK_REVISION_BATCH_SIZE":             true,
 	"MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT":      true,
 	"MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL":          true,
+	"MESHTRANSIT_IDENTITY_POSTGRES_MAX_IDLE_CONNECTIONS":  true,
+	"MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS":  true,
 	"MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS":        true,
 	"MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS":         true,
 	"MESHTRANSIT_REDIS_POOL_SIZE":                         true,

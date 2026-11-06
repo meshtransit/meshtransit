@@ -170,6 +170,14 @@ func IdentitySettings(config Config, state State, layout Layout) map[string]stri
 func issuer(config Config) string        { return "https://" + config.IdentityHost() + "/oauth2" }
 func consoleOrigin(config Config) string { return "https://" + config.Domain }
 
+// onePostgresBudget are the connection pools of the one-server installation.
+var onePostgresBudget = map[string]string{
+	"MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS":       "4",
+	"MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS":        "2",
+	"MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS": "4",
+	"MESHTRANSIT_IDENTITY_POSTGRES_MAX_IDLE_CONNECTIONS": "2",
+}
+
 func coreSettings(config Config, state State, layout Layout, relayDigest string) map[string]string {
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
 	denied := relayPrefixes(config)
@@ -221,6 +229,13 @@ func coreSettings(config Config, state State, layout Layout, relayDigest string)
 		"MESHTRANSIT_BROWSER_REGISTRATION_KEY_ID":                "browser-v1",
 		"MESHTRANSIT_BROWSER_REGISTRATION_KEY_FILE":              secret("browser-registration.key"),
 		"MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT":         state.IdentityFingerprint,
+	}
+	// One server: each hot backend holds 30–45 MiB of compiled functions and
+	// plans (docs: database-capacity.md), so the pools are sized for it:
+	// 4 runtime + 2 worker + 4 broker connections at most. `advanced:` may
+	// raise them for a larger server.
+	for name, value := range onePostgresBudget {
+		settings[name] = value
 	}
 	if mail := config.Mail; mail != nil {
 		settings["MESHTRANSIT_MAIL_TRANSPORT"] = "smtp"

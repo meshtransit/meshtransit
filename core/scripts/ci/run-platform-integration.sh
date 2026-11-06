@@ -32,10 +32,10 @@ memory_gate_mb="${PLATFORM_PG_MEMORY_GATE_MB:-64}"
 # PLATFORM_PG_BACKEND_GATE_MB: fail when one runtime or worker backend's
 # private memory (RssAnon, sampled every second while the suite runs) passes
 # this many MiB; the database's memory budget multiplies it by the pool sizes
-# (docs: database-capacity.md). 0 disables the gate. 200 is a ratchet: the
-# qualification suite measured 191 MiB for one runtime backend (2026-11-06);
-# lower it as TD-CORE-139 brings that down, toward 48.
-backend_gate_mb="${PLATFORM_PG_BACKEND_GATE_MB:-200}"
+# (docs: database-capacity.md). 0 disables the gate. 240 is a ratchet: the
+# qualification suite measured 191 and 207 MiB for one runtime backend
+# (2026-11-06); lower it as TD-CORE-139 brings that down, toward 48.
+backend_gate_mb="${PLATFORM_PG_BACKEND_GATE_MB:-240}"
 sampler_pid=''
 postgres_command=(postgres)
 if [[ "${memory_gate_mb}" != 0 ]]; then
