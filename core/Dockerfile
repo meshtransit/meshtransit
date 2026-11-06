@@ -11,7 +11,12 @@ ENV CGO_ENABLED=0 \
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+# Go's module and build caches persist across builds in the builder (they
+# are not part of any layer): a changed go.mod downloads only new modules and
+# a changed source recompiles only what changed. The output is the same.
+# go mod verify re-checks every cached module against go.sum, since Go only
+# checks a module when it downloads it.
+RUN --mount=type=cache,id=meshtransit-gomod,target=/go/pkg/mod go mod download
 
 COPY api ./api
 COPY shared ./shared
@@ -24,7 +29,9 @@ ARG TARGETARCH
 ARG VERSION
 ARG REVISION
 
-RUN GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+RUN --mount=type=cache,id=meshtransit-gomod,target=/go/pkg/mod --mount=type=cache,id=meshtransit-gobuild,target=/root/.cache/go-build \
+    go mod verify && \
+    GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build \
     -buildvcs=false \
     -mod=readonly \
