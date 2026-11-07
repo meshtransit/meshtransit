@@ -271,13 +271,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		})
 	}
 	if processConfig.DeviceAliasWorker != nil {
-		workerService, workerMetrics, composeErr := composeDeviceAliasWorker(*processConfig.DeviceAliasWorker, storagePools.worker, logger)
+		hints := composeDeviceAliasHints(redisClient, logger)
+		workerService, workerMetrics, composeErr := composeDeviceAliasWorker(*processConfig.DeviceAliasWorker, storagePools.worker, hints, logger)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "device_alias_worker_composition_failure")
 			return 1
 		}
 		additionalMetrics = append(additionalMetrics, workerMetrics)
-		roleServices = append(roleServices, app.OwnedService{Name: "device-alias-worker", Service: workerService})
+		roleServices = append(roleServices,
+			app.OwnedService{Name: "device-alias-hints", Service: hints},
+			app.OwnedService{Name: "device-alias-worker", Service: workerService})
 	}
 	if processConfig.ContractExpiryWorker != nil {
 		workers, composeErr := composeContractEndWorkers(*processConfig.ContractExpiryWorker, storagePools.worker, logger)
@@ -620,6 +623,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		additionalMetrics = append(additionalMetrics, mapInventoryMetrics)
+		if processConfig.Control.Map.EnableDeviceAliases {
+			// Each recorded alias claim tells the Device alias workers
+			// (docs/performance-logic-plan.md §8, L1b).
+			announcer := newAliasClaimAnnouncer(redisClient.PublishDeviceAliasClaimed, logger)
+			if mapSessionService, composeErr = mapSessionService.WithDeviceAliasClaimed(announcer.Claimed); composeErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "map_session_composition_failure", "error", composeErr)
+				return 1
+			}
+			roleServices = append(roleServices, app.OwnedService{Name: "device-alias-claim-hints", Service: announcer})
+		}
 		var flowSigner *mtcpadapter.FlowSigner
 		var flowLogs mapsession.FlowLogReader
 		var flowGate mapsession.FlowReceiverGate

@@ -15,6 +15,11 @@ const (
 	envDeviceAliasWorkerBatch      = "MESHTRANSIT_DEVICE_ALIAS_WORKER_BATCH_SIZE"
 	envDeviceAliasWorkerPoll       = "MESHTRANSIT_DEVICE_ALIAS_WORKER_POLL_INTERVAL"
 	envDeviceAliasWorkerTimeout    = "MESHTRANSIT_DEVICE_ALIAS_WORKER_OPERATION_TIMEOUT"
+	envDeviceAliasWorkerIdle       = "MESHTRANSIT_DEVICE_ALIAS_WORKER_IDLE_INTERVAL"
+	// defaultDeviceAliasWorkerIdle is the longest pause between two sweeps
+	// that found no work while the worker hears alias claims and Network
+	// revisions (docs/performance-logic-plan.md §8, L1b).
+	defaultDeviceAliasWorkerIdle = 5 * time.Second
 )
 
 // DeviceAliasWorkerConfig is an explicit client-only installation assignment.
@@ -23,6 +28,8 @@ type DeviceAliasWorkerConfig struct {
 	DeploymentID                   deployment.ID
 	BatchSize                      int
 	PollInterval, OperationTimeout time.Duration
+	// IdleInterval is the longest pause between two sweeps without work.
+	IdleInterval time.Duration
 }
 
 // String redacts the trusted assignment in generic formatting.
@@ -39,7 +46,7 @@ func loadDeviceAliasWorkerConfig(lookup LookupFunc, role app.Role) (*DeviceAlias
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envDeviceAliasWorkerEnabled)
 	}
-	settings := []string{envDeviceAliasWorkerDeployment, envDeviceAliasWorkerBatch, envDeviceAliasWorkerPoll, envDeviceAliasWorkerTimeout}
+	settings := []string{envDeviceAliasWorkerDeployment, envDeviceAliasWorkerBatch, envDeviceAliasWorkerPoll, envDeviceAliasWorkerTimeout, envDeviceAliasWorkerIdle}
 	if enabled == "false" {
 		for _, name := range settings {
 			if _, present := lookup(name); present {
@@ -67,5 +74,9 @@ func loadDeviceAliasWorkerConfig(lookup LookupFunc, role app.Role) (*DeviceAlias
 	if err != nil {
 		return nil, settingError(envDeviceAliasWorkerTimeout)
 	}
-	return &DeviceAliasWorkerConfig{DeploymentID: installation, BatchSize: batch, PollInterval: poll, OperationTimeout: timeout}, nil
+	idle, err := parseDurationInRange(valueOrDefault(lookup, envDeviceAliasWorkerIdle, max(defaultDeviceAliasWorkerIdle, poll).String()), poll, time.Minute)
+	if err != nil {
+		return nil, settingError(envDeviceAliasWorkerIdle)
+	}
+	return &DeviceAliasWorkerConfig{DeploymentID: installation, BatchSize: batch, PollInterval: poll, OperationTimeout: timeout, IdleInterval: idle}, nil
 }

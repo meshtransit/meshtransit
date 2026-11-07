@@ -66,6 +66,22 @@ type Service struct {
 	connectivity ConnectivityStore
 	hub          *ConnectivityHub // nil: every snapshot reads its peers itself
 	options      ServiceOptions
+	// aliasClaimed, when set, is told each time Open recorded a client's
+	// alias claim; it must not block (it only queues a best-effort hint).
+	aliasClaimed func()
+}
+
+// WithDeviceAliasClaimed returns a copy that tells claimed each time Open
+// recorded a client's alias claim, so the Device alias workers look for the
+// work it may unblock (docs/performance-logic-plan.md §8, L1b). claimed
+// must not block.
+func (service *Service) WithDeviceAliasClaimed(claimed func()) (*Service, error) {
+	if service == nil || claimed == nil {
+		return nil, ErrInvalidService
+	}
+	copied := *service
+	copied.aliasClaimed = claimed
+	return &copied, nil
 }
 
 // WithConnectivityHub returns a copy whose snapshots read connectivity
@@ -217,6 +233,10 @@ func (service *Service) open(
 		if recordCompatibility {
 			if err := observer.ObserveDeviceAliasVersion(ctx, identity, request.DeviceAliasVersion()); err != nil {
 				return Snapshot{}, fmt.Errorf("%w: record client compatibility: %w", ErrOpen, err)
+			}
+			// Only a client that handles aliases (version 1) can unblock work.
+			if service.aliasClaimed != nil && request.DeviceAliasVersion() > 0 {
+				service.aliasClaimed()
 			}
 		}
 	} else if request.DeviceAliasVersion() != 0 {

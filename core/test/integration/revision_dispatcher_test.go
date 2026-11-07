@@ -77,6 +77,24 @@ func assertRevisionDispatcherDelivery(
 		assertOutboxOutcome(ctx, t, adminConnection, eventID, "delivered", "delivered", nil)
 	})
 
+	t.Run("carries Device alias claim hints", func(t *testing.T) {
+		// The Redis user may publish and subscribe the claim channel
+		// (docs/operations/deployment.md ACL; L1b).
+		subscription, err := redisClient.SubscribeDeviceAliasClaimed(ctx)
+		if err != nil {
+			t.Fatalf("SubscribeDeviceAliasClaimed() error = %v", err)
+		}
+		t.Cleanup(func() { _ = subscription.Close() })
+		if err := redisClient.PublishDeviceAliasClaimed(ctx); err != nil {
+			t.Fatalf("PublishDeviceAliasClaimed() error = %v", err)
+		}
+		receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := subscription.Receive(receiveCtx); err != nil {
+			t.Fatalf("claim hint Receive() error = %v", err)
+		}
+	})
+
 	t.Run("persists retry when publication fails", func(t *testing.T) {
 		eventID, _ := commitIntegrationNetworkRevision(ctx, t, adminConnection, "992")
 		publishErr := errors.New("controlled publisher failure")

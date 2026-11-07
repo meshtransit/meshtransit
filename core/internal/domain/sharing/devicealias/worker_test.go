@@ -187,3 +187,9 @@ func TestWorkerRejectsUnsafeBoundsAndTypedNil(t *testing.T) {
 		t.Fatal("unbounded worker")
 	}
 }
+
+// reconcile runs one pass and returns the next cursor.
+func (worker *Worker) reconcile(ctx context.Context, after Cursor) Cursor {
+	next, _, _ := worker.pass(ctx, after)
+	return next
+}

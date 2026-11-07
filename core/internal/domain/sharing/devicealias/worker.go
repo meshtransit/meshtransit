@@ -25,6 +25,21 @@ type Options struct {
 	DeploymentID                   deployment.ID
 	BatchSize                      int
 	PollInterval, OperationTimeout time.Duration
+	// IdleInterval, set exactly with Hints, is the longest wait between two
+	// sweeps that found no work while the hints are listening.
+	IdleInterval time.Duration
+	// Hints wake the worker when alias work may have appeared, so idle sweeps
+	// can space out; nil keeps a sweep every PollInterval.
+	Hints Hints
+}
+
+// Hints report that alias work may have appeared: a client claimed aliases
+// or a Network revision advanced. A wakeup carries no data. Listening is
+// false while wakeups may be missed; the worker then sweeps every
+// PollInterval.
+type Hints interface {
+	Wakeups() <-chan struct{}
+	Listening() bool
 }
 
 // Worker owns one goroutine, one finite page and no authority cache. Failed
@@ -51,10 +66,19 @@ type Measurements struct {
 
 // New constructs a stopped worker without I/O.
 func New(options Options, work Work, changes Changes, logger *slog.Logger) (*Worker, error) {
-	if !options.DeploymentID.IsValid() || options.BatchSize < 1 || options.BatchSize > 128 || options.PollInterval < 100*time.Millisecond || options.PollInterval > time.Minute || options.OperationTimeout < 100*time.Millisecond || options.OperationTimeout > 15*time.Second || nilPort(work) || nilPort(changes) || logger == nil {
+	if !options.DeploymentID.IsValid() || options.BatchSize < 1 || options.BatchSize > 128 || options.PollInterval < 100*time.Millisecond || options.PollInterval > time.Minute || options.OperationTimeout < 100*time.Millisecond || options.OperationTimeout > 15*time.Second || nilPort(work) || nilPort(changes) || logger == nil || !validHints(options) {
 		return nil, ErrInvalidWorker
 	}
 	return &Worker{options: options, work: work, changes: changes, logger: logger}, nil
+}
+
+// validHints requires an idle interval exactly with hints, between the poll
+// interval and a minute.
+func validHints(options Options) bool {
+	if options.Hints == nil {
+		return options.IdleInterval == 0
+	}
+	return !nilPort(options.Hints) && options.IdleInterval >= options.PollInterval && options.IdleInterval <= time.Minute
 }
 
 func nilPort(port any) bool {
@@ -130,22 +154,71 @@ func (worker *Worker) Snapshot() Measurements {
 func (worker *Worker) run(ctx context.Context) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var wakeups <-chan struct{}
+	if worker.options.Hints != nil {
+		wakeups = worker.options.Hints.Wakeups()
+	}
 	after := Cursor{}
+	// wait is the pause after a sweep that found no work; sweepWorked says
+	// whether the sweep in progress found work (or failed to read).
+	wait, sweepWorked := worker.options.PollInterval, false
+	due := time.Now()
+	var lastPass time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			after = worker.reconcile(ctx, after)
-			if ctx.Err() != nil {
-				return
+		case <-wakeups:
+			// Work may have appeared: sweep again soon, but no sooner than a
+			// poll interval after the last pass, and start the back-off over.
+			// Mid-sweep, the cursor may have passed it already, so the next
+			// sweep follows at the poll interval too.
+			wait = worker.options.PollInterval
+			if after != (Cursor{}) {
+				sweepWorked = true
 			}
-			timer.Reset(worker.options.PollInterval)
+			if earliest := lastPass.Add(worker.options.PollInterval); earliest.Before(due) {
+				due = earliest
+				resetTimer(timer, time.Until(due))
+			}
+			continue
+		case <-timer.C:
 		}
+		lastPass = time.Now()
+		next, swept, worked := worker.pass(ctx, after)
+		if ctx.Err() != nil {
+			return
+		}
+		after, sweepWorked = next, sweepWorked || worked
+		delay := worker.options.PollInterval
+		if swept {
+			wait = worker.idleWait(wait, sweepWorked)
+			delay, sweepWorked = wait, false
+		}
+		due = time.Now().Add(delay)
+		resetTimer(timer, delay)
 	}
 }
 
-func (worker *Worker) reconcile(ctx context.Context, after Cursor) Cursor {
+// idleWait is the pause after a finished sweep: the poll interval after work
+// or without listening hints, else double the last pause up to IdleInterval.
+// Pages of one sweep always follow each other at the poll interval.
+func (worker *Worker) idleWait(last time.Duration, worked bool) time.Duration {
+	hints := worker.options.Hints
+	if worked || hints == nil || !hints.Listening() {
+		return worker.options.PollInterval
+	}
+	return min(2*last, worker.options.IdleInterval)
+}
+
+func resetTimer(timer *time.Timer, wait time.Duration) {
+	timer.Stop()
+	timer.Reset(max(wait, 0))
+}
+
+// pass reads and runs one page. swept reports that the page ended a sweep;
+// worked that it had work, or failed to read (so the next sweep stays fast).
+func (worker *Worker) pass(ctx context.Context, after Cursor) (next Cursor, swept, worked bool) {
 	worker.passes.Add(1)
 	readCtx, cancel := context.WithTimeout(ctx, worker.options.OperationTimeout)
 	page, err := worker.work.List(readCtx, worker.options.DeploymentID, after, worker.options.BatchSize)
@@ -156,14 +229,14 @@ func (worker *Worker) reconcile(ctx context.Context, after Cursor) Cursor {
 			worker.discoveryErrors.Add(1)
 			worker.logger.WarnContext(ctx, "Device alias discovery deferred", "error_code", "device_alias_work_read_failed")
 		}
-		return after
+		return after, false, true
 	}
 	// No read transaction survives discovery. Each action opens its own guarded
 	// write and rechecks all live authority; the page is never a cached grant.
 	failures := false
 	for _, intent := range page.Items {
 		if ctx.Err() != nil {
-			return after
+			return after, false, true
 		}
 		operationCtx, stop := context.WithTimeout(ctx, worker.options.OperationTimeout)
 		changed, err := worker.changes.Change(operationCtx, intent)
@@ -180,8 +253,9 @@ func (worker *Worker) reconcile(ctx context.Context, after Cursor) Cursor {
 	if failures && ctx.Err() == nil {
 		worker.logger.WarnContext(ctx, "Device alias changes deferred", "error_code", "device_alias_change_deferred")
 	}
+	worked = len(page.Items) > 0
 	if page.Done {
-		return Cursor{}
+		return Cursor{}, true, worked
 	}
-	return page.Next
+	return page.Next, false, worked
 }

@@ -198,6 +198,7 @@ user meshcore on >PASSWORD resetkeys resetchannels
   &meshtransit:v1:wakeup:site_health_failed
   &meshtransit:v1:wakeup:kube_cert_queued
   &meshtransit:v1:wakeup:kube_cert_settled
+  &meshtransit:v1:wakeup:device_alias_claimed
 ```
 
 Turn the `default` user off. Core uses a single Redis node (no Cluster or

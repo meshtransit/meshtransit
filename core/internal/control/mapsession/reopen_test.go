@@ -2,6 +2,7 @@ package mapsession
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"meshtransit.net/core/internal/control"
@@ -10,10 +11,14 @@ import (
 // aliasObservingStore counts client-compatibility writes.
 type aliasObservingStore struct {
 	recordingSnapshotStore
-	observations int
+	observations    int
+	failObservation bool
 }
 
 func (store *aliasObservingStore) ObserveDeviceAliasVersion(context.Context, control.AuthenticatedNode, uint8) error {
+	if store.failObservation {
+		return errors.New("synthetic claim write failure")
+	}
 	store.observations++
 	return nil
 }
@@ -110,5 +115,58 @@ func TestServiceRefreshKeepsASnapshotWhoseViewDidNotChange(t *testing.T) {
 	store.unchanged = false
 	if _, err := service.Refresh(t.Context(), machine, request, current, 0); err != nil || store.derives != 1 {
 		t.Fatalf("a changed view did not derive: %v, %d derives", err, store.derives)
+	}
+}
+
+// Recording a client's alias claim tells the alias workers once, on Open
+// only, and never when the write failed.
+func TestServiceAnnouncesARecordedAliasClaim(t *testing.T) {
+	t.Parallel()
+	snapshot := snapshotFixture(t)
+	store := &aliasObservingStore{recordingSnapshotStore: recordingSnapshotStore{snapshot: snapshot}}
+	base := newServiceFixture(t, store, &recordingEndpointObserver{})
+	announced := 0
+	service, err := base.WithDeviceAliasClaimed(func() { announced++ })
+	if err != nil {
+		t.Fatalf("WithDeviceAliasClaimed() error = %v", err)
+	}
+	if _, err := base.WithDeviceAliasClaimed(nil); err == nil {
+		t.Fatal("WithDeviceAliasClaimed(nil) accepted")
+	}
+	machine, legacy := authenticatedRequestFixture(t, snapshot)
+	// A client without alias support records its claim but unblocks nothing.
+	if _, err := service.Open(t.Context(), machine, legacy); err != nil {
+		t.Fatalf("Open(version 0) error = %v", err)
+	}
+	if announced != 0 {
+		t.Fatalf("a version 0 client was announced (%d)", announced)
+	}
+	request, err := legacy.WithDeviceAliasVersion(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Open(t.Context(), machine, request); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := service.Reopen(t.Context(), machine, request); err != nil {
+		t.Fatalf("Reopen() error = %v", err)
+	}
+	if announced != 1 {
+		t.Fatalf("announced %d claims, want 1", announced)
+	}
+	store.failObservation = true
+	if _, err := service.Open(t.Context(), machine, request); err == nil {
+		t.Fatal("Open() succeeded with a failed claim write")
+	}
+	if announced != 1 {
+		t.Fatalf("a failed claim write was announced (%d)", announced)
+	}
+	// The base service announces nothing.
+	store.failObservation = false
+	if _, err := base.Open(t.Context(), machine, request); err != nil {
+		t.Fatalf("base Open() error = %v", err)
+	}
+	if announced != 1 {
+		t.Fatalf("the base service announced a claim (%d)", announced)
 	}
 }

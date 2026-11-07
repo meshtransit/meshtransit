@@ -25,7 +25,8 @@ func TestDeviceAliasWorkerConfigurationIsExplicitAndBounded(t *testing.T) {
 				t.Fatal("explicit worker rejected", err)
 			}
 			worker := got.DeviceAliasWorker
-			if worker.BatchSize != 8 || worker.PollInterval != 500*time.Millisecond || worker.OperationTimeout != 10*time.Second {
+			if worker.BatchSize != 8 || worker.PollInterval != 500*time.Millisecond || worker.OperationTimeout != 10*time.Second ||
+				worker.IdleInterval != 5*time.Second {
 				t.Fatal("unsafe defaults")
 			}
 			if strings.Contains(fmt.Sprintf("%v %#v %s", worker, worker, worker.LogValue()), worker.DeploymentID.String()) {
@@ -45,6 +46,7 @@ func TestDeviceAliasWorkerRejectsInvalidAssignmentAndBounds(t *testing.T) {
 		{"zero batch", envDeviceAliasWorkerBatch, "0"}, {"excess batch", envDeviceAliasWorkerBatch, "129"},
 		{"short poll", envDeviceAliasWorkerPoll, "99ms"}, {"long poll", envDeviceAliasWorkerPoll, "61s"},
 		{"short timeout", envDeviceAliasWorkerTimeout, "99ms"}, {"long timeout", envDeviceAliasWorkerTimeout, "16s"},
+		{"idle below poll", envDeviceAliasWorkerIdle, "499ms"}, {"long idle", envDeviceAliasWorkerIdle, "61s"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -59,7 +61,7 @@ func TestDeviceAliasWorkerRejectsInvalidAssignmentAndBounds(t *testing.T) {
 			}
 		})
 	}
-	for _, key := range []string{envDeviceAliasWorkerDeployment, envDeviceAliasWorkerBatch, envDeviceAliasWorkerPoll, envDeviceAliasWorkerTimeout} {
+	for _, key := range []string{envDeviceAliasWorkerDeployment, envDeviceAliasWorkerBatch, envDeviceAliasWorkerPoll, envDeviceAliasWorkerTimeout, envDeviceAliasWorkerIdle} {
 		t.Run("disabled "+key, func(t *testing.T) {
 			t.Parallel()
 			_, err := Load(mapLookup(validProcessValues(map[string]string{key: "unexpected"})))
