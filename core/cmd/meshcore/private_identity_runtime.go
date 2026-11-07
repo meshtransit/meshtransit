@@ -99,13 +99,20 @@ func composePrivateIdentityRuntime(
 }
 
 // Sign-in admission stays tight: a browser starts a login rarely. Console
-// management reads are many small calls per page, so a person switching tabs
-// quickly must stay well inside its per-Session budget, and an office behind
-// one NAT address shares the per-source budget.
+// management reads are many small calls per page (about ten for a Network
+// Overview), so the per-Session budget is the limit a signed-in person meets:
+// 120 at once, five a second (TD-CORE-138, as the bearer API's default).
+// The per-source budget is refunded once a Session proves valid, so it
+// counts requests without one, plus valid ones still in flight (at most
+// managementMaxConcurrent per replica): it only has to cover those, and
+// stays tight for failed authentications. People behind one NAT address
+// still share it while their requests are in flight, and share the
+// prepare and logout budgets (TD-SEC-74).
 const (
 	loginSourceBurst, loginStateBurst             = 30, 10
-	managementSourceBurst, managementSessionBurst = 240, 60
-	managementSourceRefill                        = 50 * time.Millisecond
+	managementSourceBurst, managementSessionBurst = 64, 120
+	managementSourceRefill                        = 250 * time.Millisecond
+	managementMaxConcurrent                       = 16
 	managementSessionRefill                       = 200 * time.Millisecond
 )
 
@@ -138,7 +145,7 @@ func privateIdentityRuntimeOptions(profile *config.PrivateLoginConfig) (privateI
 				MaxConcurrent: 16, SourceRateLimit: source, StateRateLimit: state,
 				TrustedProxyPrefixes: profile.TrustedProxyPrefixes()},
 			Management: privateIdentityManagementOptions{RequestTimeout: 5 * time.Second, ProofLifetime: time.Minute,
-				MaxConcurrent: 16, SourceRateLimit: managementSource, SessionRateLimit: managementSession},
+				MaxConcurrent: managementMaxConcurrent, SourceRateLimit: managementSource, SessionRateLimit: managementSession},
 		},
 		Discovery: oidc.Options{Timeout: 2 * time.Second, MaxMetadataBytes: 64 * 1024},
 		Token: privateIdentityTokenOptions{
