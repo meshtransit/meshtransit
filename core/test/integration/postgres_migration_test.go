@@ -330,6 +330,8 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
 	assertRevisionDispatcherDelivery(ctx, t, adminConnection, workerPool)
+	// The limiter script is not covered by the dependency test in CI.
+	assertRateLimitRefund(ctx, t)
 	assertRevisionDispatcherRecovery(ctx, t, adminConnection, workerPool)
 	assertKubernetesOperationPartitions(ctx, t, workerPool)
 

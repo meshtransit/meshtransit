@@ -379,6 +379,11 @@ func (integrationAllowAllRateLimiter) Allow(
 	return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
 }
 
+// Refund gives nothing back in this fake.
+func (limiter integrationAllowAllRateLimiter) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
+
 func integrationDeviceRevocationDigester(t *testing.T) *idempotency.Digester {
 	t.Helper()
 	keyID, err := idempotency.NewDigestKeyID("integration-v1")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
@@ -70,4 +71,70 @@ func assertRedisRateLimit(ctx context.Context, t *testing.T, client *redisadapte
 			t.Fatal("exact-state shared Redis budget widened or lost isolation", err)
 		}
 	}
+}
+
+// assertRateLimitRefund runs the limiter script on Redis: Refund gives back
+// one spent token and never raises a budget above its capacity
+// (TD-CORE-138).
+func assertRateLimitRefund(ctx context.Context, t *testing.T) {
+	t.Helper()
+	t.Run("rate limit refund gives back one token", func(t *testing.T) {
+		client := openIntegrationRedisClient(ctx, t)
+		keyID, err := ratelimit.NewDigestKeyID("integration-v1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		material := make([]byte, 32)
+		material[31] = 7
+		digester, err := ratelimit.NewDigester(keyID, material)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unique, err := publicid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		subject, err := digester.Subject(ratelimit.SubjectSource, "refund-"+unique.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := ratelimit.NewPolicy(2, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		allow := func(want bool) {
+			t.Helper()
+			if decision, err := client.Allow(ctx, subject, policy); err != nil || decision.Allowed() != want {
+				t.Fatalf("Allow() = (%+v, %v), want allowed %t", decision, err, want)
+			}
+		}
+		// Refunds of a budget that was never spent give nothing extra.
+		for range 3 {
+			if err := client.Refund(ctx, subject, policy); err != nil {
+				t.Fatal(err)
+			}
+		}
+		allow(true)
+		allow(true)
+		allow(false)
+		// One refund buys exactly one more request.
+		if err := client.Refund(ctx, subject, policy); err != nil {
+			t.Fatal(err)
+		}
+		allow(true)
+		allow(false)
+		// Spend, refund, spend, refund: a valid session's requests cost
+		// nothing in the end.
+		for range 2 {
+			if err := client.Refund(ctx, subject, policy); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for range 5 {
+			allow(true)
+			if err := client.Refund(ctx, subject, policy); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
 }

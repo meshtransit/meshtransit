@@ -202,3 +202,18 @@ func TestLoadIgnoresAPIConfigOutsideAPIRoles(t *testing.T) {
 		})
 	}
 }
+
+// TD-CORE-138: a signed-in person is limited by the session budget, sized
+// for Console pages that read about ten resources at once.
+func TestAPIRateLimitDefaultsFitTheConsole(t *testing.T) {
+	t.Parallel()
+	got, err := Load(mapLookup(validProcessValues(map[string]string{envRole: "api"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.API == nil || got.API.SessionRateLimit.Capacity() != 120 ||
+		got.API.SessionRateLimit.RefillInterval() != 200*time.Millisecond ||
+		got.API.SourceRateLimit.Capacity() != 30 || got.API.SourceRateLimit.RefillInterval() != time.Second {
+		t.Fatalf("API rate limits = %+v", got.API)
+	}
+}

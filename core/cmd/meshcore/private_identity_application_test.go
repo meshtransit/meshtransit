@@ -1051,6 +1051,11 @@ func (fixture *privateIdentityFixture) Allow(
 	fixture.budgets = append(fixture.budgets, subject)
 	return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
 }
+
+// Refund gives nothing back in this fake.
+func (fixture *privateIdentityFixture) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
 func (fixture *privateIdentityFixture) Revoke(
 	ctx context.Context, command revocation.Command,
 ) (revocation.Result, error) {

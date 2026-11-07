@@ -544,6 +544,12 @@ func (function managementRateLimiterFunc) Allow(
 	return function(ctx, subject, policy)
 }
 
+// Refund gives nothing back in this fake: tests of who spends and who is
+// refunded use budgetRecorder.
+func (function managementRateLimiterFunc) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
+
 type managementPublicIDGeneratorFunc func() (publicid.ID, error)
 
 func (function managementPublicIDGeneratorFunc) NewID() (publicid.ID, error) { return function() }

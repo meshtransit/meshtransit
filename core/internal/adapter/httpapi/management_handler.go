@@ -224,9 +224,11 @@ type RateLimitSubjectDigester interface {
 	Subject(ratelimit.SubjectKind, string) (ratelimit.Subject, error)
 }
 
-// ManagementRateLimiter consumes one token from a distributed limiter.
+// ManagementRateLimiter consumes one token from a distributed limiter, and
+// can give one back.
 type ManagementRateLimiter interface {
 	Allow(context.Context, ratelimit.Subject, ratelimit.Policy) (ratelimit.Decision, error)
+	Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error
 }
 
 // PublicIDGenerator supplies server-owned correlation identities.
@@ -832,9 +834,10 @@ func (handler *ManagementHandler) serveHTTP(
 		writeManagementError(ctx, handler.logger, response, correlationID, *invalidManagementRequest())
 		return
 	}
-	if limitErr := handler.enforceAdmittedRateLimit(ctx, browser, continuationBudget{
+	sourceBudget := continuationBudget{
 		response: response, kind: ratelimit.SubjectSource, raw: source.String(), policy: handler.sourcePolicy,
-	}); limitErr != nil {
+	}
+	if limitErr := handler.enforceAdmittedRateLimit(ctx, browser, sourceBudget); limitErr != nil {
 		resultCode = limitErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
 		return
@@ -852,6 +855,7 @@ func (handler *ManagementHandler) serveHTTP(
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return
 	}
+	handler.refundAuthenticated(ctx, sourceBudget)
 	if limitErr := handler.enforceAdmittedRateLimit(ctx, browser, continuationBudget{
 		response: response, kind: ratelimit.SubjectAccountSession, raw: session.ID().String(), policy: handler.sessionPolicy,
 	}); limitErr != nil {
@@ -1089,13 +1093,7 @@ func (handler *ManagementHandler) enforceAdmittedRateLimit(
 	budget continuationBudget,
 ) *managementError {
 	if admission == nil {
-		return handler.enforceRateLimit(
-			ctx,
-			budget.response,
-			budget.kind,
-			budget.raw,
-			budget.policy,
-		)
+		return handler.applyRateLimit(ctx, budget.response, budget.kind, budget.raw, budget.policy)
 	}
 	if err := admission.browser.budget(ctx, budget); err != nil {
 		if errors.Is(err, ErrBrowserManagementLimited) {
@@ -1108,7 +1106,39 @@ func (handler *ManagementHandler) enforceAdmittedRateLimit(
 	return nil
 }
 
+// refundAuthenticated gives back the source token a request spent before
+// authenticating, once its session proved valid (TD-CORE-138). The source
+// budget is spent first, atomically, so it bounds traffic without a valid
+// session exactly as before; a valid session then spends only its own
+// budget, so people behind one address (an office NAT) do not share one.
+// The refund outlives the request (a client that goes away after being
+// authenticated still gets the token back); a lost refund only leaves the
+// token spent.
+func (handler *ManagementHandler) refundAuthenticated(ctx context.Context, budget continuationBudget) {
+	subject, err := handler.rateSubjects.Subject(budget.kind, budget.raw)
+	if err != nil {
+		return
+	}
+	refundCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rateLimitRefundTimeout)
+	defer cancel()
+	_ = handler.rateLimiter.Refund(refundCtx, subject, budget.policy)
+}
+
+// rateLimitRefundTimeout bounds giving back one source token.
+const rateLimitRefundTimeout = time.Second
+
 func (handler *ManagementHandler) enforceRateLimit(
+	ctx context.Context,
+	response http.ResponseWriter,
+	kind ratelimit.SubjectKind,
+	rawSubject string,
+	policy ratelimit.Policy,
+) *managementError {
+	return handler.applyRateLimit(ctx, response, kind, rawSubject, policy)
+}
+
+// applyRateLimit spends one token.
+func (handler *ManagementHandler) applyRateLimit(
 	ctx context.Context,
 	response http.ResponseWriter,
 	kind ratelimit.SubjectKind,

@@ -338,9 +338,10 @@ func (browser *BrowserManagement) beginDeviceRead(ctx context.Context, response 
 		fail(*invalidManagementRequest())
 		return accountsession.Session{}, nil, "", false, nil
 	}
-	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
+	sourceBudget := continuationBudget{
 		response: response, kind: ratelimit.SubjectSource, raw: address.String(), policy: browser.management.sourcePolicy,
-	}); limitErr != nil {
+	}
+	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, sourceBudget); limitErr != nil {
 		fail(*limitErr)
 		return accountsession.Session{}, nil, "", false, nil
 	}
@@ -349,6 +350,7 @@ func (browser *BrowserManagement) beginDeviceRead(ctx context.Context, response 
 		fail(classifyAuthenticationError(err))
 		return accountsession.Session{}, nil, "", false, nil
 	}
+	browser.management.refundAuthenticated(ctx, sourceBudget)
 	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
 		response: response, kind: ratelimit.SubjectAccountSession, raw: session.ID().String(), policy: browser.management.sessionPolicy,
 	}); limitErr != nil {

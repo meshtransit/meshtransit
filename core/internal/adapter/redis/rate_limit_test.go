@@ -23,7 +23,7 @@ func TestClientValidateRateLimiterIsStructuralAndEffectFree(t *testing.T) {
 			client := &Client{}
 			calls := 0
 			if test.valid {
-				client.applyRateLimit = func(context.Context, string, int64, time.Duration) ([]int64, error) {
+				client.applyRateLimit = func(context.Context, string, int64, time.Duration, string) ([]int64, error) {
 					calls++
 					return nil, ErrRateLimit
 				}
@@ -56,16 +56,19 @@ func TestClientAppliesSecretSafeRateLimit(t *testing.T) {
 	var gotKey string
 	var gotCapacity int64
 	var gotInterval time.Duration
+	var modes []string
 	client := &Client{applyRateLimit: func(
 		gotContext context.Context,
 		key string,
 		capacity int64,
 		interval time.Duration,
+		mode string,
 	) ([]int64, error) {
 		if gotContext != ctx {
 			t.Fatal("Allow() did not propagate context")
 		}
 		gotKey, gotCapacity, gotInterval = key, capacity, interval
+		modes = append(modes, mode)
 		return []int64{1, 29, 0}, nil
 	}}
 
@@ -78,6 +81,14 @@ func TestClientAppliesSecretSafeRateLimit(t *testing.T) {
 		strings.Contains(gotKey, rawSubject) {
 		t.Fatalf("Redis arguments = (%q, %d, %s)", gotKey, gotCapacity, gotInterval)
 	}
+	// Refund runs the same script on the same key in refund mode.
+	key := gotKey
+	if err := client.Refund(ctx, subject, policy); err != nil || gotKey != key {
+		t.Fatalf("Refund() = %v on %q", err, gotKey)
+	}
+	if len(modes) != 2 || modes[0] != "spend" || modes[1] != "refund" {
+		t.Fatalf("modes = %v, want [spend refund]", modes)
+	}
 }
 
 func TestClientReturnsDeniedRateLimitDecision(t *testing.T) {
@@ -88,6 +99,7 @@ func TestClientReturnsDeniedRateLimitDecision(t *testing.T) {
 		string,
 		int64,
 		time.Duration,
+		string,
 	) ([]int64, error) {
 		return []int64{0, 0, 1250}, nil
 	}}
@@ -125,6 +137,7 @@ func TestClientRejectsMalformedRateLimitResultsAndTransportErrors(t *testing.T) 
 				string,
 				int64,
 				time.Duration,
+				string,
 			) ([]int64, error) {
 				return test.result, test.err
 			}}

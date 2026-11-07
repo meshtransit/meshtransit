@@ -122,6 +122,11 @@ func (f *continuationGateFixture) Allow(
 	}
 }
 
+// Refund gives nothing back in this fake.
+func (f *continuationGateFixture) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
+
 func (f *continuationGateFixture) ObserveLoginContinuation(
 	_ LoginContinuationOperation,
 	result LoginContinuationOutcome,

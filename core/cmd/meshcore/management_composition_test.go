@@ -215,3 +215,7 @@ func (managementCompositionRateLimiter) Allow(
 ) (ratelimit.Decision, error) {
 	return ratelimit.NewDecision(true, 1, 0, 0)
 }
+
+func (managementCompositionRateLimiter) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}

@@ -26,6 +26,24 @@ end
 local redis_time = redis.call('TIME')
 local now_ms = (tonumber(redis_time[1]) * 1000) + math.floor(tonumber(redis_time[2]) / 1000)
 local stored_tat = redis.call('GET', KEYS[1])
+if ARGV[3] == 'refund' then
+    -- Give back one spent token: move the theoretical arrival time back one
+    -- interval, never below now, so a budget never exceeds its capacity.
+    if stored_tat == false then
+        return {1, capacity, 0}
+    end
+    local spent_tat = tonumber(stored_tat)
+    if spent_tat == nil then
+        return {-1, -1, -1}
+    end
+    spent_tat = spent_tat - interval_ms
+    if spent_tat <= now_ms then
+        redis.call('DEL', KEYS[1])
+        return {1, capacity, 0}
+    end
+    redis.call('SET', KEYS[1], spent_tat, 'PX', spent_tat - now_ms)
+    return {1, math.floor((now_ms + (capacity * interval_ms) - spent_tat) / interval_ms), 0}
+end
 local tat = now_ms
 if stored_tat ~= false then
     tat = tonumber(stored_tat)
@@ -53,7 +71,14 @@ return {1, remaining, 0}
 `)
 )
 
-type rateLimitFunc func(context.Context, string, int64, time.Duration) ([]int64, error)
+// rateLimitFunc runs the limiter script in one mode: spend one token, or
+// refund one spent token.
+type rateLimitFunc func(ctx context.Context, key string, capacity int64, refill time.Duration, mode string) ([]int64, error)
+
+const (
+	rateLimitModeSpend  = "spend"
+	rateLimitModeRefund = "refund"
+)
 
 // ValidateRateLimiter checks structural construction without issuing a command.
 // It proves neither connectivity nor readiness, and never grants authority.
@@ -70,6 +95,27 @@ func (client *Client) Allow(
 	subject ratelimit.Subject,
 	policy ratelimit.Policy,
 ) (ratelimit.Decision, error) {
+	return client.decide(ctx, subject, policy, rateLimitModeSpend)
+}
+
+// Refund gives back one token a request spent, never raising the budget
+// above its capacity (TD-CORE-138: a source token spent before
+// authentication is returned once the session is valid).
+func (client *Client) Refund(
+	ctx context.Context,
+	subject ratelimit.Subject,
+	policy ratelimit.Policy,
+) error {
+	_, err := client.decide(ctx, subject, policy, rateLimitModeRefund)
+	return err
+}
+
+func (client *Client) decide(
+	ctx context.Context,
+	subject ratelimit.Subject,
+	policy ratelimit.Policy,
+	mode string,
+) (ratelimit.Decision, error) {
 	if ctx == nil || client == nil || client.applyRateLimit == nil ||
 		!subject.IsValid() || !policy.IsValid() {
 		return ratelimit.Decision{}, ErrInvalidOptions
@@ -80,6 +126,7 @@ func (client *Client) Allow(
 		rateLimitKey(subject),
 		policy.Capacity(),
 		policy.RefillInterval(),
+		mode,
 	)
 	if err != nil {
 		client.metrics.observeCommand(redisCommandRateLimit, startedAt, err)
@@ -113,6 +160,7 @@ func runRateLimitScript(
 	key string,
 	capacity int64,
 	refillInterval time.Duration,
+	mode string,
 ) ([]int64, error) {
 	return rateLimitScript.Run(
 		ctx,
@@ -120,5 +168,6 @@ func runRateLimitScript(
 		[]string{key},
 		strconv.FormatInt(capacity, 10),
 		strconv.FormatInt(refillInterval.Milliseconds(), 10),
+		mode,
 	).Int64Slice()
 }

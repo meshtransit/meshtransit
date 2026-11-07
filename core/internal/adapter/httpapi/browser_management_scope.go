@@ -35,12 +35,13 @@ func (browser *BrowserManagement) readManagementScopes(
 		writeManagementError(ctx, browser.management.logger, response, correlationID, *invalidManagementRequest())
 		return nil
 	}
-	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
+	sourceBudget := continuationBudget{
 		response: response,
 		kind:     ratelimit.SubjectSource,
 		raw:      address.String(),
 		policy:   browser.management.sourcePolicy,
-	}); limitErr != nil {
+	}
+	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, sourceBudget); limitErr != nil {
 		writeManagementError(ctx, browser.management.logger, response, correlationID, *limitErr)
 		return nil
 	}
@@ -51,6 +52,7 @@ func (browser *BrowserManagement) readManagementScopes(
 		)
 		return nil
 	}
+	browser.management.refundAuthenticated(ctx, sourceBudget)
 	if limitErr := browser.management.enforceAdmittedRateLimit(ctx, admission, continuationBudget{
 		response: response,
 		kind:     ratelimit.SubjectAccountSession,

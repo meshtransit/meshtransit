@@ -85,6 +85,11 @@ func (integrationCompletionBudget) Allow(
 	)
 }
 
+// Refund gives nothing back in this fake.
+func (limiter integrationCompletionBudget) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
+
 // Callback qualification must never invoke login initiation or transaction creation.
 type integrationCompletionInitiation struct{ test *testing.T }
 

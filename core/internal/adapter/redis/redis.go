@@ -237,8 +237,9 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			key string,
 			capacity int64,
 			refillInterval time.Duration,
+			mode string,
 		) ([]int64, error) {
-			return runRateLimitScript(rateLimitCtx, client, key, capacity, refillInterval)
+			return runRateLimitScript(rateLimitCtx, client, key, capacity, refillInterval, mode)
 		},
 		recordDelivery: func(
 			recordCtx context.Context,

@@ -38,17 +38,21 @@ const (
 	defaultAPIMaxConcurrentRequests           = 128
 	defaultAPISourceRateLimitCapacity         = 30
 	defaultAPISourceRateLimitRefillInterval   = time.Second
-	defaultAPISessionRateLimitCapacity        = 60
-	defaultAPISessionRateLimitRefillInterval  = 500 * time.Millisecond
-	minimumAPIRequestTimeout                  = 100 * time.Millisecond
-	maximumAPIRequestTimeout                  = 30 * time.Second
-	minimumAPIConnections                     = 1
-	maximumAPIConnections                     = 4096
-	minimumAPIRateLimitCapacity               = 1
-	maximumAPIRateLimitCapacity               = 100_000
-	minimumAPIRateLimitRefillInterval         = 10 * time.Millisecond
-	maximumAPIRateLimitRefillInterval         = time.Hour
-	maximumAPITrustedProxyPrefixes            = 16
+	// A session is the main budget for people signed in (TD-CORE-138): one
+	// Console page reads up to about ten resources at once, so a session may
+	// burst 120 and sustain five a second. The source budget bounds traffic
+	// without a valid session and is spent only when authentication fails.
+	defaultAPISessionRateLimitCapacity       = 120
+	defaultAPISessionRateLimitRefillInterval = 200 * time.Millisecond
+	minimumAPIRequestTimeout                 = 100 * time.Millisecond
+	maximumAPIRequestTimeout                 = 30 * time.Second
+	minimumAPIConnections                    = 1
+	maximumAPIConnections                    = 4096
+	minimumAPIRateLimitCapacity              = 1
+	maximumAPIRateLimitCapacity              = 100_000
+	minimumAPIRateLimitRefillInterval        = 10 * time.Millisecond
+	maximumAPIRateLimitRefillInterval        = time.Hour
+	maximumAPITrustedProxyPrefixes           = 16
 )
 
 // APIConfig contains the public management API listener and verifier contract.

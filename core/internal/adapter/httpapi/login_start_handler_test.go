@@ -157,6 +157,9 @@ func (f *loginHTTPFixture) Allow(ctx context.Context, subject ratelimit.Subject,
 	}
 	return f.decision, f.rateErr
 }
+func (f *loginHTTPFixture) Refund(context.Context, ratelimit.Subject, ratelimit.Policy) error {
+	return nil
+}
 func (f *loginHTTPFixture) Resolve(ctx context.Context, route oidcauth.Route) (oidcauth.Metadata, error) {
 	f.call(ctx, "metadata")
 	return oidcauth.NewMetadata(oidcauth.MetadataParams{Issuer: route.Issuer(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
