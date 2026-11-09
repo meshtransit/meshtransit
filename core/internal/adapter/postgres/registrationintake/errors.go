@@ -24,7 +24,8 @@ func classifyDatabaseError(ctx context.Context, err error) error {
 		return err
 	}
 	switch postgresError.Code {
-	case "23503":
+	case "23503", "MTN02":
+		// MTN02 (schema 281): the Network was deleted.
 		return appintake.ErrCredentialRejected
 	case "40001", "40P01", "55P03":
 		return errors.Join(appintake.ErrRetryableTransaction, err)

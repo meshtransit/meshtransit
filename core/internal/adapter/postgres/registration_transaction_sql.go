@@ -9,7 +9,7 @@ const setRegistrationTransactionScopeSQL = `SELECT workspace_internal_id, networ
 FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 
 const lockRegistrationNetworkRevisionSQL = `SELECT *
-FROM mesh_ops.lock_network_revision()`
+FROM mesh_ops.lock_active_network_revision_v1()`
 
 // lockRegistrationEnrollmentAuthoritySQL also returns the Device lifetime
 // the key chose (schema 175).

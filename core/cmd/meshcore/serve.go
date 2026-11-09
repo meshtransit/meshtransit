@@ -303,6 +303,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, summaryMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "network-summary-worker", Service: summaryWorker})
 	}
+	if processConfig.NetworkDeletionWorker != nil {
+		deletionWorker, deletionMetrics, composeErr := composeNetworkDeletionWorker(
+			*processConfig.NetworkDeletionWorker, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "network_deletion_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, deletionMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "network-deletion-worker", Service: deletionWorker})
+	}
 	if processConfig.AccessLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeAccessLedgerWorker(*processConfig.AccessLedgerWorker, storagePools.worker, logger)
 		if composeErr != nil {

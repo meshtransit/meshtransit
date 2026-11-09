@@ -53,7 +53,7 @@ LIMIT 3
 FOR UPDATE OF registration`
 
 const lockRevisionSQL = `SELECT *
-FROM mesh_ops.lock_network_revision()`
+FROM mesh_ops.lock_active_network_revision_v1()`
 
 const lockEnrollmentAuthoritySQL = `SELECT *
 FROM mesh_ops.lock_registration_credential($1::UUID)`

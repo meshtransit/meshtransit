@@ -27,7 +27,8 @@ func classifyNodeKeyRotationDatabaseError(ctx context.Context, err error) error 
 		return errors.Join(keyrotation.ErrRetryableTransaction, err)
 	// consume_kubernetes_gateway_rotation_token_v1: the session is no longer
 	// the Device's.
-	case "P0002":
+	case "P0002", "MTN02":
+		// MTN02 (schema 281): the Device's Network was deleted.
 		return errors.Join(keyrotation.ErrNotFound, err)
 	// Schema 232: a gateway's pod token was used for this key, checked
 	// against a trust that changed, absent at its new epoch, or expired.

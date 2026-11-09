@@ -5,12 +5,14 @@ package integration
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/network/deletion"
@@ -26,7 +28,7 @@ import (
 // with a live Trust Contract is refused with the list. A Device of a
 // deleted Network is told REVOKED on its current keys.
 func assertPostgreSQLNetworkDeletion(ctx context.Context, t *testing.T, admin *pgx.Conn,
-	runtimePool *postgresadapter.Pool) {
+	runtimePool, workerPool *postgresadapter.Pool) {
 	t.Helper()
 	options := postgresadapter.AccountSessionOptions{StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second}
 	creationStore, err := postgresadapter.NewNetworkCreationStore(runtimePool, options)
@@ -129,16 +131,64 @@ WHERE n.public_id = $1::UUID`, created.NetworkID.String()).Scan(&state, &deleted
 		"fd42:42:42:238::/64")); !errors.Is(err, provisioning.ErrPrefixOverlap) {
 		t.Fatalf("range of a Network being deleted: %v", err)
 	}
-	// A deletion that completed reads as gone.
-	if _, err := admin.Exec(ctx, `UPDATE mesh_ops.network_deletion SET completed_at = requested_at
- WHERE network_public_id = $1::UUID`, created.NetworkID.String()); err != nil {
+	// Phase 2 (schema 280): with no Device left the worker finishes at once:
+	// memberships end, the prefixes are held for 24 hours, the deletion
+	// completes with one more event, and the Network reads as gone.
+	worker, err := postgresadapter.NewNetworkDeletionWorkerStore(workerPool)
+	if err != nil {
 		t.Fatal(err)
+	}
+	installation := integrationDeploymentID(ctx, t, admin)
+	if step, err := worker.Step(ctx, installation, 500); err != nil || !step.Changed || !step.Completed ||
+		step.Revoked != 0 {
+		t.Fatalf("finish = %+v, %v", step, err)
+	}
+	if step, err := worker.Step(ctx, installation, 500); err != nil || step.Changed {
+		t.Fatalf("nothing left = %+v, %v", step, err)
+	}
+	var memberships, held, completedEvents int64
+	var holdHours float64
+	if err := admin.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM mesh.network_membership m WHERE m.network_id = n.id AND m.state <> 'revoked'),
+ (SELECT count(*) FROM mesh.network_prefix p WHERE p.network_id = n.id AND p.state = 'quarantined'),
+ (SELECT extract(epoch FROM min(p.quarantine_until) - d.completed_at) / 3600 FROM mesh.network_prefix p
+    WHERE p.network_id = n.id),
+ (SELECT count(*) FROM mesh_audit.audit_event e WHERE e.target_public_id = n.public_id
+    AND e.action = 'network.delete_completed')
+FROM mesh.network n JOIN mesh_ops.network_deletion d ON d.network_id = n.id
+WHERE n.public_id = $1::UUID AND d.completed_at IS NOT NULL`, created.NetworkID.String()).Scan(&memberships, &held,
+		&holdHours, &completedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if memberships != 0 || held != 2 || holdHours != 24 || completedEvents != 1 {
+		t.Fatalf("finished: memberships=%d held=%d hold=%vh events=%d", memberships, held, holdHours, completedEvents)
 	}
 	if _, err := deletions.Read(ctx, owner, scope); !errors.Is(err, deletion.ErrNotFound) {
 		t.Fatalf("read after completion: %v", err)
 	}
 	if _, err := deletions.Delete(ctx, command(owner, outcome.Version)); !errors.Is(err, deletion.ErrNotFound) {
 		t.Fatalf("delete after completion: %v", err)
+	}
+	if _, err := creations.Create(ctx, newNetworkCommand(t, owner, "Same Range Held", "100.64.236.0/24",
+		"fd42:42:42:239::/64")); !errors.Is(err, provisioning.ErrPrefixOverlap) {
+		t.Fatalf("range held after deletion: %v", err)
+	}
+	// Past the hold, creating a Network releases the range first.
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-00000000e280", eventPublicID: "01890f02-0000-7000-8000-00000000e280",
+		outboxPublicID: "01890f03-0000-7000-8000-00000000e280", streamID: 1, aggregateKind: "network_prefix",
+		aggregatePublicID: "01890f00-0000-7000-8000-00000000e280", aggregateVersion: 1,
+		action: "network_prefix.aged", permission: "system.bootstrap", outboxEventClass: "network_prefix.aged",
+	}, func(transaction pgx.Tx) {
+		if _, err := transaction.Exec(ctx, `UPDATE mesh.network_prefix p SET quarantine_until = now() - INTERVAL '1 second',
+ version = p.version + 1 FROM mesh.network n WHERE n.id = p.network_id AND n.public_id = $1::UUID`,
+			created.NetworkID.String()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if _, err := creations.Create(ctx, newNetworkCommand(t, owner, "Same Range Again", "100.64.236.0/24",
+		"fd42:42:42:23a::/64")); err != nil {
+		t.Fatalf("range after the hold: %v", err)
 	}
 	assertNetworkDeletionBlocked(ctx, t, admin, deletions, owner)
 }
@@ -230,10 +280,147 @@ FROM mesh.network n JOIN mesh.workspace w ON w.id = n.workspace_id WHERE n.id = 
 	if v1, v2 := check(); v1 || !v2 {
 		t.Fatalf("a Device of a deleted Network: v1=%v v2=%v", v1, v2)
 	}
+	// Schema 281: a registration or key rotation that waited behind the
+	// deletion stops at the revision lock.
+	if _, err := transaction.Exec(ctx, `SELECT pg_catalog.set_config('mesh.workspace_id', n.workspace_id::TEXT, TRUE),
+ pg_catalog.set_config('mesh.network_id', n.id::TEXT, TRUE) FROM mesh.network n WHERE n.id = $1`, networkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, `SAVEPOINT locked`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.lock_active_network_revision_v1()`); err == nil ||
+		!strings.Contains(err.Error(), "MTN02") {
+		t.Fatalf("revision lock of a deleted Network: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `ROLLBACK TO SAVEPOINT locked`); err != nil {
+		t.Fatal(err)
+	}
 	// An old rotated key learns nothing.
 	var revokedOld bool
 	if err := transaction.QueryRow(ctx, `SELECT mesh_ops.map_session_revoked_v2($1, $2)`, fingerprint,
 		make([]byte, 32)).Scan(&revokedOld); err != nil || revokedOld {
 		t.Fatalf("another node key: %v %v", revokedOld, err)
 	}
+}
+
+// Phase 2 revokes a deleted Network's Devices in batches: one evidence
+// record a step, each Device revoked with its keys (so schema 161 now says
+// revoked too), then the deletion completes. Run last: it ends a fixture
+// Network for good.
+func assertNetworkDeletionWorkerRevokesDevices(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	workerPool *postgresadapter.Pool) {
+	t.Helper()
+	var networkID int64
+	var networkText string
+	var devices int64
+	var fingerprint, nodeKey []byte
+	if err := admin.QueryRow(ctx, `SELECT n.id, n.public_id::TEXT,
+ (SELECT count(*) FROM mesh.device x WHERE x.network_id = n.id AND x.state IN ('active', 'suspended', 'expired')
+    AND x.deleted_at IS NULL), m.fingerprint, k.public_key
+FROM mesh.network n
+JOIN mesh.device d ON d.network_id = n.id AND d.state = 'active' AND d.deleted_at IS NULL
+JOIN mesh.device_machine_key_epoch m ON m.device_id = d.id AND m.epoch = d.current_machine_key_epoch
+JOIN mesh.device_node_key_epoch k ON k.device_id = d.id AND k.epoch = d.current_node_key_epoch
+WHERE n.state = 'active' AND (mesh_ops.network_deletion_blockers_internal_v1(n.workspace_id, n.id) ->> 'total')::BIGINT = 0
+ORDER BY (SELECT count(*) FROM mesh.device x WHERE x.network_id = n.id) DESC, n.id, d.id LIMIT 1`).Scan(&networkID,
+		&networkText, &devices, &fingerprint, &nodeKey); err != nil {
+		t.Fatalf("no fixture Network with Devices and nothing blocking it: %v", err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-00000000e281", eventPublicID: "01890f02-0000-7000-8000-00000000e281",
+		outboxPublicID: "01890f03-0000-7000-8000-00000000e281", streamID: 1, aggregateKind: "network",
+		aggregatePublicID: networkText, aggregateVersion: 2,
+		action: "network.deleted", permission: "system.bootstrap", outboxEventClass: "network.deleted",
+	}, func(transaction pgx.Tx) {
+		if _, err := transaction.Exec(ctx, `UPDATE mesh.network SET state = 'deleted', deleted_at = now(),
+ version = version + 1 WHERE id = $1`, networkID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transaction.Exec(ctx, `INSERT INTO mesh_ops.network_deletion (network_id, workspace_id,
+ deployment_id, network_public_id, requested_at, requested_by_principal_id, reason, devices_total, updated_at)
+SELECT n.id, n.workspace_id, w.deployment_id, n.public_id, now(), w.owner_principal_id, 'test', $2, now()
+FROM mesh.network n JOIN mesh.workspace w ON w.id = n.workspace_id WHERE n.id = $1`, networkID, devices); err != nil {
+			t.Fatal(err)
+		}
+	})
+	worker, err := postgresadapter.NewNetworkDeletionWorkerStore(workerPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := integrationDeploymentID(ctx, t, admin)
+	var revoked int64
+	steps := 0
+	// A Device another writer holds is skipped, not waited for: the step
+	// revokes the others, then reports nothing to do until it is free.
+	held, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := held.Exec(ctx, `SELECT 1 FROM mesh.device WHERE network_id = $1
+ AND state IN ('active', 'suspended', 'expired') AND deleted_at IS NULL ORDER BY id LIMIT 1 FOR UPDATE`,
+		networkID); err != nil {
+		t.Fatal(err)
+	}
+	if devices > 1 {
+		step, err := worker.Step(ctx, installation, 2000)
+		if err != nil || !step.Changed || step.Completed || int64(step.Revoked) != devices-1 {
+			t.Fatalf("step around a held Device = %+v, %v", step, err)
+		}
+		steps++
+		revoked += int64(step.Revoked)
+	}
+	if step, err := worker.Step(ctx, installation, 2000); err != nil || step.Changed || step.Failed != 0 {
+		t.Fatalf("only a held Device left = %+v, %v", step, err)
+	}
+	if err := held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		step, err := worker.Step(ctx, installation, 1)
+		if err != nil {
+			t.Fatalf("step %d: %v", steps, err)
+		}
+		if !step.Changed {
+			t.Fatalf("step %d changed nothing (%d of %d revoked)", steps, revoked, devices)
+		}
+		steps++
+		revoked += int64(step.Revoked)
+		if step.Completed {
+			break
+		}
+		if steps > int(devices)+1 {
+			t.Fatal("deletion never completed")
+		}
+	}
+	var left, events, total int64
+	var v1 bool
+	if err := admin.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM mesh.device x WHERE x.network_id = $1 AND x.state IN ('active', 'suspended', 'expired')
+    AND x.deleted_at IS NULL),
+ (SELECT count(*) FROM mesh_audit.audit_event e WHERE e.target_public_id = $2::UUID
+    AND e.action IN ('network.devices_revoked', 'network.delete_completed')),
+ (SELECT devices_revoked FROM mesh_ops.network_deletion WHERE network_id = $1),
+ mesh_ops.map_session_revoked_v1($3, $4)`, networkID, networkText, fingerprint, nodeKey).Scan(&left, &events,
+		&total, &v1); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 || revoked != devices || total != devices || events != int64(steps) || !v1 {
+		t.Fatalf("worker: left=%d revoked=%d/%d recorded=%d events=%d steps=%d schema161=%v", left, revoked,
+			devices, total, events, steps, v1)
+	}
+}
+
+func integrationDeploymentID(ctx context.Context, t *testing.T, admin *pgx.Conn) deployment.ID {
+	t.Helper()
+	var text string
+	if err := admin.QueryRow(ctx, `SELECT installation_public_id::TEXT FROM mesh.deployment ORDER BY id LIMIT 1`).
+		Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	id, err := deployment.ParseID(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

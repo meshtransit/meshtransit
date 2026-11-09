@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 281): what a deleted Network still let through. Registration,
+  its intake and node key rotation lock the revision with
+  `lock_active_network_revision_v1` and end (MTN02, no retry) once the
+  Network is deleted; Site and Exit Pool elections skip a deleted Network.
+- Core (schema 280): deleting a Network, phase 2. With
+  `MESHTRANSIT_NETWORK_DELETION_WORKER_ENABLED=true` the worker revokes a
+  deleted Network's Devices in batches (one evidence record a step), then
+  ends its memberships and roles, drops its pending Resource removals and
+  holds its prefixes for 24 hours; `GET .../networks/{n}` answers 404 from
+  then on. Creating a Network releases held ranges past their hold first.
 - Core (schema 279): deleting a Network, phase 1.
   `DELETE /api/v1/workspaces/{w}/networks/{n}` with `If-Match` and the
   reason percent-encoded in `X-Meshtransit-Reason`: only the Workspace owner

@@ -23,6 +23,9 @@ func classifyRegistrationDatabaseError(ctx context.Context, err error) error {
 	switch postgresError.Code {
 	case "40001", "40P01", "55P03":
 		return errors.Join(registration.ErrRetryableTransaction, err)
+	// Schema 281: the Network was deleted; the registration ends.
+	case "MTN02":
+		return errors.Join(registration.ErrRegistrationFailed, err)
 	case "23505":
 		if retryableRegistrationConstraint(postgresError.ConstraintName) {
 			return errors.Join(registration.ErrRetryableTransaction, err)

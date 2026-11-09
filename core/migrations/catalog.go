@@ -682,6 +682,8 @@ func Catalog() []Migration {
 		newMigration(277, "Network summaries computed ahead of Console reads", networkSummarySQL),
 		newMigration(278, "Console reads of the Network summaries", consoleNetworkSummaryReadsSQL),
 		newMigration(279, "Network deletion, phase 1", networkDeletionSQL),
+		newMigration(280, "Network deletion, phase 2 worker", networkDeletionWorkerSQL),
+		newMigration(281, "Writes a deleted Network still let through", deletedNetworkGapsSQL),
 	}
 }
 
@@ -1298,3 +1300,9 @@ var consoleNetworkSummaryReadsSQL string
 
 //go:embed 000279_network_deletion.up.sql
 var networkDeletionSQL string
+
+//go:embed 000280_network_deletion_worker.up.sql
+var networkDeletionWorkerSQL string
+
+//go:embed 000281_deleted_network_gaps.up.sql
+var deletedNetworkGapsSQL string

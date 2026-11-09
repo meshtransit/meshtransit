@@ -437,7 +437,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertSessionAuthorityPlanning(ctx, t, adminConnection)
 	assertPostgreSQLWorkspaceCreation(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkCreation(ctx, t, adminConnection, runtimePool)
-	assertPostgreSQLNetworkDeletion(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLNetworkDeletion(ctx, t, adminConnection, runtimePool, workerPool)
 	assertPostgreSQLSessionWorkspace(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLShareTarget(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
@@ -520,6 +520,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	}
 	assertPostgreSQLDeviceDNSLabels(ctx, t, adminConnection)
 	assertDeletedNetworkMapSessionRevoked(ctx, t, adminConnection)
+	assertNetworkDeletionWorkerRevokesDevices(ctx, t, adminConnection, workerPool)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)

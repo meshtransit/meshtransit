@@ -16,7 +16,7 @@ const setNodeKeyRotationScopeSQL = `SELECT workspace_internal_id, network_intern
 FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 
 const lockNodeKeyRotationRevisionSQL = `SELECT *
-FROM mesh_ops.lock_network_revision()`
+FROM mesh_ops.lock_active_network_revision_v1()`
 
 const lockNodeKeyRotationTargetSQL = `SELECT
     device.id,
