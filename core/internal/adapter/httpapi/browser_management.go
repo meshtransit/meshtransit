@@ -319,7 +319,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isAuditEventListRead(request) ||
+		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isConnectionLogOperation(request) || isDeviceGroupOperation(request) || isSiteOperation(request) ||
 		isExitPoolOperation(request) || isDNSZoneOperation(request) || isIdentityCatalogOperation(request) ||
 		isDeviceLifecycleOperation(request) || isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
@@ -657,7 +657,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isGuardrailRead(request) ||
+			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isGuardrailRead(request) ||
 			isInterchangeRead(request) || isConnectionLogRead(request) ||
 			isInvitationRead(request) || isKubernetesClusterRead(request) ||
 			// The policy's Kubernetes access (K2f f1), GET with its query.
@@ -680,6 +680,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		// (page_size, page_token) and the operation reads (range and
 		// filters), each with its own keys (K1d d1).
 		isKubernetesClusterRead(request) ||
+		// page_size, page_token and q, nothing else (TD-CON-48 C4).
+		isNetworkSummaryList(request) ||
 		// policy_revision and an optional cluster_id, nothing else.
 		isPolicyKubernetesAccessRead(request)
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {

@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 278): Console reads of the Network summaries.
+  `GET /api/v1/workspaces/{w}/network-summaries` (page of 50 at most,
+  search by name or display code), `GET /api/v1/workspaces/{w}/overview`
+  (totals and up to 200 links between sides) and
+  `GET /api/v1/workspaces/{w}/networks/{n}/summary`. Which Networks and
+  permissions come from the management-scope projection the Console already
+  uses; each figure appears only with its permission (TD-CON-43/48 C4).
 - Core (schema 277): one summary row per Network (address usage, active
   Devices, rules, shares, offers, approvals, Sites, clusters), kept current
   by the worker when `MESHTRANSIT_NETWORK_SUMMARY_WORKER_ENABLED=true`.

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 277 {
-		t.Fatalf("len(Catalog()) = %d, want 277", len(catalog))
+	if len(catalog) != 278 {
+		t.Fatalf("len(Catalog()) = %d, want 278", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 277 {
-		t.Fatalf("LatestVersion() = %d, want 277", LatestVersion())
+	if LatestVersion() != 278 {
+		t.Fatalf("LatestVersion() = %d, want 278", LatestVersion())
 	}
 }
 
@@ -8361,5 +8361,58 @@ func TestOnlyRetentionDeletesEvidence(t *testing.T) {
 				t.Errorf("migration %d touches the evidence trigger: %q", migration.Version, match)
 			}
 		}
+	}
+}
+
+// Schema 278: the summaries' authority is read_console_management_scopes_v1
+// (000095) with only the listed changes, so the summaries list exactly the
+// Networks and permissions the Console's projection gives (TD-CON-48 C4).
+func TestMigration278AuthorityIsTheProjection(t *testing.T) {
+	t.Parallel()
+	extract := func(sql, name string) string {
+		start := strings.Index(sql, name)
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	projection := extract(migrationVersion(t, 95).SQL, "FUNCTION mesh_ops.read_console_management_scopes_v1(")
+	authority := extract(migrationVersion(t, 278).SQL, "FUNCTION mesh_ops.console_summary_authority_internal_v1(")
+	keys := "'device.read', 'network.read', 'policy.approve', 'policy.read', 'policy.publish', 'policy.validate',\n" +
+		"                     'share.accept', 'share.offer', 'share.read', 'share.revoke'"
+	if strings.Count(projection, keys) != 3 {
+		t.Fatal("the projection's permission lists moved")
+	}
+	want := strings.NewReplacer(
+		"FUNCTION mesh_ops.read_console_management_scopes_v1(", "FUNCTION mesh_ops.console_summary_authority_internal_v1(",
+		"p_after_network_public_id UUID,", "p_after_network_public_id UUID,\n    p_network_public_id UUID,",
+		"OR p_limit IS NULL OR p_limit < 1 OR p_limit > 101 THEN", "OR p_limit IS NULL OR p_limit < 1 OR p_limit > 5001 THEN",
+		keys, strings.Replace(keys, "'share.accept'", "'route.read', 'share.accept'", 1),
+		"SET search_path = pg_catalog, mesh\n", "SET search_path = pg_catalog, mesh, mesh_ops\n",
+	).Replace(projection)
+	// The additions: keys and display codes in the answer, route.read kept
+	// apart, and readable exactly as the projection decides.
+	for _, addition := range []string{
+		"            network.workspace_id AS workspace_key,\n            network.id AS network_key,\n",
+		"        -- Readable exactly as the projection: route.read alone is not.\n",
+		"\n        OR (\n            p_network_public_id IS NOT NULL\n            AND pg_catalog.get_byte(pg_catalog.uuid_send(p_network_public_id), 6) >> 4 <> 7\n        )",
+		"\n          AND (p_network_public_id IS NULL OR network.public_id = p_network_public_id)",
+		"        'workspace_display_code', (SELECT identity.display_code FROM mesh_ops.tenant_display_identity AS identity\n            WHERE identity.workspace_public_id = authority.workspace_public_id),\n",
+		"                        'network_display_code', (SELECT identity.display_code FROM mesh_ops.tenant_display_identity AS identity\n                            WHERE identity.network_public_id = scopes.public_id),\n                        'workspace_key', scopes.workspace_key,\n                        'network_key', scopes.network_key,\n                        'route_read', 'route.read' = ANY(scopes.permissions),\n",
+	} {
+		if !strings.Contains(authority, addition) {
+			t.Fatalf("addition missing: %q", addition)
+		}
+		authority = strings.Replace(authority, addition, "", 1)
+	}
+	authority = strings.Replace(authority,
+		"WHERE pg_catalog.cardinality(pg_catalog.array_remove(scope_permissions.permissions, 'route.read')) > 0",
+		"WHERE pg_catalog.cardinality(scope_permissions.permissions) > 0", 1)
+	authority = strings.Replace(authority,
+		"'permissions', pg_catalog.to_jsonb(pg_catalog.array_remove(scopes.permissions, 'route.read'))",
+		"'permissions', pg_catalog.to_jsonb(scopes.permissions)", 1)
+	if authority != want {
+		t.Error("the summaries' authority differs from the projection beyond the listed changes")
 	}
 }

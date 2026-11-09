@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/networksummary"
 	policycompilation "meshtransit.net/core/internal/domain/policy/compilation"
 	"meshtransit.net/core/internal/platform/ratelimit"
 )
@@ -98,6 +99,7 @@ type privateIdentityPorts struct {
 	AliasRanges                       httpapi.NetworkAliasRanges
 	DeviceLifetimes                   httpapi.NetworkDeviceLifetimes
 	AddressUsage                      httpapi.NetworkAddressUsage
+	NetworkSummaries                  networksummary.Reader
 	AuditHistory                      httpapi.AuditHistoryReader
 	AuditExports                      httpapi.AuditExporter
 	Guardrails                        httpapi.GuardrailManager
@@ -252,6 +254,7 @@ func composePrivateIdentity(
 		AliasRanges:                       ports.AliasRanges,
 		DeviceLifetimes:                   ports.DeviceLifetimes,
 		AddressUsage:                      ports.AddressUsage,
+		NetworkSummaries:                  ports.NetworkSummaries,
 		AuditHistory:                      ports.AuditHistory,
 		AuditExports:                      ports.AuditExports,
 		Guardrails:                        ports.Guardrails,

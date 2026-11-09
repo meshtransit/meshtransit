@@ -66,10 +66,11 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
 	// The private document holds 26 bearer operations moved onto the cookie
-	// (3 of them a running share's service names) and 96 cookie-only Console
+	// (3 of them a running share's service names) and 99 cookie-only Console
 	// operations (9 of them the Exit Pools, 6 the DNS zones with a zone's
 	// status, 6 their names, 2 the Network's DNS settings, 1 the Console
-	// start read /auth/v1/session, TD-CON-48); another count
+	// start read /auth/v1/session, 3 the Network summaries and Workspace
+	// overview, TD-CON-48); another count
 	// means an API was added or dropped without review. The base document
 	// has 64 paths (a release's Kubernetes access and a cluster's profile denials, K2f; a cluster's group ceilings,
 	// list and one by hash, K2h h4), 25 of them the Kubernetes clusters (bearer only until the
@@ -79,7 +80,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 64 || operations != 122 {
+	if len(basePaths) != 64 || operations != 125 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {

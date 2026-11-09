@@ -241,7 +241,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	if resourceSharing, _ := browserResourceSharingOperation(request); resourceSharing || isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost || isNetworkCollectionPost(request) ||
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) ||
-		isNetworkAddressUsageRead(request) ||
+		isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isConnectionLogOperation(request) ||
 		isDeviceGroupOperation(request) || isSiteOperation(request) || isExitPoolOperation(request) ||
 		isDNSZoneOperation(request) ||
@@ -333,7 +333,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		isNetworkMemberRead(request) ||
 		// A cluster's paged lists and operation reads carry a query (K1d
 		// d1); the cluster parser admits only their own keys.
-		isKubernetesClusterRead(request) || isPolicyKubernetesAccessRead(request) || target.RawQuery == ""
+		isKubernetesClusterRead(request) || isPolicyKubernetesAccessRead(request) || isNetworkSummaryList(request) ||
+		target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

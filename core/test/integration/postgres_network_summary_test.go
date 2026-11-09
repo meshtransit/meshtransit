@@ -67,8 +67,14 @@ func assertPostgreSQLNetworkSummary(ctx context.Context, t *testing.T, admin *pg
 	first, second := mustWorkerID(t), mustWorkerID(t)
 	claimed := claimUntil(ctx, t, store, installation, first, scope)
 	// Another worker does not get a Network the first one holds.
-	if others, err := store.Claim(ctx, installation, second, 64, 30*time.Second); err != nil || containsScope(others, scope) {
+	others, err := store.Claim(ctx, installation, second, 64, 30*time.Second)
+	if err != nil || containsScope(others, scope) {
 		t.Fatalf("second worker claimed a held Network: %v %v", others, err)
+	}
+	for _, other := range others {
+		if err := store.Release(ctx, installation, second, other, 0); err != nil {
+			t.Fatal("release", err)
+		}
 	}
 	_ = claimed
 

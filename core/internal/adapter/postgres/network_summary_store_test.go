@@ -50,3 +50,18 @@ func TestNetworkSummaryDecodeRefusesWhatCannotBeTrue(t *testing.T) {
 		}
 	}
 }
+
+// A Network name is up to 128 characters, not bytes.
+func TestConsoleSummaryItemCountsNameCharacters(t *testing.T) {
+	t.Parallel()
+	name := strings.Repeat("Mạng", 32)
+	record := consoleSummaryItemRecord{NetworkID: "01890f00-0000-7000-8000-000000000202", DisplayName: name,
+		Permissions: []string{"network.read"}}
+	if figures, err := record.figures(); err != nil || figures.DisplayName != name {
+		t.Fatalf("a 128-character name was refused: %v", err)
+	}
+	record.DisplayName = name + "x"
+	if _, err := record.figures(); err == nil {
+		t.Fatal("a 129-character name was accepted")
+	}
+}

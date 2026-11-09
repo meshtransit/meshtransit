@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/networksummary"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/core/internal/domain/node/revocation"
@@ -265,6 +266,8 @@ type ManagementHandlerOptions struct {
 	DeviceLifetimes NetworkDeviceLifetimes
 	// AddressUsage reads how full a Network's address ranges are; nil answers 503.
 	AddressUsage NetworkAddressUsage
+	// NetworkSummaries reads the Network summaries; nil answers 503.
+	NetworkSummaries networksummary.Reader
 	// AuditHistory lists Workspace audit history; nil answers 503.
 	AuditHistory AuditHistoryReader
 	// AuditExports assembles audit exports; nil answers 503.
@@ -380,6 +383,7 @@ type ManagementHandler struct {
 	aliasRanges               NetworkAliasRanges
 	deviceLifetimes           NetworkDeviceLifetimes
 	addressUsage              NetworkAddressUsage
+	networkSummaries          networksummary.Reader
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
@@ -475,6 +479,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		aliasRanges:               options.AliasRanges,
 		deviceLifetimes:           options.DeviceLifetimes,
 		addressUsage:              options.AddressUsage,
+		networkSummaries:          options.NetworkSummaries,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
@@ -610,6 +615,7 @@ func (handler *ManagementHandler) serveHTTP(
 	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
 	deviceLifetimePath, deviceLifetimeMatched := parseNetworkDeviceLifetimePath(request)
 	addressUsageScope, addressUsageMatched := parseNetworkAddressUsagePath(request)
+	summaryPath, summaryMatched := parseNetworkSummaryPath(request)
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
@@ -629,7 +635,7 @@ func (handler *ManagementHandler) serveHTTP(
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !policyKubernetesAccessMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !auditEventMatched &&
+		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !summaryMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !connectionLogMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
 		!kubernetesMatched && !dnsZoneMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
@@ -661,6 +667,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = deviceLifetimePath.operation()
 	} else if addressUsageMatched {
 		operation = networkAddressUsageReadOperation
+	} else if summaryMatched {
+		operation = summaryPath.operation()
 	} else if auditEventMatched {
 		operation = auditEventListOperation
 	} else if auditExportMatched {
@@ -735,6 +743,8 @@ func (handler *ManagementHandler) serveHTTP(
 	} else if deviceLifetimeMatched {
 		allowedMethod = deviceLifetimePath.allowedMethod(request.Method)
 	} else if addressUsageMatched {
+		allowedMethod = http.MethodGet
+	} else if summaryMatched {
 		allowedMethod = http.MethodGet
 	} else if guardrailMatched {
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
@@ -898,6 +908,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if addressUsageMatched {
 		resultCode = handler.readNetworkAddressUsage(ctx, response, correlationID, addressUsageScope, session)
+		return
+	}
+	if summaryMatched {
+		resultCode = handler.readNetworkSummaries(ctx, response, request, correlationID, summaryPath, session)
 		return
 	}
 	if auditEventMatched {

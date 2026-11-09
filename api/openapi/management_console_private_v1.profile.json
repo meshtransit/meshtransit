@@ -1618,6 +1618,330 @@
           }
         }
       }
+    },
+    "ConsoleNetworkSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One Network's figures from the summary the worker keeps current. A figure is present only when the Session holds its permission (addresses, IPv4 range and Kubernetes clusters: network.read; active Devices: device.read; rules and the active policy: policy.read; pending approvals: policy.approve; shares and offers: share.read; Sites, on the one-Network read only: route.read) and a summary exists; computed_at says when it was counted.",
+      "required": [
+        "network_id",
+        "display_name",
+        "permissions"
+      ],
+      "properties": {
+        "network_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "display_code": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 12,
+          "pattern": "^[0-9]{12}$"
+        },
+        "permissions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "device.read",
+              "network.read",
+              "policy.approve",
+              "policy.read",
+              "policy.publish",
+              "policy.validate",
+              "share.accept",
+              "share.offer",
+              "share.read",
+              "share.revoke"
+            ]
+          }
+        },
+        "computed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ipv4_prefix": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 18
+        },
+        "addresses_capacity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "addresses_in_use": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "addresses_held": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "kubernetes_clusters": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "active_devices": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rule_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "policy_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "policy_published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pending_approvals": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "shares_out_active": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "shares_in_active": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "offers_waiting": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sites": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "ConsoleNetworkSummaryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "searched_all",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/components/schemas/ConsoleNetworkSummary"
+          }
+        },
+        "next_page_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "searched_all": {
+          "type": "boolean",
+          "description": "False when a search looked through 5 000 Networks without reaching the end."
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConsoleNetworkSummaryRead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/components/schemas/ConsoleNetworkSummary"
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConsoleWorkspaceOverview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "networks",
+            "addresses_taken",
+            "active_contracts",
+            "cross_workspace_contracts",
+            "offers_waiting",
+            "addresses_partial",
+            "shares_partial",
+            "links_partial",
+            "links"
+          ],
+          "properties": {
+            "networks": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "addresses_taken": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "active_contracts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cross_workspace_contracts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "offers_waiting": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "addresses_partial": {
+              "type": "boolean"
+            },
+            "shares_partial": {
+              "type": "boolean"
+            },
+            "links_partial": {
+              "type": "boolean"
+            },
+            "oldest_computed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "workspace_display_code": {
+              "type": "string",
+              "minLength": 12,
+              "maxLength": 12,
+              "pattern": "^[0-9]{12}$"
+            },
+            "links": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "from",
+                  "to",
+                  "active",
+                  "waiting"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "network",
+                          "workspace"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_code": {
+                        "type": "string",
+                        "minLength": 12,
+                        "maxLength": 12,
+                        "pattern": "^[0-9]{12}$"
+                      }
+                    },
+                    "description": "One of this Workspace's Networks by ID, or another Workspace by its display code only."
+                  },
+                  "to": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "network",
+                          "workspace"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_code": {
+                        "type": "string",
+                        "minLength": 12,
+                        "maxLength": 12,
+                        "pattern": "^[0-9]{12}$"
+                      }
+                    },
+                    "description": "One of this Workspace's Networks by ID, or another Workspace by its display code only."
+                  },
+                  "active": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "waiting": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
     }
   },
   "bearerOperations": [
@@ -23329,6 +23653,203 @@
           },
           "503": {
             "description": "temporarily_unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/network-summaries": {
+      "get": {
+        "operationId": "listConsoleNetworkSummaries",
+        "summary": "List the Networks the Session may read, with their summaries",
+        "description": "One page, in Network ID order, of the Networks the management-scope projection gives the Session, each with the figures its permissions allow (ConsoleNetworkSummary). Replaces six reads per Network (TD-CON-43).",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "Keeps Networks whose name contains it (case folded) or whose display code contains its digits."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List the Networks the Session may read, with their summaries",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleNetworkSummaryPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/overview": {
+      "get": {
+        "operationId": "getConsoleWorkspaceOverview",
+        "summary": "Read the Workspace at a glance",
+        "description": "Totals over every Network the Session may read (at most 5 000): Networks, addresses taken, live Trust Contracts, those with another Workspace, offers waiting, and up to 200 links between sides. A *_partial flag says a total is a floor (a Network without the permission or a summary yet, or past 5 000). Another Workspace appears only by its display code.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the Workspace at a glance",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleWorkspaceOverview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/summary": {
+      "get": {
+        "operationId": "getConsoleNetworkSummary",
+        "summary": "Read one Network's summary",
+        "description": "The figures of one Network the Session may read, each permission resolved for this Network alone; Sites need route.read.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read one Network's summary",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleNetworkSummaryRead"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
           }
         }
       }
