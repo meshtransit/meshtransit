@@ -77,6 +77,9 @@ type privateIdentityFactoryDependencies struct {
 	// DNSSuffix names Devices and shares in Console responses
 	// (MESHTRANSIT_DNS_SUFFIX); the zero value is the default.
 	DNSSuffix dnsname.Suffix
+	// ServerTiming adds Server-Timing to Console management answers
+	// (MESHTRANSIT_SERVER_TIMING).
+	ServerTiming bool
 	// EnrollmentKeys issues enrollment keys; nil reports them unavailable.
 	EnrollmentKeys httpapi.EnrollmentKeyManager
 	// KubernetesClusters manages Kubernetes clusters; nil reports them
@@ -139,6 +142,7 @@ func composePrivateIdentityFactory(
 	defer cancel()
 	application := options.Application
 	application.Management.DNSSuffix = dependencies.DNSSuffix
+	application.Management.ServerTiming = dependencies.ServerTiming
 	explicitDiscovery := options.Discovery.Timeout > 0 && options.Discovery.MaxMetadataBytes > 0
 	discoveryWithinWork := options.Discovery.Timeout <= application.Start.RequestTimeout
 	tokenWithinWork := options.Token.Timeout <= application.Callback.RequestTimeout

@@ -82,6 +82,20 @@ func (browser *BrowserManagement) readManagementScopes(
 		)
 		return nil
 	}
+	data, next, err := managementScopeView(session, page)
+	if err != nil {
+		writeManagementError(ctx, browser.management.logger, response, correlationID, internalManagementError())
+		return nil
+	}
+	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, managementScopeEnvelope{
+		Data: data, NextPageToken: next, CorrelationID: correlationID.String(),
+	})
+	return nil
+}
+
+// managementScopeView is one scope page as the Console reads it, with the
+// token of the next page when there is one.
+func managementScopeView(session accountsession.Session, page sessioncontext.Page) (managementScopeData, string, error) {
 	items := page.Items()
 	networks := make([]managementScopeNetwork, len(items))
 	for index, item := range items {
@@ -97,27 +111,22 @@ func (browser *BrowserManagement) readManagementScopes(
 	}
 	next := ""
 	if cursor, ok := page.Next(); ok {
+		var err error
 		next, err = encodeManagementScopePageToken(page.WorkspaceID(), cursor)
 		if err != nil {
-			writeManagementError(ctx, browser.management.logger, response, correlationID, internalManagementError())
-			return nil
+			return managementScopeData{}, "", err
 		}
 	}
-	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, managementScopeEnvelope{
-		Data: managementScopeData{
-			PrincipalID: session.PrincipalID().String(),
-			Workspace: managementScopeWorkspace{
-				ID: page.WorkspaceID().String(), DisplayName: page.WorkspaceDisplayName(),
-				DisplayCode: page.WorkspaceDisplayCode().String(),
-				Version:     page.WorkspaceVersion(), CanRename: page.WorkspaceCanRename(),
-				Permissions: workspacePermissionStrings(page),
-			},
-			Networks: networks,
+	return managementScopeData{
+		PrincipalID: session.PrincipalID().String(),
+		Workspace: managementScopeWorkspace{
+			ID: page.WorkspaceID().String(), DisplayName: page.WorkspaceDisplayName(),
+			DisplayCode: page.WorkspaceDisplayCode().String(),
+			Version:     page.WorkspaceVersion(), CanRename: page.WorkspaceCanRename(),
+			Permissions: workspacePermissionStrings(page),
 		},
-		NextPageToken: next,
-		CorrelationID: correlationID.String(),
-	})
-	return nil
+		Networks: networks,
+	}, next, nil
 }
 
 func workspacePermissionStrings(page sessioncontext.Page) []string {

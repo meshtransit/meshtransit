@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core: `GET /auth/v1/session` answers a Console start with the Deployment
+  capabilities and the first management-scope page under one admission, so
+  the Console makes one request where it made two in a row (TD-CON-48).
+  `MESHTRANSIT_SERVER_TIMING=true` adds a `Server-Timing` header with the
+  database, Redis and total time of each Console management answer.
 - Go 1.26.10 toolchain baseline and `github.com/go-jose/go-jose/v4` v4.1.4.
   Go 1.26.9's `crypto/x509` still trusted compromised intermediate
   certificates (GO-2026-6809, reachable from the flowlog receiver's TLS

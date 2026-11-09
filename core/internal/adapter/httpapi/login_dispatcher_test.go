@@ -78,7 +78,7 @@ func TestLoginDispatcherRejectsIncompleteConstruction(t *testing.T) {
 	}
 	for _, path := range []string{
 		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionManagementScopesPath,
-		"/machine/register", "/api/v1/callback", "/key",
+		AccountSessionPath, "/machine/register", "/api/v1/callback", "/key",
 		"/auth/" + strings.Repeat("x", 251),
 	} {
 		options, fixture, callback := browserLoginTestOptions(t)
@@ -218,7 +218,7 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 	for _, path := range []string{
 		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, AccountSessionCSRFPreparePath,
 		AccountSessionLogoutPath, AccountSessionManagementScopesPath, DeploymentCapabilitiesPath,
-		LoginCallbackContinuePath, "/auth/callback",
+		AccountSessionPath, LoginCallbackContinuePath, "/auth/callback",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE", "TRACE", "PATCH", "post"} {
 			fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
@@ -228,7 +228,8 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 			callbackGet := method == http.MethodGet && path == "/auth/callback"
 			managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
 			deploymentCapabilityRead := method == http.MethodGet && path == DeploymentCapabilitiesPath
-			if fixedPost || landingRead || callbackGet || managementScopeRead || deploymentCapabilityRead {
+			sessionRead := method == http.MethodGet && path == AccountSessionPath
+			if fixedPost || landingRead || callbackGet || managementScopeRead || deploymentCapabilityRead || sessionRead {
 				continue
 			}
 			t.Run(method+" "+path, func(t *testing.T) {
@@ -750,13 +751,14 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		callbackGet := method == http.MethodGet && path == dispatcher.CallbackPath()
 		managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
 		deploymentCapabilityRead := method == http.MethodGet && path == DeploymentCapabilitiesPath
+		sessionRead := method == http.MethodGet && path == AccountSessionPath && query == ""
 		fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
 			path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
 			path == AccountSessionLogoutPath || path == LoginCallbackContinuePath)
 		landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes &&
 			(query == "" || callbackGet || managementScopeRead) &&
-			(callbackGet || fixedPost || landingRead || managementScopeRead || deploymentCapabilityRead)
+			(callbackGet || fixedPost || landingRead || managementScopeRead || deploymentCapabilityRead || sessionRead)
 		if !matched {
 			if !errors.Is(err, ErrInvalidLoginDispatcher) || len(fixture.calls) != 0 || callback.calls != 0 ||
 				len(response.Header()) != 0 || response.statusWrites != 0 || response.Body.Len() != 0 {

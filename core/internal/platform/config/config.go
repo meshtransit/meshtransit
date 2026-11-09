@@ -79,6 +79,9 @@ type Config struct {
 	// KubernetesAccessRequired makes a new rule to a cluster name its
 	// access (MESHTRANSIT_KUBERNETES_ACCESS_REQUIRED, K2h f5).
 	KubernetesAccessRequired bool
+	// ServerTiming adds Server-Timing to Console management answers
+	// (MESHTRANSIT_SERVER_TIMING, TD-CON-48).
+	ServerTiming bool
 	// KubernetesGatewayToken is how strictly gateways must present their
 	// pod token on every session (MESHTRANSIT_KUBERNETES_GATEWAY_TOKEN).
 	KubernetesGatewayToken kubecluster.GatewayTokenMode
@@ -259,6 +262,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	serverTiming, err := loadServerTiming(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	kubernetesGatewayToken, err := loadKubernetesGatewayToken(lookup)
 	if err != nil {
 		return Config{}, err
@@ -426,6 +433,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		KubernetesProfiles:          kubernetesProfiles,
 		KubernetesClusteredProfiles: kubernetesClusteredProfiles,
 		KubernetesAccessRequired:    kubernetesAccessRequired,
+		ServerTiming:                serverTiming,
 		KubernetesGatewayToken:      kubernetesGatewayToken,
 		DNSZones:                    dnsZones,
 		GeoIPCountryFile:            geoIPCountryFile,

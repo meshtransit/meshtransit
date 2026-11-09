@@ -25,6 +25,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/platform/servertiming"
 )
 
 const (
@@ -77,6 +78,9 @@ type BrowserManagementOptions struct {
 	Key                BrowserLoginKey
 	Clock              accountsession.Clock
 	ProofLifetime      time.Duration
+	// ServerTiming adds a Server-Timing header with the database, Redis and
+	// total time of each answer (MESHTRANSIT_SERVER_TIMING, TD-CON-48).
+	ServerTiming bool
 }
 
 // BrowserManagement owns cookie-only intent transport around the same resource API.
@@ -100,6 +104,7 @@ type BrowserManagement struct {
 	lifetime           time.Duration
 	entropy            io.Reader
 	telemetry          *BrowserManagementTelemetry
+	serverTiming       bool
 	// Handle owns tokens through real submission. Never close or queue on slots.
 	slots chan struct{}
 }
@@ -165,7 +170,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 		deploymentID: options.DeploymentID,
 		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
-		slots: make(chan struct{}, cap(handler.slots))}
+		serverTiming: options.ServerTiming, slots: make(chan struct{}, cap(handler.slots))}
 	copy(browser.key[:], options.Key.Material)
 	return browser, nil
 }
@@ -288,6 +293,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		return ErrBrowserManagementRefused
 	}
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
+	sessionRead := request.URL.Path == AccountSessionPath && request.Method == http.MethodGet
 	inventoryScope, inventoryMatched := parseDeviceInventoryPath(request)
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	deviceScope, deviceID, deviceMatched := parseDeviceItemPath(request)
@@ -320,7 +326,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isInvitationOperation(request) || isKubernetesClusterOperation(request) ||
 		isPolicyKubernetesAccessRead(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
-	if !prepare && !logout && !managementScopes && !inventoryRead && !deviceRead && !distributionRead && !historyRead &&
+	if !prepare && !logout && !managementScopes && !sessionRead && !inventoryRead && !deviceRead && !distributionRead && !historyRead &&
 		!enforcementRead &&
 		!deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
@@ -341,7 +347,12 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	if ctx.Err() != nil {
 		return ErrBrowserManagementUnavailable
 	}
-	if deploymentCapabilities {
+	var timing *servertiming.Recorder
+	if browser.serverTiming {
+		ctx, timing = servertiming.With(ctx)
+	}
+	// A Console start is activity, as the periodic capability check is.
+	if deploymentCapabilities || sessionRead {
 		ctx = accountsession.WithActivity(ctx)
 	}
 	select {
@@ -378,6 +389,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if managementScopes {
 		if err := browser.readManagementScopes(ctx, candidate, request, admission); err != nil {
+			return err
+		}
+	} else if sessionRead {
+		if err := browser.readSession(ctx, candidate, request, admission); err != nil {
 			return err
 		}
 	} else if inventoryRead {
@@ -449,6 +464,11 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	clear(header)
 	for name, values := range candidate.header {
 		header[name] = values
+	}
+	// Only after a valid Session: a caller without one learns no timing.
+	// Streamed exports return above and never carry it.
+	if timing != nil && admission.hasSession {
+		header.Set("Server-Timing", timing.Header(time.Since(started)))
 	}
 	response.WriteHeader(candidate.status)
 	if len(candidate.body) == 0 {
@@ -614,6 +634,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	approvalRead := approvalMatched && request.Method == http.MethodGet &&
 		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
 	managementScopeRead := request.Method == http.MethodGet && target.Path == AccountSessionManagementScopesPath
+	// The start read takes no query (below), so it is not in queryAllowed.
+	sessionRead := request.Method == http.MethodGet && target.Path == AccountSessionPath
 	_, inventoryMatched := parseDeviceInventoryPath(request)
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	_, _, deviceMatched := parseDeviceItemPath(request)
@@ -643,7 +665,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) ||
 		isExitPoolRead(request) || isDNSZoneRead(request) || isIdentityCatalogRead(request) || isNetworkMemberRead(request) ||
 		isEnrollmentKeyRead(request)
-	safeRead := approvalRead || managementScopeRead || inventoryRead || deviceRead || distributionRead || historyRead ||
+	safeRead := approvalRead || managementScopeRead || sessionRead || inventoryRead || deviceRead || distributionRead || historyRead ||
 		enforcementRead ||
 		deploymentCapabilityRead ||
 		policyRead ||

@@ -72,7 +72,147 @@
         }
       }
     },
+    "ConsoleManagementScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal_id",
+        "workspace",
+        "networks"
+      ],
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "display_code": {
+              "type": "string",
+              "minLength": 12,
+              "maxLength": 12,
+              "pattern": "^[0-9]{12}$",
+              "description": "Immutable display label. UUID remains the canonical API and authorization identity."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "can_rename": {
+              "type": "boolean",
+              "description": "Presentation hint only. Rename rechecks live ownership."
+            },
+            "permissions": {
+              "type": "array",
+              "maxItems": 5,
+              "uniqueItems": true,
+              "description": "Workspace-level permissions the Session holds, for presentation only; every action reauthorizes.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "network.create",
+                  "member.read",
+                  "role_binding.manage",
+                  "audit.read",
+                  "billing.read"
+                ]
+              }
+            }
+          }
+        },
+        "networks": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "display_name",
+              "permissions"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "permissions": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "device.read",
+                    "network.read",
+                    "policy.approve",
+                    "policy.read",
+                    "policy.publish",
+                    "policy.validate",
+                    "share.accept",
+                    "share.offer",
+                    "share.read",
+                    "share.revoke"
+                  ]
+                }
+              },
+              "display_code": {
+                "type": "string",
+                "minLength": 12,
+                "maxLength": 12,
+                "pattern": "^[0-9]{12}$",
+                "description": "Immutable display label. UUID remains the canonical API and authorization identity."
+              }
+            }
+          }
+        }
+      }
+    },
     "ConsoleManagementScopePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/components/schemas/ConsoleManagementScope"
+        },
+        "next_page_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConsoleSession": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -84,117 +224,15 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "principal_id",
-            "workspace",
-            "networks"
+            "capabilities",
+            "management_scope"
           ],
           "properties": {
-            "principal_id": {
-              "type": "string",
-              "format": "uuid"
+            "capabilities": {
+              "$ref": "#/components/schemas/ConsoleDeploymentCapabilities"
             },
-            "workspace": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "id",
-                "display_name"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "display_name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 128
-                },
-                "display_code": {
-                  "type": "string",
-                  "minLength": 12,
-                  "maxLength": 12,
-                  "pattern": "^[0-9]{12}$",
-                  "description": "Immutable display label. UUID remains the canonical API and authorization identity."
-                },
-                "version": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
-                },
-                "can_rename": {
-                  "type": "boolean",
-                  "description": "Presentation hint only. Rename rechecks live ownership."
-                },
-                "permissions": {
-                  "type": "array",
-                  "maxItems": 5,
-                  "uniqueItems": true,
-                  "description": "Workspace-level permissions the Session holds, for presentation only; every action reauthorizes.",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "network.create",
-                      "member.read",
-                      "role_binding.manage",
-                      "audit.read",
-                      "billing.read"
-                    ]
-                  }
-                }
-              }
-            },
-            "networks": {
-              "type": "array",
-              "maxItems": 100,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "id",
-                  "display_name",
-                  "permissions"
-                ],
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "format": "uuid"
-                  },
-                  "display_name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
-                  },
-                  "permissions": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 10,
-                    "uniqueItems": true,
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "device.read",
-                        "network.read",
-                        "policy.approve",
-                        "policy.read",
-                        "policy.publish",
-                        "policy.validate",
-                        "share.accept",
-                        "share.offer",
-                        "share.read",
-                        "share.revoke"
-                      ]
-                    }
-                  },
-                  "display_code": {
-                    "type": "string",
-                    "minLength": 12,
-                    "maxLength": 12,
-                    "pattern": "^[0-9]{12}$",
-                    "description": "Immutable display label. UUID remains the canonical API and authorization identity."
-                  }
-                }
-              }
+            "management_scope": {
+              "$ref": "#/components/schemas/ConsoleManagementScope"
             }
           }
         },
@@ -13532,6 +13570,49 @@
           },
           "default": {
             "description": "Private pre-release failure leaves status/headers/body untouched. Authentication failures use the existing bounded management denial without clearing or renewing cookies. Durable submission failure is uncertain delivery, never non-commit evidence or an automatic retry."
+          }
+        }
+      }
+    },
+    "/auth/v1/session": {
+      "get": {
+        "operationId": "getConsoleSession",
+        "summary": "Start a Console session view: Deployment capabilities and the first management-scope page",
+        "description": "Return, after one fresh Session authentication, what getConsoleDeploymentCapabilities and the first page (50) of listConsoleManagementScopes return, so a Console start is one request (TD-CON-48). No query is accepted; later scope pages come from listConsoleManagementScopes with next_page_token. Navigation is not authorization: every read and action rechecks its exact permission and scope. No CSRF proof, request body, Authorization credential, Session identifier or provider claim is accepted or returned. When the deployment sets MESHTRANSIT_SERVER_TIMING=true, every Console answer after a valid Session also carries a diagnostic Server-Timing header (db, redis and app durations in milliseconds) that is not part of this contract.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fresh server-authoritative Deployment capabilities and first management-scope page for the current Session login Workspace.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsoleSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
           }
         }
       }

@@ -9,6 +9,7 @@ import (
 	redisclient "github.com/redis/go-redis/v9"
 
 	"meshtransit.net/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/platform/servertiming"
 )
 
 const managementRateLimitKeyPrefix = "meshtransit:v1:ratelimit:management:"
@@ -128,6 +129,7 @@ func (client *Client) decide(
 		policy.RefillInterval(),
 		mode,
 	)
+	servertiming.AddRedis(ctx, time.Since(startedAt))
 	if err != nil {
 		client.metrics.observeCommand(redisCommandRateLimit, startedAt, err)
 		return ratelimit.Decision{}, errors.Join(ErrRateLimit, err)

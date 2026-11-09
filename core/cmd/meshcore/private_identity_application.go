@@ -47,6 +47,8 @@ type privateIdentityManagementOptions struct {
 	SourceRateLimit, SessionRateLimit ratelimit.Policy
 	// DNSSuffix names Devices and shares in responses; zero: the default.
 	DNSSuffix dnsname.Suffix
+	// ServerTiming adds Server-Timing to every answer (TD-CON-48).
+	ServerTiming bool
 }
 
 // Ports are effects, not prebuilt authentication services or secret owners.
@@ -301,6 +303,7 @@ func composePrivateIdentity(
 		Capabilities:       ports.SessionCapabilities,
 		DeploymentID:       options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,
+		ServerTiming: managementOptions.ServerTiming,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

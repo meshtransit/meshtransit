@@ -403,6 +403,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
 				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange, FlowLog: processConfig.FlowLog,
 				DNSSuffix: processConfig.DNSSuffix, EnrollmentKeys: enrollmentKeys,
+				ServerTiming:       processConfig.ServerTiming,
 				KubernetesClusters: kubernetesClusters,
 				SubnetRoutes:       processConfig.SubnetRoutes, SiteDenied: processConfig.SiteDenied,
 				ExitNodes: processConfig.ExitNodes, ExitSpread: processConfig.ExitSpread, Countries: countries,

@@ -112,7 +112,7 @@ func validDispatcherCallbackPath(value string) bool {
 	switch value {
 	case LoginPreparePath, LoginStartPath, LoginCallbackContinuePath, LoginContinuationPreparePath,
 		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionLogoutAllPath,
-		AccountSessionManagementScopesPath, InvitationPreparePath:
+		AccountSessionManagementScopesPath, AccountSessionPath, InvitationPreparePath:
 		return false
 	default:
 		return true
@@ -266,6 +266,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	_, workspaceRename := parseWorkspaceRenamePath(request)
 	managementScopes := request.URL != nil && request.URL.Path == AccountSessionManagementScopesPath
+	sessionRead := request.URL != nil && request.URL.Path == AccountSessionPath
 	deploymentCapabilities := request.URL != nil && request.URL.Path == DeploymentCapabilitiesPath
 	if request.Method == http.MethodPatch && workspaceRename {
 		return true
@@ -278,7 +279,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || deviceItem ||
 		distribution || history ||
 		enforcement ||
-		managementScopes || deploymentCapabilities ||
+		managementScopes || sessionRead || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
@@ -316,6 +317,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	_, enforcementRead := parseEnforcementHistoryPath(request)
 	deploymentCapabilities := target.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet &&
 		target.RawQuery == ""
+	sessionRead := target.Path == AccountSessionPath && request.Method == http.MethodGet && target.RawQuery == ""
 	registrationRead := dispatcher.registration != nil && request.Method == http.MethodGet &&
 		dispatcher.registration.validRequest(request)
 	_, resourceSharingCollectionRead := browserResourceSharingOperation(request)
@@ -323,7 +325,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
 	return callback || approvalList || managementScopes || inventoryRead || distributionRead || historyRead ||
 		enforcementRead ||
-		deploymentCapabilities ||
+		deploymentCapabilities || sessionRead ||
 		registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isSiteRead(request) || isExitPoolRead(request) ||

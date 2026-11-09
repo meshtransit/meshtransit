@@ -357,6 +357,8 @@ func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.C
 		ServerName: host,
 	}
 	poolConfig.ConnConfig.Fallbacks = nil
+	// Durations only, for the optional Server-Timing header (TD-CON-48).
+	poolConfig.ConnConfig.Tracer = serverTimingTracer{}
 	poolConfig.ConnConfig.RequireAuth = "scram-sha-256"
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = options.Role.applicationName()
 	poolConfig.ConnConfig.RuntimeParams["join_collapse_limit"] = plannerJoinLimit

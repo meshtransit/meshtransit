@@ -66,9 +66,10 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
 	// The private document holds 26 bearer operations moved onto the cookie
-	// (3 of them a running share's service names) and 95 cookie-only Console
+	// (3 of them a running share's service names) and 96 cookie-only Console
 	// operations (9 of them the Exit Pools, 6 the DNS zones with a zone's
-	// status, 6 their names, 2 the Network's DNS settings); another count
+	// status, 6 their names, 2 the Network's DNS settings, 1 the Console
+	// start read /auth/v1/session, TD-CON-48); another count
 	// means an API was added or dropped without review. The base document
 	// has 64 paths (a release's Kubernetes access and a cluster's profile denials, K2f; a cluster's group ceilings,
 	// list and one by hash, K2h h4), 25 of them the Kubernetes clusters (bearer only until the
@@ -78,7 +79,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 64 || operations != 121 {
+	if len(basePaths) != 64 || operations != 122 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
@@ -291,6 +292,46 @@ func TestManagementDocumentConsoleCapabilitiesAreAuthenticatedNavigationEvidence
 		len(profileArray(t, projection, "required")) != 9 {
 		t.Fatal("Deployment capability projection lost its bounded entitlement-derived shape")
 	}
+}
+
+// The Console start read is one cookie-authenticated GET with no query: the
+// capabilities and the first scope page, each by the same closed schema as
+// its own read (TD-CON-48).
+func TestManagementDocumentConsoleSessionIsOneClosedRead(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := profileObject(t, body)
+	item := profileMap(t, profileMap(t, document, "paths"), "/auth/v1/session")
+	if len(item) != 1 {
+		t.Fatal("Console start read exposes another method")
+	}
+	operation := profileMap(t, item, "get")
+	expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}}}
+	if operation["operationId"] != "getConsoleSession" ||
+		!reflect.DeepEqual(operation["security"], expectedSecurity) || operation["requestBody"] != nil {
+		t.Fatal("Console start read gained mutation proof, body or authentication fallback")
+	}
+	parameters := profileArray(t, operation, "parameters")
+	if len(parameters) != 2 ||
+		!reflect.DeepEqual(parameters[0], map[string]any{"$ref": "#/components/parameters/ConsoleOrigin"}) ||
+		!reflect.DeepEqual(parameters[1], map[string]any{"$ref": "#/components/parameters/ConsoleSessionChannel"}) {
+		t.Fatal("Console start read accepts a query or lost exact browser intent")
+	}
+	schemas := profileMap(t, profileMap(t, document, "components"), "schemas")
+	session := profileMap(t, schemas, "ConsoleSession")
+	data := profileMap(t, profileMap(t, session, "properties"), "data")
+	properties := profileMap(t, data, "properties")
+	if session["additionalProperties"] != false || data["additionalProperties"] != false ||
+		!reflect.DeepEqual(profileMap(t, properties, "capabilities"),
+			map[string]any{"$ref": "#/components/schemas/ConsoleDeploymentCapabilities"}) ||
+		!reflect.DeepEqual(profileMap(t, properties, "management_scope"),
+			map[string]any{"$ref": "#/components/schemas/ConsoleManagementScope"}) {
+		t.Fatal("Console start read is open-ended or differs from the reads it joins")
+	}
+	profileReferences(t, document, operation)
 }
 
 func TestManagementDocumentConsoleLogoutIsDurableAndCookieScoped(t *testing.T) {

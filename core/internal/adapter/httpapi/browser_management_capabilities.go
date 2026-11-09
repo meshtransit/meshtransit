@@ -67,7 +67,12 @@ func (browser *BrowserManagement) readDeploymentCapabilities(
 		)
 		return nil
 	}
-	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, deploymentCapabilityResponse{
+	writeManagementJSON(ctx, browser.management.logger, response, http.StatusOK, deploymentCapabilityView(capabilities))
+	return nil
+}
+
+func deploymentCapabilityView(capabilities sessioncontext.DeploymentCapabilities) deploymentCapabilityResponse {
+	return deploymentCapabilityResponse{
 		DeploymentProfile:   string(capabilities.Profile()),
 		WorkspaceMode:       string(capabilities.WorkspaceMode()),
 		MaxActiveWorkspaces: capabilities.MaxActiveWorkspaces(),
@@ -77,8 +82,7 @@ func (browser *BrowserManagement) readDeploymentCapabilities(
 		CloudBilling:        capabilities.CloudBilling(),
 		PlatformOperations:  capabilities.PlatformOperations(),
 		CapabilityRevision:  capabilities.Revision(),
-	})
-	return nil
+	}
 }
 
 func classifyDeploymentCapabilityError(err error) managementError {
