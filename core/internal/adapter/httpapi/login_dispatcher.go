@@ -241,7 +241,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	if resourceSharing, _ := browserResourceSharingOperation(request); resourceSharing || isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost || isNetworkCollectionPost(request) ||
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) ||
-		isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) ||
+		isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isNetworkItemOperation(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isConnectionLogOperation(request) ||
 		isDeviceGroupOperation(request) || isSiteOperation(request) || isExitPoolOperation(request) ||
 		isDNSZoneOperation(request) ||

@@ -120,6 +120,32 @@ SET display_name='Root' WHERE role_key='auditor'`)
 	expectBuiltinRejection(ctx, t, tx, "role permissions are immutable", `DELETE FROM mesh.builtin_role_permission
 WHERE role_key='auditor'`)
 
+	// Schema 279 (design Q3): deleting a Network needs the owner or admin
+	// assigned Workspace-wide (admin cannot be bound to one Network); a role
+	// bound to the Network, here network_admin, is not enough.
+	deleteGrant := func() builtinResolution {
+		return scanBuiltinResolution(ctx, t, tx, `SELECT role_binding_public_id::TEXT, role_definition_public_id::TEXT,
+    binding_authority_generation, membership_authority_generation, workspace_owner_authority_generation
+FROM mesh_ops.network_delete_grant_internal_v1(
+    $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::BIGINT,$8::BIGINT,$9::BIGINT,
+    $10::UUID,$11::TIMESTAMPTZ)`, ownerSessionArguments(session, workspaceID.String()))
+	}
+	if deleteGrant().found {
+		t.Fatal("network.delete granted without an assignment")
+	}
+	networkAdmin := insertBuiltinAssignment(ctx, t, tx, "01890f00-0000-7000-8000-000000013010", "network_admin", "203", "NULL")
+	if deleteGrant().found {
+		t.Fatal("a role bound to one Network may delete it")
+	}
+	revokeBuiltinAssignment(ctx, t, tx, networkAdmin)
+	// The expired admin assignment above still holds the Workspace-wide slot.
+	revokeBuiltinAssignment(ctx, t, tx, "01890f00-0000-7000-8000-000000013003")
+	workspaceAdmin := insertBuiltinAssignment(ctx, t, tx, "01890f00-0000-7000-8000-000000013011", "admin", "NULL", "NULL")
+	if grant := deleteGrant(); !grant.found || grant.bindingID != workspaceAdmin || grant.ownerGeneration != 0 {
+		t.Fatalf("Workspace-wide admin delete grant = %+v", grant)
+	}
+	revokeBuiltinAssignment(ctx, t, tx, workspaceAdmin)
+
 	// Ownership still answers Workspace permissions without any assignment.
 	if _, err := tx.Exec(ctx, `UPDATE mesh.workspace SET owner_principal_id=11,
     authority_generation=authority_generation+1, version=version+1,
@@ -132,6 +158,9 @@ WHERE role_key='auditor'`)
 	}
 	if workspace("deployment.operate").found {
 		t.Fatal("Workspace resolver granted a Deployment permission")
+	}
+	if grant := deleteGrant(); !grant.found || grant.ownerGeneration <= 0 || grant.bindingID != "" {
+		t.Fatalf("owner delete grant = %+v", grant)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)

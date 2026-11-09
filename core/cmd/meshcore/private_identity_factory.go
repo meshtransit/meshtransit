@@ -29,6 +29,7 @@ import (
 	"meshtransit.net/core/internal/domain/memberlifecycle"
 	"meshtransit.net/core/internal/domain/network/addressusage"
 	"meshtransit.net/core/internal/domain/network/aliasrange"
+	"meshtransit.net/core/internal/domain/network/deletion"
 	"meshtransit.net/core/internal/domain/network/devicelifetime"
 	"meshtransit.net/core/internal/domain/network/provisioning"
 	"meshtransit.net/core/internal/domain/node/distribution"
@@ -234,6 +235,14 @@ func composePrivateIdentityFactory(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	networkSummaries, err := postgresadapter.NewConsoleNetworkSummaryStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	networkDeletionStore, err := postgresadapter.NewNetworkDeletionStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	networkDeletion, err := deletion.NewService(networkDeletionStore, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
@@ -547,7 +556,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, PolicyKubernetesClusteredProfiles: dependencies.KubernetesClusteredProfiles, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, NetworkSummaries: networkSummaries, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, ConnectionLogs: connectionLogs, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, PolicyKubernetesAccess: policyKubernetesAccess, PolicyKubernetesClusteredProfiles: dependencies.KubernetesClusteredProfiles, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, DeviceLifetimes: deviceLifetimes, AddressUsage: addressUsage, NetworkSummaries: networkSummaries, NetworkDeletion: networkDeletion, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, ConnectionLogs: connectionLogs, DeviceGroups: deviceGroups, Sites: sites, ExitPools: exitPools, DNSZones: dnsZones, ServiceNames: dnsZones, OfferServiceNames: resources.imports, ContractServiceNames: contractServiceNames, SiteRouterObservations: dependencies.Redis, SiteRouterUse: dependencies.Redis, ExitNodeUse: dependencies.Redis, DNSZoneStatus: dependencies.Redis, DNSResolverDevices: deviceInventory, DNSZoneReceivers: dnsZoneStore, Countries: dependencies.Countries, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, NetworkMembers: networkMembers, EnrollmentKeys: dependencies.EnrollmentKeys, KubernetesClusters: dependencies.KubernetesClusters, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

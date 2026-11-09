@@ -1942,6 +1942,90 @@
           "format": "uuid"
         }
       }
+    },
+    "ConsoleNetworkDeletion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_id",
+        "state",
+        "requested_at",
+        "devices_total",
+        "devices_revoked"
+      ],
+      "properties": {
+        "network_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "deleting",
+            "deleted"
+          ]
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "devices_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "devices_revoked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ConsoleNetwork": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_id",
+        "display_name",
+        "state",
+        "version",
+        "created_at"
+      ],
+      "properties": {
+        "network_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "display_code": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "deleting"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deletion": {
+          "$ref": "#/components/schemas/ConsoleNetworkDeletion"
+        }
+      }
     }
   },
   "bearerOperations": [
@@ -23844,6 +23928,183 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ConsoleNetworkSummaryRead"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}": {
+      "get": {
+        "operationId": "getConsoleNetwork",
+        "summary": "Read one Network",
+        "description": "An active Network needs network.read in it; a Network being deleted, with its progress, needs the owner or a Workspace-wide network.delete grant. 404 once its deletion completed. The ETag of an active Network is its version, for If-Match on DELETE.",
+        "security": [
+          {
+            "accountSessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Network",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[1-9][0-9]*\"$"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConsoleNetwork"
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteConsoleNetwork",
+        "summary": "Delete a Network",
+        "description": "Only the Workspace owner or a Workspace-wide network.delete grant, at the version in If-Match, with the reason percent-encoded in X-Meshtransit-Reason (1 to 512 bytes decoded) and no body. The Network is deleted at once (its keys end, its Devices are told REVOKED); its Devices are revoked and its prefixes held for 24 hours behind it. A Network with a live Trust Contract, a Kubernetes cluster or a cluster CA not retired yet is refused with 409 network_delete_blocked naming them. A repeat while the deletion runs answers 202 with the progress; 404 once it completed; 412 when the version moved.",
+        "security": [
+          {
+            "accountSessionCookie": [],
+            "sessionCSRF": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConsoleOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionChannel"
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "network_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ConsoleSessionProof"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          },
+          {
+            "name": "X-Meshtransit-Reason",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1536
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Deleted, or still being deleted",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ConsoleNetworkDeletion"
+                    },
+                    "correlation_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
                 }
               }
             }

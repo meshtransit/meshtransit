@@ -44,7 +44,7 @@ func serveSessionRead(t *testing.T, options BrowserManagementOptions) *continuat
 func TestSessionReadAsksForTheFirstScopePageOnce(t *testing.T) {
 	t.Parallel()
 	options, _ := browserManagementTestOptions(t)
-	real := options.Scopes
+	scopes := options.Scopes
 	calls := 0
 	options.Scopes = sessionScopeListFunc(func(ctx context.Context, session accountsession.Session, limit int,
 		after network.ID) (sessioncontext.Page, error) {
@@ -52,7 +52,7 @@ func TestSessionReadAsksForTheFirstScopePageOnce(t *testing.T) {
 		if limit != defaultManagementScopePageSize || after != (network.ID{}) {
 			t.Errorf("scope page asked with limit %d after %v", limit, after)
 		}
-		return real.List(ctx, session, limit, after)
+		return scopes.List(ctx, session, limit, after)
 	})
 	if response := serveSessionRead(t, options); response.Code != http.StatusOK || calls != 1 {
 		t.Fatalf("status %d after %d scope reads", response.Code, calls)

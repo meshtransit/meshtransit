@@ -268,6 +268,8 @@ type ManagementHandlerOptions struct {
 	AddressUsage NetworkAddressUsage
 	// NetworkSummaries reads the Network summaries; nil answers 503.
 	NetworkSummaries networksummary.Reader
+	// NetworkDeletion deletes and reads one Network; nil answers 503.
+	NetworkDeletion NetworkDeletion
 	// AuditHistory lists Workspace audit history; nil answers 503.
 	AuditHistory AuditHistoryReader
 	// AuditExports assembles audit exports; nil answers 503.
@@ -384,6 +386,7 @@ type ManagementHandler struct {
 	deviceLifetimes           NetworkDeviceLifetimes
 	addressUsage              NetworkAddressUsage
 	networkSummaries          networksummary.Reader
+	networkDeletion           NetworkDeletion
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
@@ -480,6 +483,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceLifetimes:           options.DeviceLifetimes,
 		addressUsage:              options.AddressUsage,
 		networkSummaries:          options.NetworkSummaries,
+		networkDeletion:           options.NetworkDeletion,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
@@ -616,6 +620,7 @@ func (handler *ManagementHandler) serveHTTP(
 	deviceLifetimePath, deviceLifetimeMatched := parseNetworkDeviceLifetimePath(request)
 	addressUsageScope, addressUsageMatched := parseNetworkAddressUsagePath(request)
 	summaryPath, summaryMatched := parseNetworkSummaryPath(request)
+	networkItemScope, networkItemMatched := parseNetworkItemPath(request)
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
@@ -635,7 +640,7 @@ func (handler *ManagementHandler) serveHTTP(
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !policyKubernetesAccessMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !summaryMatched && !auditEventMatched &&
+		!shareTargetMatched && !aliasRangeMatched && !deviceLifetimeMatched && !addressUsageMatched && !summaryMatched && !networkItemMatched && !auditEventMatched &&
 		!auditExportMatched && !guardrailMatched && !interchangeMatched && !connectionLogMatched && !deviceGroupMatched && !siteMatched && !exitPoolMatched &&
 		!kubernetesMatched && !dnsZoneMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !networkMemberMatched && !invitationMatched &&
@@ -669,6 +674,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = networkAddressUsageReadOperation
 	} else if summaryMatched {
 		operation = summaryPath.operation()
+	} else if networkItemMatched {
+		operation = networkItemOperation(request.Method)
 	} else if auditEventMatched {
 		operation = auditEventListOperation
 	} else if auditExportMatched {
@@ -746,6 +753,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = http.MethodGet
 	} else if summaryMatched {
 		allowedMethod = http.MethodGet
+	} else if networkItemMatched {
+		allowedMethod = networkItemMethods.allowedMethod(request.Method)
 	} else if guardrailMatched {
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
 	} else if interchangeMatched {
@@ -912,6 +921,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if summaryMatched {
 		resultCode = handler.readNetworkSummaries(ctx, response, request, correlationID, summaryPath, session)
+		return
+	}
+	if networkItemMatched {
+		resultCode = handler.handleNetworkItem(ctx, response, request, correlationID, networkItemScope, session)
 		return
 	}
 	if auditEventMatched {

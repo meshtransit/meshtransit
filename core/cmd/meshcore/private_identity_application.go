@@ -100,6 +100,7 @@ type privateIdentityPorts struct {
 	DeviceLifetimes                   httpapi.NetworkDeviceLifetimes
 	AddressUsage                      httpapi.NetworkAddressUsage
 	NetworkSummaries                  networksummary.Reader
+	NetworkDeletion                   httpapi.NetworkDeletion
 	AuditHistory                      httpapi.AuditHistoryReader
 	AuditExports                      httpapi.AuditExporter
 	Guardrails                        httpapi.GuardrailManager
@@ -255,6 +256,7 @@ func composePrivateIdentity(
 		DeviceLifetimes:                   ports.DeviceLifetimes,
 		AddressUsage:                      ports.AddressUsage,
 		NetworkSummaries:                  ports.NetworkSummaries,
+		NetworkDeletion:                   ports.NetworkDeletion,
 		AuditHistory:                      ports.AuditHistory,
 		AuditExports:                      ports.AuditExports,
 		Guardrails:                        ports.Guardrails,

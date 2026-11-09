@@ -437,6 +437,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertSessionAuthorityPlanning(ctx, t, adminConnection)
 	assertPostgreSQLWorkspaceCreation(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkCreation(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLNetworkDeletion(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSessionWorkspace(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLShareTarget(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
@@ -518,6 +519,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t.Fatal("no shared map load expanded the Network policy")
 	}
 	assertPostgreSQLDeviceDNSLabels(ctx, t, adminConnection)
+	assertDeletedNetworkMapSessionRevoked(ctx, t, adminConnection)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)

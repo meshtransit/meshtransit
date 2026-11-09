@@ -319,7 +319,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isAuditEventListRead(request) ||
+		isNetworkAliasRangeOperation(request) || isNetworkDeviceLifetimeOperation(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isNetworkItemOperation(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isConnectionLogOperation(request) || isDeviceGroupOperation(request) || isSiteOperation(request) ||
 		isExitPoolOperation(request) || isDNSZoneOperation(request) || isIdentityCatalogOperation(request) ||
 		isDeviceLifecycleOperation(request) || isMemberLifecycleOperation(request) || isNetworkMemberOperation(request) || isEnrollmentKeyOperation(request) ||
@@ -657,7 +657,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isGuardrailRead(request) ||
+			isNetworkAliasRangeRead(request) || isNetworkDeviceLifetimeRead(request) || isNetworkAddressUsageRead(request) || isNetworkSummaryRead(request) || isNetworkItemRead(request) || isGuardrailRead(request) ||
 			isInterchangeRead(request) || isConnectionLogRead(request) ||
 			isInvitationRead(request) || isKubernetesClusterRead(request) ||
 			// The policy's Kubernetes access (K2f f1), GET with its query.

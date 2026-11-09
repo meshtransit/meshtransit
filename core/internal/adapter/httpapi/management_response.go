@@ -49,6 +49,8 @@ type managementError struct {
 	RemainingAttempts *int
 	// JWKSRule comes with signing_keys_invalid: the rule a pasted JWKS broke.
 	JWKSRule string
+	// NetworkDeleteBlockers comes with network_delete_blocked: what to end first.
+	NetworkDeleteBlockers *networkDeletionBlockersView
 }
 
 type guardrailFindingBody struct {
@@ -72,6 +74,8 @@ type managementErrorBody struct {
 	OperationIndex    *int                   `json:"operation_index,omitempty"`
 	RemainingAttempts *int                   `json:"remaining_attempts,omitempty"`
 	JWKSRule          string                 `json:"jwks_rule,omitempty"`
+	// Blockers comes with network_delete_blocked.
+	Blockers *networkDeletionBlockersView `json:"blockers,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -178,6 +182,7 @@ func writeManagementError(
 			OperationIndex:    apiError.OperationIndex,
 			RemainingAttempts: apiError.RemainingAttempts,
 			JWKSRule:          apiError.JWKSRule,
+			Blockers:          apiError.NetworkDeleteBlockers,
 		},
 	})
 }

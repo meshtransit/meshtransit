@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 279): deleting a Network, phase 1.
+  `DELETE /api/v1/workspaces/{w}/networks/{n}` with `If-Match` and the
+  reason percent-encoded in `X-Meshtransit-Reason`: only the Workspace owner
+  or a Workspace-wide built-in role with `network.delete` (admin). The
+  Network is deleted at once: its enrollment keys end, its name is free, its
+  revision advances so control closes every map stream, and its Devices are
+  told REVOKED on their current keys (`map_session_revoked_v2`). A Network
+  with a live Trust Contract, a Kubernetes cluster or a cluster CA not
+  retired is refused with 409 `network_delete_blocked` naming them. A repeat
+  answers 202 with the progress. `GET /api/v1/workspaces/{w}/networks/{n}`
+  reads one Network, or how far its deletion is. Revoking the Devices and
+  holding the prefixes for 24 hours come with schema 280.
 - Core (schema 278): Console reads of the Network summaries.
   `GET /api/v1/workspaces/{w}/network-summaries` (page of 50 at most,
   search by name or display code), `GET /api/v1/workspaces/{w}/overview`

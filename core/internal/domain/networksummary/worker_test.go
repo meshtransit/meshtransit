@@ -18,7 +18,6 @@ import (
 type fakeStore struct {
 	mu         sync.Mutex
 	due        []network.Scope
-	computeOK  bool
 	computeErr error
 	gone       bool
 	newer      bool
