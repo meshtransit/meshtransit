@@ -48,6 +48,9 @@ func TestRetentionStoreReadsBoundedAnswers(t *testing.T) {
 		removed.Attempts != 5 {
 		t.Fatalf("outbox = %+v, %v", removed, err)
 	}
+	if folded, err := store.FoldSummaryMarks(t.Context(), 100); err != nil || folded != 7 || database.args[0] != 100 {
+		t.Fatalf("fold = %d, %v (%v)", folded, err, database.args)
+	}
 	database.answer = `{"defaults": 0, "identities": 4, "mutations": 2}`
 	if removed, err := store.PruneAudit(t.Context(), 12, 100); err != nil ||
 		removed.Identities != 4 || removed.Mutations != 2 {

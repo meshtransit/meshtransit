@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 277): one summary row per Network (address usage, active
+  Devices, rules, shares, offers, approvals, Sites, clusters), kept current
+  by the worker when `MESHTRANSIT_NETWORK_SUMMARY_WORKER_ENABLED=true`.
+  Writers only append a change mark (no new lock), the worker folds the
+  marks and counts each changed Network in one read-only snapshot, and a
+  summary is stored only if newer. The retention pass folds marks too, so
+  they do not pile up while the summary worker is off. Metrics:
+  `meshtransit_network_summary_lag_seconds`, `_pending`, `_marks`. Console
+  reads of the summaries follow (TD-CON-43/48).
 - Core: `GET /auth/v1/session` answers a Console start with the Deployment
   capabilities and the first management-scope page under one admission, so
   the Console makes one request where it made two in a row (TD-CON-48).

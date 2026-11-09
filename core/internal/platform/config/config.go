@@ -105,6 +105,8 @@ type Config struct {
 	ContractExpiryWorker  *ContractExpiryWorkerConfig
 	RelayAuthority        *RelayAuthorityConfig
 	AccessLedgerWorker    *AccessLedgerWorkerConfig
+	// NetworkSummaryWorker keeps Network summaries current (TD-CON-48).
+	NetworkSummaryWorker *NetworkSummaryWorkerConfig
 	// KubernetesCAWorker keeps Kubernetes cluster CAs (K1a4 §17).
 	KubernetesCAWorker *KubernetesCAWorkerConfig
 	// EnforcementLedgerWorker records client enforcement evidence (R1-69).
@@ -211,6 +213,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	networkSummaryWorkerConfig, err := loadNetworkSummaryWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
 	accessLedgerWorkerConfig, err := loadAccessLedgerWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
@@ -452,6 +458,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		FlowTickets:                 flowTicketConfig,
 		FlowLogInternal:             flowLogInternalConfig,
 		AccessLedgerWorker:          accessLedgerWorkerConfig,
+		NetworkSummaryWorker:        networkSummaryWorkerConfig,
 		KubernetesCAWorker:          kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,
 		AuthExpiry:                  authExpiryConfig,

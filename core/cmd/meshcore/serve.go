@@ -293,6 +293,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			roleServices = append(roleServices, app.OwnedService{Name: composed.name, Service: composed.worker})
 		}
 	}
+	if processConfig.NetworkSummaryWorker != nil {
+		summaryWorker, summaryMetrics, composeErr := composeNetworkSummaryWorker(*processConfig.NetworkSummaryWorker,
+			storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "network_summary_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, summaryMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "network-summary-worker", Service: summaryWorker})
+	}
 	if processConfig.AccessLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeAccessLedgerWorker(*processConfig.AccessLedgerWorker, storagePools.worker, logger)
 		if composeErr != nil {

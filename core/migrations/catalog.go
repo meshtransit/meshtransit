@@ -679,6 +679,7 @@ func Catalog() []Migration {
 			workspaceAuditHeadAndVolumeSQL),
 		newMigration(276, "Device alias work skips ended endpoints left with nothing to clean up",
 			deviceAliasPendingWorkSQL),
+		newMigration(277, "Network summaries computed ahead of Console reads", networkSummarySQL),
 	}
 }
 
@@ -1286,3 +1287,6 @@ var workspaceAuditHeadAndVolumeSQL string
 
 //go:embed 000276_device_alias_pending_work.up.sql
 var deviceAliasPendingWorkSQL string
+
+//go:embed 000277_network_summary.up.sql
+var networkSummarySQL string

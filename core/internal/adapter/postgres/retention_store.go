@@ -21,6 +21,7 @@ const (
 	pruneOutboxSQL      = `SELECT mesh_ops.prune_outbox_events_v1($1::INTEGER, $2::INTEGER, $3::INTEGER)::TEXT`
 	dropAuditSQL        = `SELECT mesh_ops.drop_audit_event_partitions_v1($1::INTEGER)`
 	pruneAuditSQL       = `SELECT mesh_ops.prune_audit_rows_v1($1::INTEGER, $2::INTEGER)::TEXT`
+	foldSummaryMarksSQL = `SELECT mesh_ops.fold_network_summary_marks_v1($1::INTEGER)`
 	// maximumRetentionBatch is what the definer functions accept (schema 274).
 	maximumRetentionBatch = 5000
 )
@@ -61,6 +62,22 @@ func retentionFailure(what string, err error) error {
 
 func (store *RetentionStore) usable(ctx context.Context, limit int) bool {
 	return ctx != nil && store != nil && store.database != nil && limit >= 1 && limit <= maximumRetentionBatch
+}
+
+// FoldSummaryMarks moves up to limit Network summary change marks into
+// their queue, in its own transaction; 0 when another worker is folding.
+func (store *RetentionStore) FoldSummaryMarks(ctx context.Context, limit int) (int, error) {
+	if !store.usable(ctx, limit) {
+		return 0, ErrInvalidRetentionStore
+	}
+	var folded int
+	if err := store.database.QueryRow(ctx, foldSummaryMarksSQL, limit).Scan(&folded); err != nil {
+		return 0, retentionFailure("fold summary marks", err)
+	}
+	if folded < 0 || folded > limit {
+		return 0, ErrInvalidRetentionStore
+	}
+	return folded, nil
 }
 
 // PruneIdempotency removes up to limit records that expired more than grace ago.

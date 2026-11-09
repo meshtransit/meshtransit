@@ -64,6 +64,11 @@ func (store *scriptedStore) PruneAudit(_ context.Context, keepMonths, _ int) (Au
 	return AuditRemoved{Identities: rows, Mutations: rows / 2}, nil
 }
 
+func (store *scriptedStore) FoldSummaryMarks(_ context.Context, _ int) (int, error) {
+	store.calls = append(store.calls, "summary_marks")
+	return 0, nil
+}
+
 func options(batch, batches int) Options {
 	return Options{Policy: DefaultPolicy(), BatchSize: batch, MaxBatches: batches, Interval: time.Hour,
 		OperationTimeout: time.Second}
@@ -79,7 +84,8 @@ func TestPassRemovesEachKindUntilABatchIsNotFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	maintainer.Pass(context.Background())
-	want := []string{"idempotency", "idempotency", "idempotency", "outbox", "partitions", "audit", "audit"}
+	want := []string{"idempotency", "idempotency", "idempotency", "outbox", "partitions", "audit", "audit",
+		"summary_marks"}
 	if len(store.calls) != len(want) {
 		t.Fatalf("calls = %v, want %v", store.calls, want)
 	}

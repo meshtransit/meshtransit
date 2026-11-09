@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 276 {
-		t.Fatalf("len(Catalog()) = %d, want 276", len(catalog))
+	if len(catalog) != 277 {
+		t.Fatalf("len(Catalog()) = %d, want 277", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1615,8 +1615,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 276 {
-		t.Fatalf("LatestVersion() = %d, want 276", LatestVersion())
+	if LatestVersion() != 277 {
+		t.Fatalf("LatestVersion() = %d, want 277", LatestVersion())
 	}
 }
 

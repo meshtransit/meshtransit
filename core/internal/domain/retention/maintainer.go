@@ -70,6 +70,10 @@ type Store interface {
 	// in its own transaction and names them.
 	DropAuditPartitions(ctx context.Context, keepMonths int) ([]string, error)
 	PruneAudit(ctx context.Context, keepMonths, limit int) (AuditRemoved, error)
+	// FoldSummaryMarks moves up to limit Network summary change marks into
+	// their queue (schema 277), so they never pile up while the summary
+	// worker is off.
+	FoldSummaryMarks(ctx context.Context, limit int) (int, error)
 }
 
 // Options bounds one maintainer: the policy, the rows per batch, the
@@ -105,6 +109,7 @@ type Measurements struct {
 	IdempotencyRecords                      uint64
 	OutboxEvents, OutboxAttempts            uint64
 	AuditPartitions, AuditEvents, AuditRows uint64
+	SummaryMarks                            uint64
 	LastWholePass                           time.Time
 }
 
@@ -124,6 +129,7 @@ type Maintainer struct {
 	passes, failed                     atomic.Uint64
 	idempotency, events, attempts      atomic.Uint64
 	partitions, auditEvents, auditRows atomic.Uint64
+	summaryMarks                       atomic.Uint64
 	lastWhole                          atomic.Int64
 }
 
@@ -197,7 +203,7 @@ func (maintainer *Maintainer) Snapshot() Measurements {
 		IdempotencyRecords: maintainer.idempotency.Load(),
 		OutboxEvents:       maintainer.events.Load(), OutboxAttempts: maintainer.attempts.Load(),
 		AuditPartitions: maintainer.partitions.Load(), AuditEvents: maintainer.auditEvents.Load(),
-		AuditRows: maintainer.auditRows.Load(),
+		AuditRows: maintainer.auditRows.Load(), SummaryMarks: maintainer.summaryMarks.Load(),
 	}
 	if last := maintainer.lastWhole.Load(); last > 0 {
 		measurements.LastWholePass = time.Unix(last, 0)
@@ -232,7 +238,7 @@ func (maintainer *Maintainer) Pass(ctx context.Context) {
 		run  func(context.Context) error
 	}{
 		{"idempotency", maintainer.idempotencyStep}, {"outbox", maintainer.outboxStep},
-		{"audit", maintainer.auditStep},
+		{"audit", maintainer.auditStep}, {"summary_marks", maintainer.summaryMarksStep},
 	} {
 		if err := step.run(ctx); err != nil {
 			if ctx.Err() == nil {
@@ -273,6 +279,20 @@ func (maintainer *Maintainer) idempotencyStep(ctx context.Context) error {
 		}
 		maintainer.idempotency.Add(uint64(max(removed, 0)))
 		return removed >= limit, nil
+	})
+}
+
+// summaryMarksStep folds Network summary change marks; last, so an older
+// schema without it defers nothing else.
+func (maintainer *Maintainer) summaryMarksStep(ctx context.Context) error {
+	limit := maintainer.options.BatchSize
+	return maintainer.batches(ctx, func(operation context.Context) (bool, error) {
+		folded, err := maintainer.store.FoldSummaryMarks(operation, limit)
+		if err != nil {
+			return false, err
+		}
+		maintainer.summaryMarks.Add(uint64(max(folded, 0)))
+		return folded >= limit, nil
 	})
 }
 
