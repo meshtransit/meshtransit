@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"sync"
 	"testing"
 	"time"
@@ -271,6 +272,8 @@ func enqueueOpenResolution(
 		*destinations[11].(*int64) = 3
 		return nil
 	}}}
+	// No Device holds the machine key yet.
+	transaction.rows[readBoundDeviceOwnerSQL] = []databaseRow{testRow{err: pgx.ErrNoRows}}
 	digest := testDigest(t)
 	digestBytes := digest.Bytes()
 	fingerprint := digest.Fingerprint()

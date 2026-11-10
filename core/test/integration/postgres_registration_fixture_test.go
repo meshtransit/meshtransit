@@ -27,6 +27,8 @@ type registrationAuthorityFixture struct {
 	authorityMaterial      byte
 	machineMaterial        byte
 	nodeMaterial           byte
+	// issuerInternalID issues the enrollment key; 0 means principal 11.
+	issuerInternalID int64
 }
 
 func seedOpenRegistrationAuthority(
@@ -95,6 +97,56 @@ func seedResumeRegistrationAuthority(
 	})
 }
 
+func registrationKeyIssuer(fixture registrationAuthorityFixture) int64 {
+	if fixture.issuerInternalID == 0 {
+		return 11
+	}
+	return fixture.issuerInternalID
+}
+
+// seedForeignKeyResumeAuthority opens a registration for the resumed Device's
+// keys (seedResumeRegistrationAuthority) with a key another principal issued.
+func seedForeignKeyResumeAuthority(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+) registrationapp.Command {
+	t.Helper()
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
+		changePublicID:         "01890f01-0000-7000-8000-000000000643",
+		eventPublicID:          "01890f02-0000-7000-8000-000000000643",
+		outboxPublicID:         "01890f03-0000-7000-8000-000000000643",
+		streamID:               1,
+		aggregateKind:          "principal",
+		aggregatePublicID:      "01890f00-0000-7000-8000-000000000643",
+		aggregateVersion:       1,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "principal.created",
+		permission:             "system.bootstrap",
+		outboxEventClass:       "principal.created",
+	}, func(transaction pgx.Tx) {
+		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.principal (id, public_id, deployment_id, kind, state)
+OVERRIDING SYSTEM VALUE VALUES (643, '01890f00-0000-7000-8000-000000000643', 1, 'account', 'active')`); err != nil {
+			t.Fatalf("insert foreign key issuer: %v", err)
+		}
+	})
+	return seedOpenRegistrationFixture(ctx, t, connection, registrationAuthorityFixture{
+		authorityInternalID:    7642,
+		registrationInternalID: 7646,
+		authorityPublicID:      "01890f20-0000-7000-8000-000000007642",
+		registrationPublicID:   "01890f20-0000-7000-8000-000000007646",
+		changePublicID:         "01890f21-0000-7000-8000-000000007641",
+		eventPublicID:          "01890f22-0000-7000-8000-000000007641",
+		outboxPublicID:         "01890f23-0000-7000-8000-000000007641",
+		digestLabel:            "integration-registration-foreign-key-v1",
+		hostname:               "node-two-foreign.example",
+		authorityMaterial:      0x53,
+		machineMaterial:        0x31,
+		nodeMaterial:           0x32,
+		issuerInternalID:       643,
+	})
+}
+
 func seedOpenRegistrationFixture(
 	ctx context.Context,
 	t *testing.T,
@@ -157,7 +209,7 @@ WHERE workspace_id = 101 AND network_id = 201`).Scan(&currentNetworkRevision); e
     101,
     201,
     601,
-    11,
+    $6,
     'hmac-sha256-v1',
     $3,
     $4::BYTEA,
@@ -175,6 +227,7 @@ WHERE workspace_id = 101 AND network_id = 201`).Scan(&currentNetworkRevision); e
 			fixture.digestLabel,
 			authorityMaterial[:],
 			authorityMaterial[:16],
+			registrationKeyIssuer(fixture),
 		); err != nil {
 			t.Fatalf("insert open registration credential: %v", err)
 		}

@@ -3,7 +3,10 @@ package registrationintake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
 )
@@ -43,6 +46,26 @@ func (transaction *transaction) Resolve(
 	return locked.resolution, resultErr
 }
 
+// boundToAnotherOwner reports whether the machine key already holds a
+// member's Device in this Network that the key's issuer does not own
+// (TD-SEC-75). The registration transaction refuses such a key too, but the
+// service refuses it first, once the key is authenticated, so no pending
+// intent is left to block the owner's own key.
+func (transaction *transaction) boundToAnotherOwner(ctx context.Context, lookup appintake.Lookup,
+	issuer int64) (bool, error) {
+	var owner int64
+	var workspaceOwned bool
+	err := transaction.database.QueryRow(ctx, readBoundDeviceOwnerSQL, lookup.MachineFingerprint[:]).
+		Scan(&owner, &workspaceOwned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the machine key's Device: %w", err)
+	}
+	return !workspaceOwned && owner != issuer, nil
+}
+
 func (transaction *transaction) resolveLocked(
 	ctx context.Context,
 	lookup appintake.Lookup,
@@ -56,6 +79,10 @@ func (transaction *transaction) resolveLocked(
 		return lockedState{}, err
 	}
 	credentialRecord, err := transaction.lockCredential(ctx, lookup.CredentialID)
+	if err != nil {
+		return lockedState{}, err
+	}
+	foreign, err := transaction.boundToAnotherOwner(ctx, lookup, credentialRecord.issuerInternalID)
 	if err != nil {
 		return lockedState{}, err
 	}
@@ -99,6 +126,9 @@ func (transaction *transaction) resolveLocked(
 		if err != nil {
 			return lockedState{}, ErrEvidence
 		}
+	}
+	if foreign {
+		resolution = resolution.WithForeignDevice()
 	}
 	return lockedState{
 		resolution:             resolution,

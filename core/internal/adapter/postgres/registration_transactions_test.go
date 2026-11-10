@@ -130,7 +130,7 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 		*destinations[4].(*int64) = 5
 		*destinations[5].(*[]byte) = append([]byte(nil), machineKey[:]...)
 		*destinations[6].(*[]byte) = append([]byte(nil), nodeKey[:]...)
-		*destinations[10].(*int64) = 12 // owned by someone other than the key's issuer
+		*destinations[10].(*int64) = 11 // owned by the key's issuer
 		return nil
 	}}
 	database.enqueueRows(lockRegistrationDeviceLeasesSQL, &registrationTestRows{scans: []func(...any) error{
@@ -197,11 +197,69 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 	if evidenceCall.arguments[10] != "device.resumed" {
 		t.Fatalf("resume audit action = %#v, want device.resumed", evidenceCall.arguments[10])
 	}
-	// A resume names the Device on its owner's behalf, not the key issuer's.
+	// A resume names the Device on its owner's behalf.
 	for _, query := range []string{registrationHostnamesTakenSQL, releaseRegistrationHostnameSQL} {
-		if call := findRegistrationCall(t, database.calls, query); call.arguments[4] != int64(12) {
+		if call := findRegistrationCall(t, database.calls, query); call.arguments[4] != int64(11) {
 			t.Fatalf("hostname owner = %v, want the Device's owner", call.arguments[4])
 		}
+	}
+}
+
+// TD-SEC-75: another member's key must not renew a member's Device, expired
+// or not; a Workspace Device keeps its lifetime, so any key of its profile may.
+func TestRegistrationTransactionResumeRequiresTheOwnersKey(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		owner          int64
+		workspaceOwned bool
+		want           error
+	}{
+		{name: "another member's Device", owner: 12, want: registration.ErrIntentConflict},
+		{name: "the issuer's own Device", owner: 11},
+		{name: "a Workspace Device", owner: 12, workspaceOwned: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			command := validRegistrationReplayCommand(t)
+			database := newFakeRegistrationDatabaseTransaction()
+			enqueueOpenRegistrationResolution(t, database, command)
+			machineKey := command.Identity.MachineKey().Bytes()
+			nodeKey := command.Identity.NodeKey().Bytes()
+			database.rows[lockRegistrationDeviceSQL][0] = registrationTestRow{scan: func(destinations ...any) error {
+				*destinations[0].(*int64) = 603
+				*destinations[1].(*string) = testRegistrationNodePublicID
+				*destinations[2].(*int64) = 601
+				*destinations[3].(*string) = "old-node.example"
+				*destinations[4].(*int64) = 5
+				*destinations[5].(*[]byte) = append([]byte(nil), machineKey[:]...)
+				*destinations[6].(*[]byte) = append([]byte(nil), nodeKey[:]...)
+				*destinations[8].(*bool) = test.workspaceOwned
+				*destinations[10].(*int64) = test.owner
+				return nil
+			}}
+			database.enqueueRows(lockRegistrationDeviceLeasesSQL, &registrationTestRows{scans: []func(...any) error{
+				func(destinations ...any) error {
+					*destinations[0].(*int) = 4
+					return nil
+				},
+			}})
+			transaction := beginTestRegistrationTransaction(t, database, command)
+			resolution, err := transaction.Resolve(t.Context(), command)
+			if test.want != nil {
+				if !errors.Is(err, test.want) {
+					t.Fatalf("Resolve() error = %v, want %v", err, test.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+			if _, exists := resolution.ExistingNodeID(); !exists {
+				t.Fatal("ExistingNodeID() found no Node, want the resumable Device")
+			}
+		})
 	}
 }
 

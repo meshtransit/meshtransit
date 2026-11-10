@@ -34,7 +34,9 @@ WHERE registration.public_id = $1::UUID
    OR (
        registration.machine_key_fingerprint = $2::BYTEA
        AND (
-           registration.state IN ('pending', 'authorized')
+           -- An expired intent no longer blocks a new one.
+           (registration.state IN ('pending', 'authorized')
+            AND registration.expires_at > pg_catalog.transaction_timestamp())
            OR (
                registration.state = 'completed'
                AND credential.public_id = $3::UUID
@@ -51,6 +53,23 @@ ORDER BY
     registration.id DESC
 LIMIT 3
 FOR UPDATE OF registration`
+
+// readBoundDeviceOwnerSQL finds the active Device the machine key already
+// owns in this Network: a key renews it only when its issuer owns it, or
+// the Workspace does (TD-SEC-75). Read before an intent is written, so a
+// refused key leaves nothing that blocks the owner's own key.
+const readBoundDeviceOwnerSQL = `SELECT device.owner_principal_id, device.ownership = 'workspace'
+FROM mesh.device_machine_key_epoch AS machine
+JOIN mesh.device AS device
+  ON device.workspace_id = machine.workspace_id
+ AND device.network_id = machine.network_id
+ AND device.id = machine.device_id
+WHERE machine.fingerprint = $1::BYTEA
+  AND machine.state = 'active'
+  AND device.state = 'active'
+  AND device.deleted_at IS NULL
+ORDER BY machine.epoch DESC
+LIMIT 1`
 
 const lockRevisionSQL = `SELECT *
 FROM mesh_ops.lock_active_network_revision_v1()`

@@ -47,6 +47,7 @@ func TestTransactionCreatesPendingIntentWithAuditAndOutbox(t *testing.T) {
 		lockIntentsSQL,
 		lockRevisionSQL,
 		lockEnrollmentAuthoritySQL,
+		readBoundDeviceOwnerSQL,
 		loadDigestSQL,
 		lockProfileSQL,
 		lockAuditHeadSQL,
@@ -259,5 +260,48 @@ func TestTransactionRollbackIsConcurrentSafeAndIdempotent(t *testing.T) {
 			databaseTransaction.rollbackCalls,
 			databaseTransaction.commitCalls,
 		)
+	}
+}
+
+// TD-SEC-75: the resolution marks a key another member issued, so the
+// service refuses it before an intent is written; a Workspace Device's
+// machine key may use any key of the profile.
+func TestTransactionMarksAnotherMembersKey(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		owner          int64
+		workspaceOwned bool
+		refused        bool
+	}{
+		{name: "another member's Device", owner: 99, refused: true},
+		{name: "the issuer's Device", owner: 11},
+		{name: "a Workspace Device", owner: 99, workspaceOwned: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			lookup := validLookup(t)
+			databaseTransaction := newFakeDatabaseTransaction()
+			enqueueBegin(t, databaseTransaction, lookup)
+			enqueueOpenResolution(t, databaseTransaction, lookup)
+			databaseTransaction.rows[readBoundDeviceOwnerSQL] = []databaseRow{testRow{scan: func(destinations ...any) error {
+				*destinations[0].(*int64) = test.owner
+				*destinations[1].(*bool) = test.workspaceOwned
+				return nil
+			}}}
+			transactions := newTestTransactions(t, databaseTransaction)
+			value, err := transactions.Begin(t.Context(), lookup)
+			if err != nil {
+				t.Fatalf("Begin() error = %v", err)
+			}
+			resolution, err := value.(*transaction).Resolve(t.Context(), lookup)
+			if err != nil {
+				t.Fatalf("Resolve() error = %v", err)
+			}
+			if resolution.ForeignDevice() != test.refused {
+				t.Fatalf("ForeignDevice() = %t, want %t", resolution.ForeignDevice(), test.refused)
+			}
+		})
 	}
 }

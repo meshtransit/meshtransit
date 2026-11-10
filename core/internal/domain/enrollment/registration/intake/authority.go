@@ -86,7 +86,21 @@ type Resolution struct {
 	intentID    enrollment.RegistrationID
 	requestHash registration.RequestHash
 	hasIntent   bool
+	// foreignDevice: the machine key holds a member's Device that the key's
+	// issuer does not own (TD-SEC-75).
+	foreignDevice bool
 }
+
+// WithForeignDevice records that the machine key holds a member's Device the
+// key's issuer does not own; the service refuses the key once it has
+// authenticated it, so a wrong secret learns nothing about the Device.
+func (resolution Resolution) WithForeignDevice() Resolution {
+	resolution.foreignDevice = true
+	return resolution
+}
+
+// ForeignDevice reports WithForeignDevice.
+func (resolution Resolution) ForeignDevice() bool { return resolution.foreignDevice }
 
 // NewResolution constructs locked authority with no existing active intent.
 func NewResolution(authority Authority) Resolution {

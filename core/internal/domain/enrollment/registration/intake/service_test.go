@@ -330,3 +330,36 @@ func TestServiceValidatesDependenciesRequestAndContext(t *testing.T) {
 		t.Fatalf("Begin() calls = %d, want 0 for invalid inputs", transactions.beginCalls)
 	}
 }
+
+// TD-SEC-75: a key another member issued is refused once it is
+// authenticated, before any intent or evidence ID; a wrong secret is told
+// only that authentication failed.
+func TestServiceRefusesAnotherMembersKeyAfterAuthentication(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		accept bool
+		want   error
+	}{
+		{name: "authenticated", accept: true, want: registration.ErrIntentConflict},
+		{name: "wrong secret", accept: false, want: intake.ErrAuthenticationFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			transaction := &fakeTransaction{resolution: intake.NewResolution(validAuthority(t)).WithForeignDevice()}
+			service, ids := newService(t, &transactionQueue{transactions: []*fakeTransaction{transaction}},
+				validVerifier{accept: test.accept})
+			_, err := service.Prepare(t.Context(), validRequest(t))
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Prepare() error = %v, want %v", err, test.want)
+			}
+			if got, want := transaction.calls, []string{"resolve", "rollback"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("transaction calls = %v, want %v", got, want)
+			}
+			if ids.calls != 0 || len(transaction.changes) != 0 {
+				t.Fatalf("refused key generated IDs or mutation: ids=%d changes=%d", ids.calls, len(transaction.changes))
+			}
+		})
+	}
+}

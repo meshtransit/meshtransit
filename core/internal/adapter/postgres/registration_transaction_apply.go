@@ -107,7 +107,7 @@ func (transaction *registrationTransaction) applyLocked(
 	// A resumed Device keeps an administrator's rename and, when the
 	// Workspace owns it, its never-expiring lifetime (schema 125).
 	if existing := transaction.locked.device; change.Disposition() == registration.DispositionResumed {
-		if existing.hostnameLocked {
+		if existing.hostnameLocked || existing.workspaceOwned {
 			if hostname, err = node.ParseHostname(existing.hostname); err != nil {
 				return registration.Result{}, ErrRegistrationEvidence
 			}

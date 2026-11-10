@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -128,6 +129,39 @@ func assertPostgreSQLRegistrationServiceResume(
 		beforeNetworkRevision+1,
 		beforeInventoryRevision+1,
 	)
+}
+
+// TD-SEC-75: a key another member issued must not renew a member's Device;
+// the Device, its expiry and its evidence stay as they were.
+func assertPostgreSQLRegistrationServiceRefusesForeignKey(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+) {
+	t.Helper()
+	command := seedForeignKeyResumeAuthority(ctx, t, adminConnection)
+	fingerprint := command.Identity.MachineKey().Fingerprint()
+	before := readRegisteredNodeEvidence(ctx, t, adminConnection, fingerprint[:])
+	var expiresBefore time.Time
+	if err := adminConnection.QueryRow(ctx, `SELECT expires_at FROM mesh.device WHERE public_id = $1::UUID`,
+		before.nodePublicID).Scan(&expiresBefore); err != nil {
+		t.Fatalf("read Device expiry: %v", err)
+	}
+	_, err := newIntegrationRegistrationService(t, runtimePool).Register(ctx, command)
+	if !errors.Is(err, registrationapp.ErrIntentConflict) {
+		t.Fatalf("foreign-key resume error = %v, want an intent conflict", err)
+	}
+	after := readRegisteredNodeEvidence(ctx, t, adminConnection, fingerprint[:])
+	var expiresAfter time.Time
+	if err := adminConnection.QueryRow(ctx, `SELECT expires_at FROM mesh.device WHERE public_id = $1::UUID`,
+		before.nodePublicID).Scan(&expiresAfter); err != nil {
+		t.Fatalf("read Device expiry: %v", err)
+	}
+	if after != before || !expiresAfter.Equal(expiresBefore) {
+		t.Fatalf("foreign-key resume changed the Device: before=%+v/%v after=%+v/%v",
+			before, expiresBefore, after, expiresAfter)
+	}
 }
 
 func newIntegrationRegistrationService(

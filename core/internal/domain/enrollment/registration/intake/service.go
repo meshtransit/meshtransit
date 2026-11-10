@@ -198,6 +198,11 @@ func (service *Service) attempt(
 	if err := authority.Profile().ValidateCredential(authority.Credential()); err != nil {
 		return registration.Command{}, ErrAuthenticationFailed
 	}
+	// Decided only for an authenticated key, before any intent is written,
+	// so the owner's own key works right after (TD-SEC-75).
+	if resolution.ForeignDevice() {
+		return registration.Command{}, registration.ErrIntentConflict
+	}
 
 	intentID := request.RegistrationID
 	existingID, existingHash, exists := resolution.ExistingIntent()

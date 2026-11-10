@@ -355,6 +355,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConnection,
 		runtimePool,
 	)
+	assertPostgreSQLRegistrationServiceRefusesForeignKey(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLRegistrationServiceConcurrency(
 		ctx,
 		t,

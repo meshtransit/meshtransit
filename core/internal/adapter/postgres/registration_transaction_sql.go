@@ -289,6 +289,7 @@ SET hostname = $2::TEXT,
     updated_at = $4::TIMESTAMPTZ
 WHERE id = $1::BIGINT
   AND version = $5::BIGINT
+  AND (ownership = 'workspace' OR owner_principal_id = $6::BIGINT)
 RETURNING version`
 
 const insertRegistrationMachineKeySQL = `INSERT INTO mesh.device_machine_key_epoch (

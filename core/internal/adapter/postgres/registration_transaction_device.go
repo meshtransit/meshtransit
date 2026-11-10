@@ -28,6 +28,7 @@ func (transaction *registrationTransaction) persistRegistrationDevice(
 			expiresAt,
 			change.OccurredAt(),
 			transaction.locked.device.version,
+			transaction.locked.credential.issuerInternalID,
 		).Scan(&version); err != nil {
 			return 0, 0, fmt.Errorf("resume Device: %w", err)
 		}

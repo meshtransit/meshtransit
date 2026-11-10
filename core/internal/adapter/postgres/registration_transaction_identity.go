@@ -103,7 +103,17 @@ func (transaction *registrationTransaction) resolveOpen(
 	if locked.device.internalID > 0 {
 		locked.hostnameOwner = locked.device.ownerInternalID
 	}
-	if err := transaction.selectHostname(ctx, &locked, command.Hostname); err != nil {
+	// A Workspace Device keeps its name on resume: a key that renews nothing
+	// must not rename it or take a released name (TD-SEC-75 review).
+	requested := command.Hostname
+	if locked.device.internalID > 0 && locked.device.workspaceOwned {
+		existing, err := node.ParseHostname(locked.device.hostname)
+		if err != nil {
+			return registrationLockedState{}, ErrRegistrationEvidence
+		}
+		requested = existing
+	}
+	if err := transaction.selectHostname(ctx, &locked, requested); err != nil {
 		return registrationLockedState{}, err
 	}
 	if err := transaction.lockAddressState(ctx, &locked); err != nil {
@@ -155,6 +165,16 @@ func (transaction *registrationTransaction) lockExistingDevice(
 		record.version <= 0 || record.ownerInternalID <= 0 ||
 		subtle.ConstantTimeCompare(record.machineKey, machineKey[:]) != 1 ||
 		subtle.ConstantTimeCompare(record.nodeKey, nodeKey[:]) != 1 {
+		return node.ID{}, registration.ErrIntentConflict
+	}
+	// A member's Device renews only with a key its owner issued: another
+	// member's key would extend, past the expiry the owner approved, a Device
+	// whose keys someone else holds, keeping the owner's group rights
+	// (TD-SEC-75, docs/device-logout-design.md §2.1). A Device created by a key
+	// belongs to the key's issuer, so its owner may use any key of their own.
+	// A Workspace Device keeps its expiry and its name on resume, so the key
+	// changes neither.
+	if !record.workspaceOwned && record.ownerInternalID != locked.credential.issuerInternalID {
 		return node.ID{}, registration.ErrIntentConflict
 	}
 	nodeID, err := node.ParseID(record.publicID)
