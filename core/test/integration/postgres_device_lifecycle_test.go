@@ -229,7 +229,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	}
 	// Schema 184: the Network permission check waits for a member change
 	// without holding the session.
-	page, err := runWhileWorkspaceChanging(ctx, t, admin, "read_console_devices_v6", owner.ID().String(),
+	page, err := runWhileWorkspaceChanging(ctx, t, admin, "read_console_devices_v7", owner.ID().String(),
 		func() (inventory.ReadResult, error) {
 			return inventoryStore.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100})
 		})
@@ -431,6 +431,23 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 	if out, live := signedOut(); !out || live || addresses() != held || held == "" {
 		t.Fatalf("signed out %t, live %t, addresses %q → %q", out, live, held, addresses())
 	}
+	// Schema 285: the Console lists it as signed out, and not as active.
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
+	assertConsoleSignedOutPage(ctx, t, admin, runtime, owner, scope, device)
+	// Suspended, it reads as suspended (§8's order): still signed out, but
+	// only under inactive. Resumed, it is signed out again.
+	change := func(action devicelifecycle.Action, reason string) {
+		t.Helper()
+		request := devicelifecycle.Request{Action: action, Reason: reason, Scope: scope, DeviceID: device,
+			CorrelationID: newCorrelationID(t), ExpectedVersion: readIntegrationDevice(ctx, t, admin, device).version}
+		if _, err := lifecycle.Change(ctx, owner, request); err != nil {
+			t.Fatalf("%s a signed-out Device: %v", action, err)
+		}
+	}
+	change(devicelifecycle.ActionSuspend, "Lost while signed out")
+	assertConsoleSuspendedSignedOut(ctx, t, runtime, owner, scope, device)
+	change(devicelifecycle.ActionResume, "Found")
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
 	// The owner signs in again: the same Device, its addresses, live.
 	if result := browserLogin(); result.NodeID() != device || result.Disposition() != registration.DispositionResumed {
 		t.Fatalf("sign in = %+v", result)
@@ -439,6 +456,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 		countDeviceAudit(ctx, t, admin, device, "device.signed_in") != 1 {
 		t.Fatalf("after sign in: signed out %t, live %t, addresses %q", out, live, addresses())
 	}
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, false)
 	// Signed out again, then moved to the Workspace: still signed out.
 	if _, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil {
 		t.Fatal(err)
@@ -452,6 +470,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 	if out, live := signedOut(); !out || live {
 		t.Fatalf("a transfer to the Workspace brought a signed-out Device back: signed out %t, live %t", out, live)
 	}
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
 	if result, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil ||
 		result.Outcome != control.LogoutUnchanged {
 		t.Fatalf("repeat sign out of a moved Device = %+v, %v", result, err)
@@ -479,6 +498,144 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 	if _, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); !errors.Is(err,
 		control.ErrDeviceSignOutNotPermitted) {
 		t.Fatalf("Workspace Device sign out: %v", err)
+	}
+}
+
+// assertConsoleSignedOut reads the Device through the Console (schema 285):
+// signed out, it carries signed_out_at, is in state=signed_out and not in
+// state=active; signed in, neither.
+func assertConsoleSignedOut(ctx context.Context, t *testing.T, runtime *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, device node.ID, want bool,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtime,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := func(state inventory.StateFilter) (inventory.Device, bool) {
+		t.Helper()
+		page, err := store.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100, State: state})
+		if err != nil {
+			t.Fatalf("read %q Devices: %v", state, err)
+		}
+		for _, item := range page.Devices {
+			if item.ID() == device {
+				return item, true
+			}
+		}
+		return inventory.Device{}, false
+	}
+	item, inSignedOut := listed(inventory.StateSignedOut)
+	_, inActive := listed(inventory.StateActive)
+	_, inInactive := listed(inventory.StateInactive)
+	all, inAll := listed(inventory.StateAll)
+	record, err := store.ReadDevice(ctx, owner, scope, device)
+	if err != nil || !record.Found {
+		t.Fatalf("read the Device: %+v, %v", record, err)
+	}
+	_, listedOut := all.SignedOutAt()
+	_, readOut := record.Device.SignedOutAt()
+	if !inAll || inSignedOut != want || inActive == want || inInactive != want || listedOut != want || readOut != want {
+		t.Fatalf("signed out %t: in signed_out %t, active %t, inactive %t, all %t; listed %t, read %t", want,
+			inSignedOut, inActive, inInactive, inAll, listedOut, readOut)
+	}
+	if want {
+		if _, ok := item.SignedOutAt(); !ok {
+			t.Fatal("the signed_out page dropped signed_out_at")
+		}
+	}
+}
+
+// assertConsoleSuspendedSignedOut: a suspended Device its owner signed out
+// keeps signed_out_at but reads as suspended, so it is only under inactive.
+func assertConsoleSuspendedSignedOut(ctx context.Context, t *testing.T, runtime *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, device node.ID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtime,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := func(state inventory.StateFilter) (inventory.Device, bool) {
+		t.Helper()
+		page, err := store.ReadDevices(ctx, owner, scope, inventory.Query{Limit: 100, State: state})
+		if err != nil {
+			t.Fatalf("read %q Devices: %v", state, err)
+		}
+		for _, item := range page.Devices {
+			if item.ID() == device {
+				return item, true
+			}
+		}
+		return inventory.Device{}, false
+	}
+	item, inInactive := in(inventory.StateInactive)
+	_, inSignedOut := in(inventory.StateSignedOut)
+	_, kept := item.SignedOutAt()
+	if !inInactive || inSignedOut || !kept || item.State() != "suspended" {
+		t.Fatalf("suspended and signed out: inactive %t, signed_out %t, signed_out_at %t, state %s", inInactive,
+			inSignedOut, kept, item.State())
+	}
+}
+
+// assertConsoleSignedOutPage reads the signed_out branch by name prefix and
+// checks it walks the small signed-out index, not the Network's names.
+func assertConsoleSignedOutPage(ctx context.Context, t *testing.T, admin *pgx.Conn, runtime *postgresadapter.Pool,
+	owner accountsession.Session, scope network.Scope, device node.ID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtime,
+		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostname := readIntegrationDevice(ctx, t, admin, device).hostname
+	for prefix, want := range map[string]bool{hostname[:1]: true, "zz-no-such-name": false} {
+		page, err := store.ReadDevices(ctx, owner, scope,
+			inventory.Query{Limit: 1, State: inventory.StateSignedOut, NamePrefix: prefix})
+		if err != nil {
+			t.Fatalf("read signed_out with prefix %q: %v", prefix, err)
+		}
+		if got := len(page.Devices) == 1 && page.Devices[0].ID() == device; got != want {
+			t.Fatalf("signed_out with prefix %q: %d Devices, want the Device %t", prefix, len(page.Devices), want)
+		}
+	}
+	// A fixture this small reads faster without an index: rule that out, then
+	// the planner must pick the signed-out index over the Network's names.
+	// The filter below is read_console_devices_v7's signed_out branch (schema
+	// 285) and the index's predicate, word for word: keep the three alike.
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if _, err := transaction.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := transaction.Query(ctx, `EXPLAIN (COSTS OFF) SELECT device.id FROM mesh.device AS device
+WHERE (device.workspace_id, device.network_id) =
+      (SELECT workspace_id, network_id FROM mesh.device WHERE public_id = $1::UUID)
+  AND device.signed_out_at IS NOT NULL AND device.state IN ('active', 'expired')
+ORDER BY device.hostname COLLATE "C", device.public_id LIMIT 101`, device.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, line)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "device_network_signed_out_name_idx") {
+		t.Fatalf("the signed_out page does not use its index:\n%s", joined)
 	}
 }
 

@@ -42,8 +42,11 @@ type Device struct {
 	ephemeral                       bool
 	version                         int64
 	createdAt, updatedAt, expiresAt time.Time
-	lifecycle                       Lifecycle
-	dnsLabel                        node.DNSLabel
+	// signedOutAt is when the owner signed the Device out and kept it
+	// (schema 283); zero while signed in.
+	signedOutAt time.Time
+	lifecycle   Lifecycle
+	dnsLabel    node.DNSLabel
 	// offer holds the first prefixes of what the Device offers to forward
 	// (all of them on one Device's read); offerCount counts them all.
 	offer      []netip.Prefix
@@ -166,6 +169,24 @@ func (device Device) WithKubernetesCluster(cluster kubecluster.ID, name kubeclus
 	return device, nil
 }
 
+// WithSignedOut returns the Device as signed out by its owner at at: kept in
+// the Network, offline until the owner signs back in. Its expiry is never
+// after it (schema 283's CHECK).
+func (device Device) WithSignedOut(at time.Time) (Device, error) {
+	// A removed Device keeps the column as history; Core reports none.
+	removed := device.state == "revoked" || device.state == "deleted"
+	if !device.IsValid() || removed || at.IsZero() || at.Before(device.createdAt) || device.expiresAt.After(at) {
+		return Device{}, ErrInvalidResult
+	}
+	device.signedOutAt = at
+	return device, nil
+}
+
+// SignedOutAt returns when the owner signed the Device out, if it is.
+func (device Device) SignedOutAt() (time.Time, bool) {
+	return device.signedOutAt, !device.signedOutAt.IsZero()
+}
+
 // KubernetesCluster returns the cluster of a gateway replica.
 func (device Device) KubernetesCluster() (kubecluster.ID, kubecluster.Name, bool) {
 	return device.cluster, device.clusterName, device.cluster.IsValid()
@@ -220,6 +241,9 @@ const (
 	StateActive StateFilter = "active"
 	// StateInactive keeps suspended, expired and removed Devices.
 	StateInactive StateFilter = "inactive"
+	// StateSignedOut keeps Devices their owner signed out and kept, unless
+	// removed or suspended (schema 285): a subset of StateInactive.
+	StateSignedOut StateFilter = "signed_out"
 )
 
 // MaximumNamePrefix bounds a name search to the longest hostname.
@@ -251,7 +275,7 @@ func (query Query) IsValid() bool {
 		return false
 	}
 	switch query.State {
-	case StateAll, StateActive, StateInactive:
+	case StateAll, StateActive, StateInactive, StateSignedOut:
 	default:
 		return false
 	}

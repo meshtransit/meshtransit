@@ -687,6 +687,7 @@ func Catalog() []Migration {
 		newMigration(282, "An expired Device can log out", logoutExpiredDeviceSQL),
 		newMigration(283, "Signing out keeps the Device", deviceSignOutSQL),
 		newMigration(284, "A Device signed out for 30 days is removed", signedOutDeviceRevocationSQL),
+		newMigration(285, "The Console shows signed-out Devices", consoleSignedOutDevicesSQL),
 	}
 }
 
@@ -1318,3 +1319,6 @@ var deviceSignOutSQL string
 
 //go:embed 000284_signed_out_device_revocation.up.sql
 var signedOutDeviceRevocationSQL string
+
+//go:embed 000285_console_signed_out_devices.up.sql
+var consoleSignedOutDevicesSQL string

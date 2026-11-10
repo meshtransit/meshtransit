@@ -120,6 +120,7 @@ func TestQueryIsValid(t *testing.T) {
 		{"prefix", inventory.Query{Limit: 10, NamePrefix: "poc-0.1"}, true},
 		{"active", inventory.Query{Limit: 10, State: inventory.StateActive}, true},
 		{"inactive", inventory.Query{Limit: 100, State: inventory.StateInactive}, true},
+		{"signed out", inventory.Query{Limit: 10, State: inventory.StateSignedOut}, true},
 		{"empty page", inventory.Query{}, false},
 		{"page too large", inventory.Query{Limit: inventory.MaximumPageSize + 1}, false},
 		{"upper case", inventory.Query{Limit: 10, NamePrefix: "Poc"}, false},

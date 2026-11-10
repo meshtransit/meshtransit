@@ -23,17 +23,18 @@ import (
 )
 
 // readConsoleDeviceInventorySQL reads a page in name order with each
-// Device's DNS label, the first 16 prefixes it offers and the scope's display
-// codes (schema 192).
-const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v6(
+// Device's DNS label, the first 16 prefixes it offers, when it was signed
+// out and the scope's display codes; state may be signed_out (schema 285).
+const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v7(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::TEXT, $14::TEXT, $15::TEXT, $16::UUID, $17::INTEGER
 )::TEXT`
 
 // readConsoleDeviceSQL reads one Device with every prefix it offers, how it
-// was enrolled and the mesh addresses it holds (schema 209).
-const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v4(
+// was enrolled, the mesh addresses it holds and when it was signed out
+// (schema 285).
+const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v5(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
@@ -287,6 +288,8 @@ type consoleDeviceInventoryEntry struct {
 		ClusterID string `json:"cluster_id"`
 		Name      string `json:"name"`
 	} `json:"kubernetes_cluster"`
+	// Schema 285: when the owner signed the Device out; null while signed in.
+	SignedOutAt *time.Time `json:"signed_out_at"`
 }
 
 type consoleDeviceInventoryMember struct {
@@ -401,6 +404,11 @@ func (item consoleDeviceInventoryEntry) parse() (inventory.Device, bool) {
 			return inventory.Device{}, false
 		}
 		if device, deviceErr = device.WithDNSLabel(label); deviceErr != nil {
+			return inventory.Device{}, false
+		}
+	}
+	if item.SignedOutAt != nil {
+		if device, deviceErr = device.WithSignedOut(*item.SignedOutAt); deviceErr != nil {
 			return inventory.Device{}, false
 		}
 	}

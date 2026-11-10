@@ -95,7 +95,7 @@ func encodeDeviceInventoryPageToken(scope network.Scope, query inventory.Query, 
 const deviceInventoryIncludeStatus = "status"
 
 // parseDeviceInventoryQuery reads page_size (1-100, 10 by default),
-// page_token, q (a name prefix), state (active or inactive) and include
+// page_token, q (a name prefix), state (active, inactive or signed_out) and include
 // (status), each once. include adds to the rows and never changes which
 // rows a page holds, so a page token does not carry it.
 func parseDeviceInventoryQuery(raw string, scope network.Scope) (inventory.Query, error) {
@@ -186,6 +186,10 @@ type deviceInventoryItem struct {
 	AdvertisedPrefixCount int      `json:"advertised_prefix_count"`
 	// KubernetesCluster is set on a Kubernetes gateway replica only.
 	KubernetesCluster *deviceInventoryCluster `json:"kubernetes_cluster,omitempty"`
+	// SignedOutAt is when the owner signed the Device out and kept it
+	// (schema 283), set only while it is signed out: offline, holding its
+	// addresses and name until the owner signs back in.
+	SignedOutAt *time.Time `json:"signed_out_at,omitempty"`
 }
 
 type deviceInventoryCluster struct {
@@ -227,6 +231,9 @@ func newDeviceInventoryItem(device inventory.Device, zone dnsname.Zone) deviceIn
 	if lifecycle.SuspendedReason != "" {
 		reason := lifecycle.SuspendedReason
 		item.SuspendedReason = &reason
+	}
+	if at, signedOut := device.SignedOutAt(); signedOut {
+		item.SignedOutAt = &at
 	}
 	if cluster, name, replica := device.KubernetesCluster(); replica {
 		item.KubernetesCluster = &deviceInventoryCluster{ClusterID: cluster.String(), Name: name.String()}

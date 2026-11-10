@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -34,8 +35,10 @@ func (reader *inventoryTestReader) ReadDevices(_ context.Context, _ accountsessi
 ) (inventory.ReadResult, error) {
 	reader.reads++
 	reader.query = query
-	return inventory.ReadResult{Scope: reader.scope, Revision: 5, Devices: reader.devices,
-		WorkspaceCode: "000000000101", NetworkCode: "000000000201"}, reader.err
+	return inventory.ReadResult{
+		Scope: reader.scope, Revision: 5, Devices: reader.devices,
+		WorkspaceCode: "000000000101", NetworkCode: "000000000201",
+	}, reader.err
 }
 
 func (reader *inventoryTestReader) ReadDevice(context.Context, accountsession.Session, network.Scope,
@@ -183,11 +186,15 @@ func TestBrowserDeviceReadAnswersOneDevice(t *testing.T) {
 	}
 	keyID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000a01")
 	creator, _ := publicid.Parse("01890f00-0000-7000-8000-000000000011")
-	reader := &inventoryTestReader{record: inventory.Record{Scope: scope, Device: inventoryTestDevice(t), Found: true,
+	reader := &inventoryTestReader{record: inventory.Record{
+		Scope: scope, Device: inventoryTestDevice(t), Found: true,
 		WorkspaceCode: "000000000101", NetworkCode: "000000000201",
-		Enrollment: inventory.Enrollment{ByKey: true, KeyID: keyID, KeyDescription: "router",
-			KeyCreatedBy: inventory.Member{PrincipalID: creator, DisplayName: "Trang"}},
-		Addresses: []netip.Addr{netip.MustParseAddr("100.64.0.7"), netip.MustParseAddr("fd7a:115c:a1e0::7")}}}
+		Enrollment: inventory.Enrollment{
+			ByKey: true, KeyID: keyID, KeyDescription: "router",
+			KeyCreatedBy: inventory.Member{PrincipalID: creator, DisplayName: "Trang"},
+		},
+		Addresses: []netip.Addr{netip.MustParseAddr("100.64.0.7"), netip.MustParseAddr("fd7a:115c:a1e0::7")},
+	}}
 	service, err := inventory.NewService(reader, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -295,5 +302,36 @@ func TestDeviceInventoryNamesAReplicaByItsCluster(t *testing.T) {
 	}
 	if item := newDeviceInventoryItem(revoked, zone); item.DNSName != nil || item.KubernetesCluster.DNSName != nil {
 		t.Fatalf("a removed replica is named: %+v", item.KubernetesCluster)
+	}
+}
+
+// Schema 285: the list takes state=signed_out, and an item says when its
+// owner signed it out, only while it is.
+func TestDeviceInventorySignedOut(t *testing.T) {
+	t.Parallel()
+	scope, _ := parseDeviceInventoryPath(browserManagementReadRequest(t, deviceInventoryTestPath()))
+	if query, err := parseDeviceInventoryQuery("state=signed_out", scope); err != nil ||
+		query.State != inventory.StateSignedOut {
+		t.Fatalf("state=signed_out = %+v, %v", query, err)
+	}
+	device := inventoryTestDevice(t)
+	if item := newDeviceInventoryItem(device, dnsname.Zone{}); item.SignedOutAt != nil {
+		t.Fatalf("a signed-in Device has signed_out_at %v", item.SignedOutAt)
+	}
+	at := device.ExpiresAt().Add(time.Minute)
+	signedOut, err := device.WithSignedOut(at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := newDeviceInventoryItem(signedOut, dnsname.Zone{})
+	if item.SignedOutAt == nil || !item.SignedOutAt.Equal(at) {
+		t.Fatalf("signed_out_at = %v, want %v", item.SignedOutAt, at)
+	}
+	encoded, err := json.Marshal(newDeviceInventoryItem(device, dnsname.Zone{}))
+	if err != nil || strings.Contains(string(encoded), "signed_out_at") {
+		t.Fatalf("a signed-in item must not write signed_out_at: %s, %v", encoded, err)
+	}
+	if _, err := device.WithSignedOut(device.ExpiresAt().Add(-time.Minute)); err == nil {
+		t.Fatal("a sign-out before the expiry was accepted")
 	}
 }

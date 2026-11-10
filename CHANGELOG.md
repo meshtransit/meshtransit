@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 285, device logout design S3): the Console reads signed-out
+  Devices. Device list and detail items carry `signed_out_at` while the
+  owner keeps the Device signed out (not for a removed Device), and the list
+  takes `state=signed_out`: active or expired Devices their owner signed out,
+  a subset of `inactive`, in name order from a small partial index
+  (`device_network_signed_out_name_idx`). New `read_console_devices_v7` and
+  `read_console_device_v5`; v6 and v4 stay for older replicas.
 - meshd and meshctl (device logout design S2c, TD-CLI-102): `meshctl login`
   waits up to 10 s for the first map and prints the machine's addresses, or
   says it is still connecting, that `meshctl down` keeps it off, or that it

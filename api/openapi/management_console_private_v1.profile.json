@@ -579,6 +579,11 @@
               "type": "null"
             }
           ]
+        },
+        "signed_out_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the owner signed the Device out and kept it: offline, holding its addresses and name until the owner signs back in on it. Present only while it is signed out (not for a removed Device); its expiry is never later."
         }
       }
     },
@@ -11066,9 +11071,11 @@
               "type": "string",
               "enum": [
                 "active",
-                "inactive"
+                "inactive",
+                "signed_out"
               ]
-            }
+            },
+            "description": "active: active and unexpired; inactive: every other Device; signed_out: active or expired Devices their owner signed out and kept (a subset of inactive)."
           },
           {
             "name": "page_size",

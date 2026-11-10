@@ -81,3 +81,37 @@ func TestDecodeConsoleDeviceInventoryLifecycle(t *testing.T) {
 		}
 	}
 }
+
+// Schema 285: a signed-out Device carries when; its expiry is never after it.
+func TestDecodeConsoleDeviceInventorySignedOut(t *testing.T) {
+	t.Parallel()
+	signedOut := strings.Replace(inventoryLifecycleDocument,
+		`"dns_label":null,`, `"dns_label":null,"signed_out_at":"2201-01-01T00:00:00Z",`, 1)
+	result, err := decodeConsoleDeviceInventory(signedOut)
+	if err != nil {
+		t.Fatalf("decode = %v", err)
+	}
+	if at, ok := result.Devices[1].SignedOutAt(); !ok || at.Year() != 2201 {
+		t.Fatalf("server sign-out = %v, %v", at, ok)
+	}
+	if _, ok := result.Devices[0].SignedOutAt(); ok {
+		t.Fatal("a Device without signed_out_at decoded one")
+	}
+	for name, broken := range map[string]string{
+		// expires_at 2200 is after a sign-out in 2199: schema 283's CHECK.
+		"expiry after the sign-out": strings.Replace(inventoryLifecycleDocument,
+			`"dns_label":null,`, `"dns_label":null,"signed_out_at":"2199-01-01T00:00:00Z",`, 1),
+		"before it was created": strings.Replace(inventoryLifecycleDocument,
+			`"dns_label":null,`, `"dns_label":null,"signed_out_at":"2020-01-01T00:00:00Z",`, 1),
+		"not a time": strings.Replace(inventoryLifecycleDocument,
+			`"dns_label":null,`, `"dns_label":null,"signed_out_at":"yesterday",`, 1),
+		// A removed Device keeps the column as history, never in a reply.
+		"removed": strings.Replace(strings.Replace(inventoryLifecycleDocument,
+			`"dns_label":null,`, `"dns_label":null,"signed_out_at":"2201-01-01T00:00:00Z",`, 1),
+			`"hostname":"db-1","state":"active"`, `"hostname":"db-1","state":"revoked"`, 1),
+	} {
+		if _, err := decodeConsoleDeviceInventory(broken); err == nil {
+			t.Errorf("%s: decoded", name)
+		}
+	}
+}
