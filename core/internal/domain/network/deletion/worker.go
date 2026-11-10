@@ -37,6 +37,9 @@ type WorkerStore interface {
 
 // WorkerOptions bound the worker.
 type WorkerOptions struct {
+	// Name names the work in logs; empty is "network deletion". The same
+	// loop runs the removal of Devices signed out past their hold.
+	Name             string
 	DeploymentID     deployment.ID
 	BatchSize        int
 	PollInterval     time.Duration
@@ -73,6 +76,9 @@ func NewWorker(options WorkerOptions, store WorkerStore, logger *slog.Logger) (*
 		options.BatchSize > 2000 || options.PollInterval < 500*time.Millisecond ||
 		options.OperationTimeout < 100*time.Millisecond || options.OperationTimeout > time.Minute {
 		return nil, ErrInvalid
+	}
+	if options.Name == "" {
+		options.Name = "network deletion"
 	}
 	return &Worker{store: store, options: options, logger: logger}, nil
 }
@@ -169,13 +175,13 @@ func (worker *Worker) pass(ctx context.Context) bool {
 	if err != nil {
 		if ctx.Err() == nil {
 			worker.snapshot.Failures++
-			worker.logger.WarnContext(ctx, "network deletion step failed", slog.String("error", err.Error()))
+			worker.logger.WarnContext(ctx, worker.options.Name+" step failed", slog.String("error", err.Error()))
 		}
 		return false
 	}
 	if step.Failed > 0 {
 		worker.snapshot.Failures += uint64(step.Failed)
-		worker.logger.WarnContext(ctx, "network deletion steps failed", slog.Int("deletions", step.Failed))
+		worker.logger.WarnContext(ctx, worker.options.Name+" steps failed", slog.Int("items", step.Failed))
 	}
 	if !step.Changed {
 		return false
@@ -186,7 +192,7 @@ func (worker *Worker) pass(ctx context.Context) bool {
 	}
 	if step.Completed {
 		worker.snapshot.Completed++
-		worker.logger.InfoContext(ctx, "network deletion completed")
+		worker.logger.InfoContext(ctx, worker.options.Name+" completed")
 	}
 	return true
 }
@@ -197,7 +203,7 @@ func (worker *Worker) readLag(ctx context.Context) {
 	lag, err := worker.store.Lag(lagCtx, worker.options.DeploymentID)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && ctx.Err() == nil {
-			worker.logger.WarnContext(ctx, "network deletion lag read failed", slog.String("error", err.Error()))
+			worker.logger.WarnContext(ctx, worker.options.Name+" lag read failed", slog.String("error", err.Error()))
 		}
 		return
 	}

@@ -686,6 +686,7 @@ func Catalog() []Migration {
 		newMigration(281, "Writes a deleted Network still let through", deletedNetworkGapsSQL),
 		newMigration(282, "An expired Device can log out", logoutExpiredDeviceSQL),
 		newMigration(283, "Signing out keeps the Device", deviceSignOutSQL),
+		newMigration(284, "A Device signed out for 30 days is removed", signedOutDeviceRevocationSQL),
 	}
 }
 
@@ -1314,3 +1315,6 @@ var logoutExpiredDeviceSQL string
 
 //go:embed 000283_device_sign_out.up.sql
 var deviceSignOutSQL string
+
+//go:embed 000284_signed_out_device_revocation.up.sql
+var signedOutDeviceRevocationSQL string

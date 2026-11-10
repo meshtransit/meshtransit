@@ -313,6 +313,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, deletionMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "network-deletion-worker", Service: deletionWorker})
 	}
+	if processConfig.SignedOutDeviceWorker != nil {
+		signedOutWorker, signedOutMetrics, composeErr := composeSignedOutDeviceWorker(
+			*processConfig.SignedOutDeviceWorker, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "signed_out_device_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, signedOutMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "signed-out-device-worker", Service: signedOutWorker})
+	}
 	if processConfig.AccessLedgerWorker != nil {
 		workerService, workerMetrics, composeErr := composeAccessLedgerWorker(*processConfig.AccessLedgerWorker, storagePools.worker, logger)
 		if composeErr != nil {

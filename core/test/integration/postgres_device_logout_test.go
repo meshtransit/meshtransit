@@ -45,7 +45,7 @@ ORDER BY device.public_id LIMIT 1`).Scan(&deviceText, &machine, &nodeKey); err !
 // Device and its keys are revoked, the Network advances once and
 // device.logged_out is sealed with the owner as the actor.
 func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.Conn,
-	runtimePool *postgresadapter.Pool) {
+	runtimePool, workerPool *postgresadapter.Pool) {
 	t.Helper()
 	store, err := postgresadapter.NewDeviceLogoutStore(runtimePool, postgresadapter.AccountSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
@@ -118,14 +118,15 @@ func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.
 		t.Fatalf("logout with unknown keys: %v", err)
 	}
 	assertPostgreSQLExpiredDeviceLogout(ctx, t, admin, service)
-	assertPostgreSQLDeviceSignOut(ctx, t, admin, service)
+	assertPostgreSQLDeviceSignOut(ctx, t, admin, service, workerPool)
+	assertPostgreSQLSignedOutRemoval(ctx, t, admin, service)
 }
 
 // assertPostgreSQLDeviceSignOut qualifies schema 283: signing out keeps the
 // Device and its address, leaves no map, seals device.signed_out once; a
 // repeat writes nothing; a path that raises the expiry keeps it signed out.
 func assertPostgreSQLDeviceSignOut(ctx context.Context, t *testing.T, admin *pgx.Conn,
-	service *control.DeviceLogoutService) {
+	service *control.DeviceLogoutService, workerPool *postgresadapter.Pool) {
 	t.Helper()
 	device, machineKey, nodeKey := activeFixtureDeviceKeys(ctx, t, admin)
 	machine, err := control.NewAuthenticatedMachine(machineKey)
@@ -223,13 +224,113 @@ WHERE public_id = $1::UUID`, device.String()); err != nil {
 		device.String()).Scan(&live); err != nil || live {
 		t.Fatalf("raising the expiry of a signed-out Device brought it back: live %t, %v", live, err)
 	}
-	// Removing it still works, and seals device.logged_out.
+	assertPostgreSQLSignedOutRevocation(ctx, t, admin, workerPool, device)
+}
+
+// assertPostgreSQLSignedOutRevocation qualifies schema 284: the worker
+// leaves a Device signed out for less than the hold, then removes it once
+// due, with device.revoked under the system actor.
+func assertPostgreSQLSignedOutRevocation(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	workerPool *postgresadapter.Pool, device node.ID) {
+	t.Helper()
+	worker, err := postgresadapter.NewSignedOutRevocationWorkerStore(workerPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := integrationDeploymentID(ctx, t, admin)
+	if step, err := worker.Step(ctx, installation, 1); err != nil || step.Changed {
+		t.Fatalf("step before the hold = %+v, %v", step, err)
+	}
+	// Signed out 29 days ago, then 31: only logout_device_v2's owner may
+	// move it.
+	shift := func(days int, change string) {
+		t.Helper()
+		version := readIntegrationDevice(ctx, t, admin, device).version
+		revision, _ := fixtureNetworkRevisions(ctx, t, admin)
+		commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+			changePublicID: "01890f01-0000-7000-8000-00000000" + change,
+			eventPublicID:  "01890f02-0000-7000-8000-00000000" + change,
+			outboxPublicID: "01890f03-0000-7000-8000-00000000" + change,
+			streamID:       203, aggregateKind: "device", aggregatePublicID: device.String(),
+			aggregateVersion: version + 1, networkRevision: revision + 1,
+			actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+			action:                 "device.expiry.fixture", permission: "system.bootstrap",
+			outboxEventClass: "device.expiry.fixture",
+		}, func(tx pgx.Tx) {
+			if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_migrator`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `UPDATE mesh.device
+SET created_at = created_at - make_interval(days => $2 + 1),
+    signed_out_at = signed_out_at - make_interval(days => $2),
+    expires_at = LEAST(expires_at, signed_out_at - make_interval(days => $2)),
+    version = version + 1, updated_at = pg_catalog.now()
+WHERE public_id = $1::UUID`, device.String(), days); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000103'::UUID,'01890f00-0000-7000-8000-000000000203'::UUID)`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.advance_network_inventory_revision()`); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	shift(29, "2841")
+	if step, err := worker.Step(ctx, installation, 1); err != nil || step.Changed {
+		t.Fatalf("step 29 days after the sign out = %+v, %v", step, err)
+	}
+	shift(2, "2842")
+	if lag, err := worker.Lag(ctx, installation); err != nil || lag.Pending != 1 || lag.Oldest <= 0 {
+		t.Fatalf("lag with one Device due = %+v, %v", lag, err)
+	}
+	step, err := worker.Step(ctx, installation, 1)
+	if err != nil || !step.Changed || step.Revoked != 1 {
+		t.Fatalf("step with one Device due = %+v, %v", step, err)
+	}
+	if row := readIntegrationDevice(ctx, t, admin, device); row.state != "revoked" {
+		t.Fatalf("due Device state %q after the worker", row.state)
+	}
+	var systemEvents int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_audit.audit_event AS event
+WHERE event.target_public_id = $1::UUID AND event.action = 'device.revoked'
+  AND event.actor_principal_public_id IS NULL AND event.permission = 'system.reconcile'`,
+		device.String()).Scan(&systemEvents); err != nil || systemEvents != 1 {
+		t.Fatalf("worker evidence: %d device.revoked by the system, %v", systemEvents, err)
+	}
+	if step, err := worker.Step(ctx, installation, 1); err != nil || step.Changed {
+		t.Fatalf("step after the removal = %+v, %v", step, err)
+	}
+	if lag, err := worker.Lag(ctx, installation); err != nil || lag.Pending != 0 {
+		t.Fatalf("lag after the removal = %+v, %v", lag, err)
+	}
+}
+
+// assertPostgreSQLSignedOutRemoval: removing a signed-out Device works and
+// seals device.logged_out.
+func assertPostgreSQLSignedOutRemoval(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	service *control.DeviceLogoutService) {
+	t.Helper()
+	device, machineKey, nodeKey := activeFixtureDeviceKeys(ctx, t, admin)
+	machine, err := control.NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := service.Logout(ctx, machine, nodeKey, true, true); err != nil ||
+		result.Outcome != control.LogoutSignedOut {
+		t.Fatalf("sign out = %+v, %v", result, err)
+	}
 	removed, err := service.Logout(ctx, machine, nodeKey, true, false)
 	if err != nil || removed.Outcome != control.LogoutRemoved {
 		t.Fatalf("removing a signed-out Device = %+v, %v", removed, err)
 	}
-	if row := readIntegrationDevice(ctx, t, admin, device); row.state != "revoked" {
-		t.Fatalf("signed-out Device state %q after removal", row.state)
+	if row := readIntegrationDevice(ctx, t, admin, device); row.state != "revoked" ||
+		countDeviceAudit(ctx, t, admin, device, "device.logged_out") != 1 {
+		t.Fatalf("signed-out Device after removal = %+v", row)
 	}
 }
 

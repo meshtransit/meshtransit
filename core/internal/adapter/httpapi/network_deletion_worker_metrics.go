@@ -65,3 +65,26 @@ func (collector *networkDeletionWorkerMetricsCollector) Collect(metrics chan<- p
 	counter(collector.completed, snapshot.Completed)
 	counter(collector.failure, snapshot.Failures)
 }
+
+// NewSignedOutDeviceWorkerMetricsCollector exposes the worker that removes
+// Devices signed out past their hold (schema 284). Alert when the lag
+// passes a day: such Devices keep their addresses and names.
+func NewSignedOutDeviceWorkerMetricsCollector(worker *deletion.Worker) (prometheus.Collector, error) {
+	if worker == nil {
+		return nil, ErrInvalidNetworkDeletionWorkerMetrics
+	}
+	describe := func(name, help string) *prometheus.Desc { return prometheus.NewDesc(name, help, nil, nil) }
+	return &networkDeletionWorkerMetricsCollector{worker: worker,
+		running: describe("meshtransit_signed_out_device_worker_running",
+			"Whether the configured signed-out Device worker is running."),
+		pending: describe("meshtransit_signed_out_devices_due", "Devices signed out past their hold, not removed yet."),
+		lag: describe("meshtransit_signed_out_devices_due_lag_seconds",
+			"How long the longest-due signed-out Device has waited past its hold."),
+		steps: describe("meshtransit_signed_out_device_worker_steps_total", "Total removal steps committed."),
+		revoked: describe("meshtransit_signed_out_device_worker_devices_revoked_total",
+			"Total Devices removed because they stayed signed out past their hold."),
+		completed: describe("meshtransit_signed_out_device_worker_completed_total",
+			"Unused by this worker; always zero."),
+		failure: describe("meshtransit_signed_out_device_worker_failures_total", "Total failed removal steps."),
+	}, nil
+}

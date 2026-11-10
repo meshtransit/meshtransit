@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 284, device logout design S1b): a Device signed out for 30
+  days is removed. With `MESHTRANSIT_SIGNED_OUT_DEVICE_WORKER_ENABLED=true`
+  (worker role) the worker revokes, one Device a step, every Device whose
+  owner signed out 30 days ago and did not sign in again: addresses into
+  quarantine, name released, `device.revoked` (reason `signed_out_expired`)
+  under the system actor. The sign-out is re-checked under the Device's row
+  lock, so a sign-in at the same moment is never lost. Metrics:
+  `meshtransit_signed_out_devices_due` and `..._due_lag_seconds`.
 - Core (schema 283, device logout design S1): signing out keeps the Device.
   With `device.signout1`, `Logout.keep_device` makes `logout_device_v2`
   set `signed_out_at` and an expiry at or before it: the Device keeps its

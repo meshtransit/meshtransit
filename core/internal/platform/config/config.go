@@ -109,6 +109,8 @@ type Config struct {
 	NetworkSummaryWorker *NetworkSummaryWorkerConfig
 	// NetworkDeletionWorker finishes Network deletions (phase 2).
 	NetworkDeletionWorker *NetworkDeletionWorkerConfig
+	// SignedOutDeviceWorker removes Devices signed out past their hold.
+	SignedOutDeviceWorker *SignedOutDeviceWorkerConfig
 	// KubernetesCAWorker keeps Kubernetes cluster CAs (K1a4 §17).
 	KubernetesCAWorker *KubernetesCAWorkerConfig
 	// EnforcementLedgerWorker records client enforcement evidence (R1-69).
@@ -220,6 +222,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	networkDeletionWorkerConfig, err := loadNetworkDeletionWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+	signedOutDeviceWorkerConfig, err := loadSignedOutDeviceWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -466,6 +472,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		AccessLedgerWorker:          accessLedgerWorkerConfig,
 		NetworkSummaryWorker:        networkSummaryWorkerConfig,
 		NetworkDeletionWorker:       networkDeletionWorkerConfig,
+		SignedOutDeviceWorker:       signedOutDeviceWorkerConfig,
 		KubernetesCAWorker:          kubernetesCAWorkerConfig,
 		EnforcementLedgerWorker:     enforcementLedgerWorkerConfig,
 		AuthExpiry:                  authExpiryConfig,
