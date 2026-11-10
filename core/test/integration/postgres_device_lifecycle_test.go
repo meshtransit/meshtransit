@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -432,7 +433,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 		t.Fatalf("signed out %t, live %t, addresses %q → %q", out, live, held, addresses())
 	}
 	// Schema 285: the Console lists it as signed out, and not as active.
-	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true, held)
 	assertConsoleSignedOutPage(ctx, t, admin, runtime, owner, scope, device)
 	// Suspended, it reads as suspended (§8's order): still signed out, but
 	// only under inactive. Resumed, it is signed out again.
@@ -445,9 +446,9 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 		}
 	}
 	change(devicelifecycle.ActionSuspend, "Lost while signed out")
-	assertConsoleSuspendedSignedOut(ctx, t, runtime, owner, scope, device)
+	assertConsoleSuspendedSignedOut(ctx, t, runtime, owner, scope, device, held)
 	change(devicelifecycle.ActionResume, "Found")
-	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true, held)
 	// The owner signs in again: the same Device, its addresses, live.
 	if result := browserLogin(); result.NodeID() != device || result.Disposition() != registration.DispositionResumed {
 		t.Fatalf("sign in = %+v", result)
@@ -456,7 +457,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 		countDeviceAudit(ctx, t, admin, device, "device.signed_in") != 1 {
 		t.Fatalf("after sign in: signed out %t, live %t, addresses %q", out, live, addresses())
 	}
-	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, false)
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, false, held)
 	// Signed out again, then moved to the Workspace: still signed out.
 	if _, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil {
 		t.Fatal(err)
@@ -470,7 +471,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 	if out, live := signedOut(); !out || live {
 		t.Fatalf("a transfer to the Workspace brought a signed-out Device back: signed out %t, live %t", out, live)
 	}
-	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true)
+	assertConsoleSignedOut(ctx, t, runtime, owner, scope, device, true, held)
 	if result, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil ||
 		result.Outcome != control.LogoutUnchanged {
 		t.Fatalf("repeat sign out of a moved Device = %+v, %v", result, err)
@@ -505,7 +506,7 @@ WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).
 // signed out, it carries signed_out_at, is in state=signed_out and not in
 // state=active; signed in, neither.
 func assertConsoleSignedOut(ctx context.Context, t *testing.T, runtime *postgresadapter.Pool,
-	owner accountsession.Session, scope network.Scope, device node.ID, want bool,
+	owner accountsession.Session, scope network.Scope, device node.ID, want bool, held string,
 ) {
 	t.Helper()
 	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtime,
@@ -536,6 +537,11 @@ func assertConsoleSignedOut(ctx context.Context, t *testing.T, runtime *postgres
 	}
 	_, listedOut := all.SignedOutAt()
 	_, readOut := record.Device.SignedOutAt()
+	// Schema 286: signed out, the Device page still shows the addresses it
+	// keeps, exactly those it held, IPv4 first.
+	if got := joinAddresses(record.Addresses); got != held {
+		t.Fatalf("signed out %t: the Device page shows %q, it holds %q", want, got, held)
+	}
 	if !inAll || inSignedOut != want || inActive == want || inInactive != want || listedOut != want || readOut != want {
 		t.Fatalf("signed out %t: in signed_out %t, active %t, inactive %t, all %t; listed %t, read %t", want,
 			inSignedOut, inActive, inInactive, inAll, listedOut, readOut)
@@ -550,7 +556,7 @@ func assertConsoleSignedOut(ctx context.Context, t *testing.T, runtime *postgres
 // assertConsoleSuspendedSignedOut: a suspended Device its owner signed out
 // keeps signed_out_at but reads as suspended, so it is only under inactive.
 func assertConsoleSuspendedSignedOut(ctx context.Context, t *testing.T, runtime *postgresadapter.Pool,
-	owner accountsession.Session, scope network.Scope, device node.ID,
+	owner accountsession.Session, scope network.Scope, device node.ID, held string,
 ) {
 	t.Helper()
 	store, err := postgresadapter.NewConsoleDeviceInventoryStore(runtime,
@@ -577,6 +583,10 @@ func assertConsoleSuspendedSignedOut(ctx context.Context, t *testing.T, runtime 
 	if !inInactive || inSignedOut || !kept || item.State() != "suspended" {
 		t.Fatalf("suspended and signed out: inactive %t, signed_out %t, signed_out_at %t, state %s", inInactive,
 			inSignedOut, kept, item.State())
+	}
+	record, err := store.ReadDevice(ctx, owner, scope, device)
+	if err != nil || joinAddresses(record.Addresses) != held {
+		t.Fatalf("suspended and signed out: the page shows %v (%v), it holds %q", record.Addresses, err, held)
 	}
 }
 
@@ -637,6 +647,15 @@ ORDER BY device.hostname COLLATE "C", device.public_id LIMIT 101`, device.String
 	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "device_network_signed_out_name_idx") {
 		t.Fatalf("the signed_out page does not use its index:\n%s", joined)
 	}
+}
+
+// joinAddresses writes addresses as the held-addresses query does.
+func joinAddresses(addresses []netip.Addr) string {
+	texts := make([]string, len(addresses))
+	for index, address := range addresses {
+		texts[index] = address.String()
+	}
+	return strings.Join(texts, ",")
 }
 
 // mapSessionSuspended asks schema 126, as the runtime role, whether the

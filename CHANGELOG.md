@@ -5,6 +5,10 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 286): a signed-out Device's page shows the addresses it
+  keeps. `read_console_device_v6` answers a signed-out Device's active
+  primary leases although signing out ended its expiry; other Devices answer
+  as before (none once expired). v5 stays for older replicas.
 - Core (schema 285, device logout design S3): the Console reads signed-out
   Devices. Device list and detail items carry `signed_out_at` while the
   owner keeps the Device signed out (not for a removed Device), and the list

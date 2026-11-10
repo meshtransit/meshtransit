@@ -32,9 +32,9 @@ const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v7(
 )::TEXT`
 
 // readConsoleDeviceSQL reads one Device with every prefix it offers, how it
-// was enrolled, the mesh addresses it holds and when it was signed out
-// (schema 285).
-const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v5(
+// was enrolled, the mesh addresses it holds (kept while signed out, schema
+// 286) and when it was signed out (schema 285).
+const readConsoleDeviceSQL = `SELECT mesh_ops.read_console_device_v6(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID
