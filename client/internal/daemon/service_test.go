@@ -2622,8 +2622,10 @@ type fakeControl struct {
 	rotationResults     []controlplane.RegistrationResult
 	logoutMaterials     []controlplane.KeyMaterial
 	logoutURLs          []string
-	logoutOptions       []controlplane.RegisterOptions
-	logoutErr           error
+	// bootstrapErr, when set, fails every BootstrapTrust.
+	bootstrapErr  error
+	logoutOptions []controlplane.RegisterOptions
+	logoutErr     error
 	// logoutErrs, when set, answer the Logout calls in turn before logoutErr.
 	logoutErrs []error
 	// logoutHook runs during each Logout, outside the lock.
@@ -2766,6 +2768,9 @@ func (f *fakeControl) Probe(context.Context, string) (controlplane.Result, error
 
 func (f *fakeControl) BootstrapTrust(context.Context, string, string) (controlplane.TrustResult, error) {
 	f.bootstrapCalls++
+	if f.bootstrapErr != nil {
+		return controlplane.TrustResult{}, f.bootstrapErr
+	}
 
 	return controlplane.TrustResult{
 		Fingerprint: testFingerprint,

@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- mobile core (device logout design S4): the Android bindings gain accounts.
+  `SignOut` keeps the Device (outcomes `signed_out`, `removed`,
+  `unsupported`, `not_permitted`, `none`); `ProfilesJSON` lists profiles with
+  their state; `AddAccount` adds a profile on the active profile's server,
+  pins the same key on it and only then makes it active; `RemoveProfile`
+  removes an account not in use, its Device through Core first (outcomes as
+  `meshctl profile remove`, plus `refused`, `active`, `busy`,
+  `incomplete:<device>`), with a 70 s bound. The daemon gains `AddAccount`
+  (one at a time) and pins a given profile (`trustProfile`); a Kubernetes
+  gateway refuses both with its own error.
 - Core (schema 286): a signed-out Device's page shows the addresses it
   keeps. `read_console_device_v6` answers a signed-out Device's active
   primary leases although signing out ended its expiry; other Devices answer

@@ -39,6 +39,11 @@ var (
 	// ErrProfileRemoving means the profile is being removed: it cannot be
 	// made active, or removed a second time, meanwhile.
 	ErrProfileRemoving = errors.New("daemon: the profile is being removed")
+	// ErrProfileStillListed means the profile's Device was dealt with and its
+	// keys deleted, but the profile entry could not be removed: removing it
+	// again finishes. The removal returned with it says what became of the
+	// Device.
+	ErrProfileStillListed = errors.New("daemon: the profile is still listed")
 	// ErrProfileActivated means the profile became the active one while it
 	// was being removed: it stays as a profile (a backstop; ActivateProfile
 	// refuses a profile being removed).
@@ -61,7 +66,7 @@ type ProfileRemoval struct {
 // gone. The active profile is refused (profile.ErrActive).
 func (s *Service) RemoveProfile(ctx context.Context, id string, local bool) (ProfileRemoval, error) {
 	if s.gateway {
-		return ProfileRemoval{}, ErrGatewayLogout
+		return ProfileRemoval{}, ErrGatewayProfiles
 	}
 	unmark, err := s.markRemoving(id)
 	if err != nil {
@@ -96,7 +101,8 @@ func (s *Service) RemoveProfile(ctx context.Context, id string, local bool) (Pro
 			err)
 	}
 	if _, err := s.profiles.Remove(persistCtx, target.ID); err != nil {
-		return ProfileRemoval{}, s.profileRemovalFailed(target.ID, device, err)
+		// What became of the Device stays known: a retry finds no keys.
+		return ProfileRemoval{Profile: target, Device: device}, s.profileRemovalFailed(target.ID, device, err)
 	}
 
 	return ProfileRemoval{Profile: target, Device: device}, nil
@@ -235,6 +241,6 @@ func (s *Service) profileRemovalFailed(id, device string, err error) error {
 	}
 
 	// A retry finds no keys and reports no Device: say now what became of it.
-	return fmt.Errorf("%w: its keys are deleted (device: %s) but the profile is still listed (run it again): %w",
-		ErrProfileRemoval, device, err)
+	return fmt.Errorf("%w: %w: its keys are deleted (device: %s) but the entry was not removed (run it again): %w",
+		ErrProfileRemoval, ErrProfileStillListed, device, err)
 }

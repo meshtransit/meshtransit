@@ -1036,7 +1036,7 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.writeError(writer, http.StatusBadGateway, "control_key_changed", "pinned control key no longer matches the control server")
 	case errors.Is(err, daemon.ErrProfileRemoving):
 		s.writeError(writer, http.StatusConflict, "profile_removing", "the profile is being removed; try again")
-	case errors.Is(err, daemon.ErrGatewayLogout):
+	case errors.Is(err, daemon.ErrGatewayLogout), errors.Is(err, daemon.ErrGatewayProfiles):
 		s.writeError(writer, http.StatusConflict, "gateway_profile",
 			"a Kubernetes gateway does not log out or remove its profile; uninstall the gateway instead")
 	case errors.Is(err, daemon.ErrProfileActivated):

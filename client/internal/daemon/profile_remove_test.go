@@ -403,8 +403,8 @@ func TestService_RemoveProfileRefusesAGateway(t *testing.T) {
 
 	service, _, _, first, _, _ := newRemovalService(t)
 	service.gateway = true
-	if _, err := service.RemoveProfile(t.Context(), first, false); !errors.Is(err, ErrGatewayLogout) {
-		t.Fatalf("RemoveProfile() on a gateway = %v, want ErrGatewayLogout", err)
+	if _, err := service.RemoveProfile(t.Context(), first, false); !errors.Is(err, ErrGatewayProfiles) {
+		t.Fatalf("RemoveProfile() on a gateway = %v, want ErrGatewayProfiles", err)
 	}
 	if !profileListed(service, first) {
 		t.Fatal("a gateway refusal removed the profile")

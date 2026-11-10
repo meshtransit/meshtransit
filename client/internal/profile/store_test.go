@@ -386,3 +386,27 @@ func TestStore_Remove(t *testing.T) {
 		t.Fatalf("Remove() twice error = %v, want ErrNotFound", err)
 	}
 }
+
+// Design §7: another account on the same server is "<name> N".
+func TestNextName(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("é", 64)
+	for _, test := range []struct {
+		current string
+		taken   []string
+		want    string
+	}{
+		{"Cloud", []string{"cloud"}, "Cloud 2"},
+		{"Cloud 2", []string{"cloud", "cloud 2"}, "Cloud 3"},
+		{"Cloud", []string{"cloud", "CLOUD 2"}, "Cloud 3"},
+		{long, nil, strings.Repeat("é", 62) + " 2"},
+	} {
+		taken := map[string]bool{}
+		for _, name := range test.taken {
+			taken[strings.ToLower(name)] = true
+		}
+		if got := NextName(test.current, taken); got != test.want {
+			t.Errorf("NextName(%q) = %q, want %q", test.current, got, test.want)
+		}
+	}
+}

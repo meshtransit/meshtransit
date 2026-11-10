@@ -66,13 +66,24 @@ VPN. No window is needed on Android: sign in from that notification and the
 exit node carries the traffic again once the Wi-Fi lets it through. Tried on
 Android 12 (MIUI) on 2026-10-21 with a simulated portal.
 
+**Accounts (device logout design §7):** the core keeps one profile per account. `ProfilesJSON` lists them as
+`{"version":1,"profiles":[{"id","name","controlUrl","active","state"}]}`, `state` being `registered`, `signed_out`,
+`authorization_required`, `unregistered`, `untrusted` or `unreadable`. `AddAccount` adds a profile for the active
+profile's server with the same pinned key, then makes it active, so the next browser sign-in makes another Device;
+the previous account keeps its Device and `ActivateProfile` switches back. `SignOut` keeps the Device (`signed_out`;
+`removed` when Core removed an ephemeral one instead; `unsupported` on an older server; `not_permitted` for a
+Workspace Device; `none`); a signed-out Device signs back in with the browser only, never with an enrollment key.
+`Logout` removes the Device. `RemoveProfile(id, local)` removes an account not in use, its Device through Core first
+with that account's own keys (`removed`, `already_removed`, `none`, `pending`, `left` with `local`; `refused` when
+Core refuses the keys, then only `local` is left; `active`, `busy`, `incomplete`); it can take up to a minute.
+
 Not yet: MeshTransit DNS for mesh names (the VPN sets a DNS server only for an exit node), Device aliases, port
-mapping, more than one profile. Logs are in `logcat` under the
+mapping. Logs are in `logcat` under the
 tags `MeshCore`, `MeshVpnService` and `VpnController`; release builds log
 warnings and errors only.
 
 Uninstalling the app or clearing its data leaves the Device registered: use
-**Log out** first, or revoke it in the Console.
+**Remove this device** first, or revoke it in the Console.
 
 ## iOS
 

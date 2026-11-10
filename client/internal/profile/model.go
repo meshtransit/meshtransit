@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -200,4 +201,27 @@ func isProfileID(id string) bool {
 	}
 
 	return true
+}
+
+// NextName is "<base> N" for the first N from 2 not taken (taken holds
+// lower-case names, as the store compares them), within the store's 64
+// characters: the name of another account's profile on the same server.
+func NextName(current string, taken map[string]bool) string {
+	base := strings.TrimSpace(current)
+	if index := strings.LastIndex(base, " "); index > 0 {
+		if _, err := strconv.Atoi(base[index+1:]); err == nil {
+			base = base[:index]
+		}
+	}
+	for count := 2; ; count++ {
+		suffix := " " + strconv.Itoa(count)
+		runes := []rune(base)
+		if limit := maxNameRunes - len(suffix); len(runes) > limit {
+			runes = runes[:limit]
+		}
+		name := strings.TrimSpace(string(runes)) + suffix
+		if !taken[strings.ToLower(name)] {
+			return name
+		}
+	}
 }

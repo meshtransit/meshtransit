@@ -689,6 +689,11 @@ func (engine *Engine) Logout() (err error) {
 // act runs one bounded daemon action while holding access shared, so Close
 // waits for it before closing the stores.
 func (engine *Engine) act(action func(context.Context) error) error {
+	return engine.actFor(actionTimeout, action)
+}
+
+// actFor is act with its own bound, for an action that may take longer.
+func (engine *Engine) actFor(timeout time.Duration, action func(context.Context) error) error {
 	if engine == nil {
 		return errEngineClosed
 	}
@@ -697,7 +702,7 @@ func (engine *Engine) act(action func(context.Context) error) error {
 	if engine.closed {
 		return errEngineClosed
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return action(ctx)
 }

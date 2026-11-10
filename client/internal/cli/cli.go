@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"meshtransit.net/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/version"
 )
 
@@ -309,7 +309,7 @@ func addAccountProfile(ctx context.Context, client DaemonClient, name string) (l
 		)
 	}
 	if name == "" {
-		name = nextAccountName(active.Name, taken)
+		name = profile.NextName(active.Name, taken)
 	}
 	created, err := client.CreateProfile(ctx, localapi.CreateProfile{Name: name, ControlURL: active.ControlURL})
 	if err != nil {
@@ -341,28 +341,6 @@ func addAccountProfile(ctx context.Context, client DaemonClient, name string) (l
 		)
 	}
 	return created, active, nil
-}
-
-// nextAccountName is "<base> N" for the first N not taken (case folded, as
-// the store compares), within the store's 64 characters.
-func nextAccountName(current string, taken map[string]bool) string {
-	base := strings.TrimSpace(current)
-	if index := strings.LastIndex(base, " "); index > 0 {
-		if _, err := strconv.Atoi(base[index+1:]); err == nil {
-			base = base[:index]
-		}
-	}
-	for count := 2; ; count++ {
-		suffix := " " + strconv.Itoa(count)
-		runes := []rune(base)
-		if limit := 64 - len(suffix); len(runes) > limit {
-			runes = runes[:limit]
-		}
-		name := strings.TrimSpace(string(runes)) + suffix
-		if !taken[strings.ToLower(name)] {
-			return name
-		}
-	}
 }
 
 func runLogin(

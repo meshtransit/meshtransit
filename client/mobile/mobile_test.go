@@ -609,3 +609,44 @@ func TestRuntimeOptionsDeclareThePhonesFeatures(t *testing.T) {
 		t.Fatalf("options = %+v", options)
 	}
 }
+
+// Device logout design §7: the app lists accounts with their state,
+// removes one that is not active, and adds one only once the active
+// profile's server is trusted and holds a Device.
+func TestEngineAccounts(t *testing.T) {
+	t.Parallel()
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	work, err := engine.CreateProfile("Work", "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := engine.CreateProfile("Home", "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := engine.ProfilesJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list profileList
+	if err := json.Unmarshal([]byte(encoded), &list); err != nil || list.Version != 1 || len(list.Profiles) != 2 ||
+		!list.Profiles[0].Active || list.Profiles[0].ID != work || list.Profiles[1].State != "untrusted" {
+		t.Fatalf("ProfilesJSON() = %s, %v", encoded, err)
+	}
+	if outcome, err := engine.SignOut(); err != nil || outcome != SignOutNoDevice {
+		t.Fatalf("SignOut() without a Device = %q, %v", outcome, err)
+	}
+	if _, err := engine.AddAccount(""); err == nil {
+		t.Fatal("AddAccount() on an untrusted profile succeeded")
+	}
+	if outcome, err := engine.RemoveProfile(work, false); err != nil || outcome != RemoveActive {
+		t.Fatalf("RemoveProfile() of the active profile = %q, %v; want %q", outcome, err, RemoveActive)
+	}
+	if outcome, err := engine.RemoveProfile(home, false); err != nil || outcome != "none" {
+		t.Fatalf("RemoveProfile(home) = %q, %v", outcome, err)
+	}
+	if encoded, err = engine.ProfilesJSON(); err != nil || strings.Contains(encoded, home) {
+		t.Fatalf("ProfilesJSON() after removal = %s, %v", encoded, err)
+	}
+}

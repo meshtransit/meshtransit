@@ -497,8 +497,10 @@ type Service struct {
 	// ActivateProfile refuses them (ErrProfileRemoving).
 	removingMu       sync.Mutex
 	removingProfiles map[string]struct{}
-	dataPlaneMu      sync.Mutex
-	dnsApplyMu       sync.Mutex // orders DNS applies (applyNewestDNS)
+	// addAccountMu runs one AddAccount at a time.
+	addAccountMu sync.Mutex
+	dataPlaneMu  sync.Mutex
+	dnsApplyMu   sync.Mutex // orders DNS applies (applyNewestDNS)
 	// dnsEvidence is the DNS last applied, and dnsRepublish how the session
 	// hands it to Core; dnsControlURL names the session's Core for the root
 	// zone to leave to the network (dns_evidence.go).
@@ -2461,6 +2463,14 @@ func (s *Service) TrustControl(ctx context.Context, expectedFingerprint string) 
 		return ControlTrust{}, err
 	}
 
+	return s.trustProfile(ctx, active, expectedFingerprint)
+}
+
+// trustProfile pins active's server, as TrustControl does for the active
+// profile; AddAccount pins a profile before it makes it active.
+func (s *Service) trustProfile(ctx context.Context, active profile.Profile, expectedFingerprint string) (
+	ControlTrust, error,
+) {
 	record, err := s.identities.Get(ctx, active.ID)
 	if err == nil {
 		canonical, verifyErr := verifyStoredPin(expectedFingerprint, record)
@@ -2501,7 +2511,7 @@ func (s *Service) TrustControl(ctx context.Context, expectedFingerprint string) 
 	}
 	if err := s.identities.Create(ctx, record); err != nil {
 		if errors.Is(err, identity.ErrExists) {
-			return s.TrustControl(ctx, expectedFingerprint)
+			return s.trustProfile(ctx, active, expectedFingerprint)
 		}
 
 		return ControlTrust{}, fmt.Errorf("%w: persisting identity: %w", ErrControlTrust, err)

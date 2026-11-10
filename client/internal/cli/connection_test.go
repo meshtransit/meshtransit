@@ -191,29 +191,6 @@ func TestRun_LoginNewAccountFailures(t *testing.T) {
 	}
 }
 
-func TestNextAccountName(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("é", 64)
-	for _, test := range []struct {
-		current string
-		taken   []string
-		want    string
-	}{
-		{"Cloud", []string{"cloud"}, "Cloud 2"},
-		{"Cloud 2", []string{"cloud", "cloud 2"}, "Cloud 3"},
-		{"Cloud", []string{"cloud", "CLOUD 2"}, "Cloud 3"},
-		{long, nil, strings.Repeat("é", 62) + " 2"},
-	} {
-		taken := map[string]bool{}
-		for _, name := range test.taken {
-			taken[strings.ToLower(name)] = true
-		}
-		if got := nextAccountName(test.current, taken); got != test.want {
-			t.Errorf("nextAccountName(%q) = %q, want %q", test.current, got, test.want)
-		}
-	}
-}
-
 // Design §7: profile remove takes an id or a name, with --local before or
 // after it, and says what became of the Device.
 func TestRun_ProfileRemove(t *testing.T) {
