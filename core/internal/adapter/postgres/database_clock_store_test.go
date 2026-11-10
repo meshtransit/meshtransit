@@ -224,7 +224,7 @@ func TestIdentityStoresPassTheirDatabaseTime(t *testing.T) {
 		}},
 		{"Device logout", logoutDeviceSQL, func(database accountSessionDatabase) error {
 			_, err := (&DeviceLogoutStore{database: database, options: clockStoreOptions}).LogoutDevice(
-				t.Context(), identity)
+				t.Context(), identity, true)
 			return err
 		}},
 	} {

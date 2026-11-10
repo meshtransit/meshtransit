@@ -310,6 +310,13 @@ Core MUST evaluate an enrollment key in constant time with respect to the
 secret, count it against the credential's use limit only on success, and never
 echo it back or log it.
 
+When the session's machine key already owns a Device, `auth.enrollment_key`
+renews that Device instead of creating one, and only when the key's issuer
+owns the Device or the Workspace owns it (a Workspace Device keeps its
+never-expiring lifetime). Any other key is answered `CONFLICT`: a key another
+member issued never extends a member's Device past the expiry its owner
+approved.
+
 Core MUST reject (`CONFLICT`) a node key or disco key that belongs to another
 Device, or that any Device has used before; retired keys are remembered. Core
 MUST reject a request whose proofs do not verify (`INVALID`).
@@ -401,7 +408,18 @@ it from peers' maps, records `device.logged_out` with the Device's owner as
 the actor, sends `Lifecycle{state: LOGGED_OUT}` and closes. Only a session
 whose machine key and node key are the Device's current keys can log it
 out; otherwise Core answers `Error{code: NOT_AUTHORIZED}`. The Device must
-enroll again. A Network policy MAY
+enroll again.
+
+`Logout.node_key_proof` is the session proof of the ClientHello node key
+(the proof of `NodeKeyProof`, 6.7). A Device whose map stream is not
+authorized because it expired logs out with it: Core takes the proven hello
+node key (or one the session proved earlier) as the Device's. A node key
+the session only named in its hello logs out a Device that has not expired.
+Core paces Logout like registration. Keys Core
+proves were the current keys of a Device revoked with them, or of a Device
+in a deleted Network, are answered `Lifecycle{state: REVOKED}` (section 10),
+and the node may erase them; any other refusal is `NOT_AUTHORIZED`, and the
+node keeps its keys, since the cause is ambiguous. A Network policy MAY
 forbid self-logout for managed Devices; Core then answers
 `Error{code: NOT_PERMITTED}`. A Kubernetes gateway never logs out: Core,
 and its database, answer `Error{code: NOT_PERMITTED}`, so a copy of the

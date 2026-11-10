@@ -364,16 +364,18 @@ func (browser *fakeBrowser) approve() {
 }
 
 type fakeLogout struct {
-	mu   sync.Mutex
-	err  error
-	keys []node.Key
+	mu     sync.Mutex
+	err    error
+	keys   []node.Key
+	proven []bool
 }
 
-func (logout *fakeLogout) Logout(_ context.Context, _ control.AuthenticatedMachine, nodeKey node.Key) (
-	control.DeviceLogout, error) {
+func (logout *fakeLogout) Logout(_ context.Context, _ control.AuthenticatedMachine, nodeKey node.Key,
+	keyProven bool) (control.DeviceLogout, error) {
 	logout.mu.Lock()
 	defer logout.mu.Unlock()
 	logout.keys = append(logout.keys, nodeKey)
+	logout.proven = append(logout.proven, keyProven)
 	return control.DeviceLogout{}, logout.err
 }
 
@@ -1079,6 +1081,71 @@ func TestLogoutNeedsAnAuthorizedDevice(t *testing.T) {
 	}
 	if len(f.logout.keys) != 0 {
 		t.Fatal("logout reached the domain without a Device")
+	}
+}
+
+// TD-CORE-145: an expired Device has no map stream; it logs out with the
+// node key its session proved, and keys revoked with their Device are told
+// REVOKED so the node may erase them.
+func TestLogoutWithAProvenNodeKey(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	proven := node.Key(f.session.Hello().GetNodeKey())
+	f.talk.prove(proven, false)
+	f.run()
+	f.logout.err = control.ErrDeviceLogoutRevoked
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{}); !errors.Is(err, errLoggedOut) {
+		t.Fatalf("logout of revoked keys returned %v; the session must end", err)
+	}
+	if m := f.expect(sharedmtcp.MessageLifecycle).(*mtcpv1.Lifecycle); m.GetState() != mtcpv1.Lifecycle_REVOKED {
+		t.Fatalf("logout of revoked keys sent %v", m)
+	}
+	if len(f.logout.keys) != 1 || f.logout.keys[0] != proven {
+		t.Fatalf("logout named %v, want the proven node key", f.logout.keys)
+	}
+}
+
+func TestLogoutWithAProvenNodeKeySucceeds(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	proven := node.Key(f.session.Hello().GetNodeKey())
+	f.talk.prove(proven, false)
+	f.run()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{}); !errors.Is(err, errLoggedOut) {
+		t.Fatalf("logout returned %v; the session must end", err)
+	}
+	if m := f.expect(sharedmtcp.MessageLifecycle).(*mtcpv1.Lifecycle); m.GetState() != mtcpv1.Lifecycle_LOGGED_OUT {
+		t.Fatalf("logout sent %v", m)
+	}
+}
+
+// TD-CORE-145: an expired Device's Logout carries the session proof of its
+// hello node key; a wrong proof names no Device.
+func TestLogoutCarriesTheNodeKeyProof(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	nodePrivate := must(key.NodePrivateFromBytes(repeat(0x44, key.Size)))
+	nodePublic := nodePrivate.Public()
+	f.session.hello.NodeKey = nodePublic[:]
+	proof := must(sharedmtcp.NodeKeySessionProof(nodePrivate, f.control.Public(), f.session.HandshakeHash()))
+	f.run()
+	wrong := append([]byte(nil), proof[:]...)
+	wrong[0] ^= 1
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{NodeKeyProof: wrong}); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_NOT_AUTHORIZED {
+		t.Fatalf("a wrong proof answered %v", m)
+	}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout,
+		&mtcpv1.Logout{NodeKeyProof: proof[:]}); !errors.Is(err, errLoggedOut) {
+		t.Fatalf("logout with a proof returned %v; the session must end", err)
+	}
+	if m := f.expect(sharedmtcp.MessageLifecycle).(*mtcpv1.Lifecycle); m.GetState() != mtcpv1.Lifecycle_LOGGED_OUT {
+		t.Fatalf("logout sent %v", m)
+	}
+	if len(f.logout.keys) != 1 || f.logout.keys[0] != node.Key(nodePublic) || !f.logout.proven[0] {
+		t.Fatalf("logout named %v (proven %v), want the proven hello key", f.logout.keys, f.logout.proven)
 	}
 }
 

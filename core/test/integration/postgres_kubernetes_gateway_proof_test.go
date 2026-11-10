@@ -223,10 +223,10 @@ func assertGatewayLogoutThroughCore(ctx context.Context, t *testing.T, runtimePo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Logout(ctx, machine, keys.node); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(ctx, machine, keys.node, true); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
 		t.Fatalf("an unproven session found the gateway to log out: %v", err)
 	}
-	if _, err := service.Logout(ctx, machine.WithProvenNodeKey(keys.node), keys.node); !errors.Is(err,
+	if _, err := service.Logout(ctx, machine.WithProvenNodeKey(keys.node), keys.node, true); !errors.Is(err,
 		control.ErrDeviceLogoutNotPermitted) {
 		t.Fatalf("a proven gateway session logged out: %v", err)
 	}

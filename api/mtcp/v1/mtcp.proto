@@ -182,7 +182,13 @@ message RotateNodeKeyResponse {
   int64 key_expiry_ms = 2;
 }
 
-message Logout {}
+// Logout asks Core to remove the Device (mtcp-v1 §6.5). node_key_proof is
+// the session proof of the ClientHello node key (§6.7's NodeKeyProof.proof,
+// bound to this session's handshake): with it a Device whose map stream is
+// not authorized, because it expired, logs out too. An older Core ignores it.
+message Logout {
+  bytes node_key_proof = 1;
+}
 
 // NodeKeyProof proves, as the session's first record, that the node holds
 // its ClientHello node key (mtcp-v1 §6.7). A Kubernetes gateway must send it.

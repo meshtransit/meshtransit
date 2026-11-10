@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -914,5 +915,19 @@ func TestMapSubnetRouterStatusTakesTheWorstSite(t *testing.T) {
 	}})
 	if degraded.Health != dataplane.SiteCodeConntrackHigh {
 		t.Fatalf("degraded = %+v", degraded)
+	}
+}
+
+// TD-CLI-100: a refused logout keeps the keys and says so.
+func TestServer_RefusedLogoutSaysTheKeysWereKept(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	recorder := httptest.NewRecorder()
+	server.writeServiceError(recorder, fmt.Errorf("%w: %w", daemon.ErrLogout, controlplane.ErrDeviceNotAuthorized))
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "logout_refused") ||
+		!strings.Contains(recorder.Body.String(), "kept") {
+		t.Fatalf("refused logout = %d %s, want 409 logout_refused saying the keys were kept",
+			recorder.Code, recorder.Body.String())
 	}
 }

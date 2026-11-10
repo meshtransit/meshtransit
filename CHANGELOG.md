@@ -5,6 +5,24 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 282, TD-CORE-145) and meshd (TD-CLI-100): an expired Device
+  can log out. `Logout` carries the session proof of the node key
+  (`node_key_proof`), and Core finds the Device with
+  `resolve_logout_scope_v1`, which does not check the expiry. Keys revoked
+  with their Device (or in a deleted Network) are answered
+  `Lifecycle{REVOKED}`. meshd erases a profile's keys only on `LOGGED_OUT`
+  or `REVOKED`; on `NOT_AUTHORIZED` it keeps them and says so, where before
+  it erased them and left the Device holding its address.
+- Core (security, TD-SEC-75): an enrollment key renews a member's Device only
+  when the key's issuer owns it. Before, any key of the Device's enrollment
+  profile renewed it, so whoever held a member's machine and node keys could
+  bring back an expired Device with another member's key, keeping the
+  owner's group rights. Intake refuses such a key before it writes an
+  intent, so the owner's own key still works right after. A Workspace
+  Device may still be renewed by any key of its profile, but keeps its
+  expiry and its name. The node gets `CONFLICT`. Servers enrolled with one
+  administrator's key are owned by that administrator: transfer them to
+  the Workspace before re-enrolling them with another administrator's key.
 - Core (schema 281): what a deleted Network still let through. Registration,
   its intake and node key rotation lock the revision with
   `lock_active_network_revision_v1` and end (MTN02, no retry) once the

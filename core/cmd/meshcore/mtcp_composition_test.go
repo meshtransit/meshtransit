@@ -57,7 +57,7 @@ func (mtcpRegistrationsFixture) Register(context.Context, control.AuthenticatedM
 
 type mtcpLogoutFixture struct{}
 
-func (mtcpLogoutFixture) Logout(context.Context, control.AuthenticatedMachine, node.Key) (control.DeviceLogout,
+func (mtcpLogoutFixture) Logout(context.Context, control.AuthenticatedMachine, node.Key, bool) (control.DeviceLogout,
 	error) {
 	return control.DeviceLogout{}, control.ErrDeviceLogoutNotFound
 }

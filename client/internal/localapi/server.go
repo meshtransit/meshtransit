@@ -979,6 +979,12 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		errors.Is(err, controlplane.ErrRegistrationTemporary):
 		s.logger.Warn("logout is temporarily unavailable", "error", err)
 		s.writeError(writer, http.StatusServiceUnavailable, "logout_unavailable", "logout is temporarily unavailable; try again")
+	case errors.Is(err, daemon.ErrLogout) &&
+		errors.Is(err, controlplane.ErrDeviceNotAuthorized):
+		// The keys stay (TD-CLI-100): say so, and what to do.
+		s.writeError(writer, http.StatusConflict, "logout_refused",
+			"Core did not accept this device's keys, so they were kept; sign in again with meshctl login, "+
+				"or ask an administrator to remove the device")
 	case errors.Is(err, daemon.ErrLogout):
 		s.logger.Warn("logout failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "logout_failed", "logout failed")

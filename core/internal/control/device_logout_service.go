@@ -17,6 +17,10 @@ var (
 	// ErrDeviceLogoutNotPermitted reports a Device that cannot log out: a
 	// Kubernetes gateway, which an administrator removes (schema 226).
 	ErrDeviceLogoutNotPermitted = errors.New("control: device cannot log out")
+	// ErrDeviceLogoutRevoked reports keys that were the current keys of a
+	// Device revoked with them (or of a Device in a deleted Network): the
+	// Device is already gone, and the node may erase these keys (mtcp-v1 §10).
+	ErrDeviceLogoutRevoked = errors.New("control: device already removed")
 	// ErrDeviceLogoutUnavailable reports a logout that did not commit.
 	ErrDeviceLogoutUnavailable = errors.New("control: device logout unavailable")
 )
@@ -30,9 +34,11 @@ type DeviceLogout struct {
 
 // DeviceLogoutStore revokes the active Device whose current keys the node
 // proved, records evidence and advances the Network revision atomically, on
-// the database clock.
+// the database clock. anyExpiry admits an expired Device: only for a node
+// key the session proved by a proof, not merely named in its hello
+// (TD-CORE-145).
 type DeviceLogoutStore interface {
-	LogoutDevice(ctx context.Context, identity AuthenticatedNode) (DeviceLogout, error)
+	LogoutDevice(ctx context.Context, identity AuthenticatedNode, anyExpiry bool) (DeviceLogout, error)
 }
 
 // DeviceLogoutService lets a node deauthorize its own Device (MTCP Logout).
@@ -50,9 +56,11 @@ func NewDeviceLogoutService(store DeviceLogoutStore) (*DeviceLogoutService, erro
 	return &DeviceLogoutService{store: store}, nil
 }
 
-// Logout revokes the Device bound to machine and nodeKey.
+// Logout revokes the Device bound to machine and nodeKey. keyProven says the
+// session proved nodeKey (an authorized map stream, or a key proof): only
+// then may the Device have expired.
 func (service *DeviceLogoutService) Logout(ctx context.Context, machine AuthenticatedMachine,
-	nodeKey node.Key) (DeviceLogout, error) {
+	nodeKey node.Key, keyProven bool) (DeviceLogout, error) {
 	if ctx == nil || service == nil || service.store == nil {
 		return DeviceLogout{}, ErrInvalidDeviceLogoutService
 	}
@@ -60,7 +68,7 @@ func (service *DeviceLogoutService) Logout(ctx context.Context, machine Authenti
 	if err != nil {
 		return DeviceLogout{}, ErrDeviceLogoutNotFound
 	}
-	logout, err := service.store.LogoutDevice(ctx, identity)
+	logout, err := service.store.LogoutDevice(ctx, identity, keyProven)
 	if err != nil {
 		return DeviceLogout{}, err
 	}

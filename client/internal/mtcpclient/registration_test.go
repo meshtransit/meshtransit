@@ -273,11 +273,18 @@ func TestLogout(t *testing.T) {
 		} else if _, ok := first.(*mtcpv1.Ping); !ok {
 			return
 		}
-		if answer.Load() == 3 {
+		switch answer.Load() {
+		case 3:
+			// An expired Device is told EXPIRED on connect; the answer to its
+			// Logout comes after (an older Core refuses it).
 			_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_EXPIRED})
+		case 4:
+			// Keys revoked with their Device are told REVOKED.
+			_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
 			return
+		default:
+			_ = s.send(sharedmtcp.MessageMapSnapshot, &mtcpv1.MapSnapshot{View: &mtcpv1.View{Epoch: 1, Seq: 1}})
 		}
-		_ = s.send(sharedmtcp.MessageMapSnapshot, &mtcpv1.MapSnapshot{View: &mtcpv1.View{Epoch: 1, Seq: 1}})
 		for {
 			_, message, err := s.receive(5 * time.Second)
 			if err != nil {
@@ -287,7 +294,7 @@ func TestLogout(t *testing.T) {
 				continue
 			}
 			switch answer.Load() {
-			case 1:
+			case 1, 3:
 				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_NOT_AUTHORIZED})
 			case 2:
 				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_INTERNAL, RetryAfterMs: 2000})
@@ -316,10 +323,43 @@ func TestLogout(t *testing.T) {
 		{1, controlplane.ErrDeviceNotAuthorized},
 		{2, controlplane.ErrRegistrationTemporary},
 		{3, controlplane.ErrDeviceNotAuthorized},
+		{4, controlplane.ErrDeviceRemoved},
 	} {
 		answer.Store(testCase.answer)
 		if err := core.client().Logout(t.Context(), core.origin(), trust.Material, options); !errors.Is(err, testCase.want) {
 			t.Fatalf("answer %d: Logout() error = %v, want %v", testCase.answer, err, testCase.want)
 		}
+	}
+}
+
+// TD-CORE-145: Logout carries the session proof of the node key, so an
+// expired Device (no map stream) can name itself.
+func TestLogoutCarriesTheNodeKeyProof(t *testing.T) {
+	t.Parallel()
+	core := newRegistrationCore(t)
+	trust := core.trust(t)
+	var logout atomic.Value
+	core.set(func(fake *fakeCore) {
+		fake.serve = func(s *coreSession) {
+			for {
+				_, message, err := s.receive(5 * time.Second)
+				if err != nil {
+					return
+				}
+				if m, ok := message.(*mtcpv1.Logout); ok {
+					logout.Store(m)
+					_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_LOGGED_OUT})
+					return
+				}
+			}
+		}
+	})
+	options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint}
+	if err := core.client().Logout(t.Context(), core.origin(), trust.Material, options); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	m, ok := logout.Load().(*mtcpv1.Logout)
+	if !ok || len(m.GetNodeKeyProof()) != 32 {
+		t.Fatalf("Logout = %v, want a 32-byte node key proof", logout.Load())
 	}
 }

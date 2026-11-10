@@ -92,6 +92,10 @@ var (
 	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
 	// it keeps its identity and retries until an administrator resumes it.
 	ErrNetmapAuthorityPaused = errors.New("control: map authority paused")
+	// ErrDeviceRemoved means Core proved the profile's current keys were
+	// removed with their Device (Lifecycle REVOKED, mtcp-v1 §10): the node
+	// may erase them.
+	ErrDeviceRemoved = errors.New("control: the Device was removed")
 	// ErrDeviceNotAuthorized means Core does not accept the profile's current
 	// keys as a Device: it was revoked or removed, or never registered.
 	ErrDeviceNotAuthorized = errors.New("control: the Device is not authorized")

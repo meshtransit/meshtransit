@@ -52,8 +52,9 @@ type ConnectionChange struct {
 type LogoutResult struct {
 	ProfileID string
 	State     string
-	// AlreadyRemoved means Core no longer knew the Device (revoked or removed
-	// elsewhere); only the local keys were replaced.
+	// AlreadyRemoved means Core proved the Device was already removed with
+	// these keys (revoked elsewhere, or its Network deleted); only the local
+	// keys were replaced.
 	AlreadyRemoved bool
 }
 
@@ -148,7 +149,14 @@ func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
 		Version:           "meshd/" + s.build.Version,
 		PinnedFingerprint: record.ControlKeyFingerprint(),
 	})
-	alreadyRemoved := errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized)
+	// Only a removal Core proved for exactly these keys lets the profile drop
+	// them; a refusal is ambiguous (the Device may still hold its address),
+	// so the keys stay and the user is told (TD-CLI-100).
+	alreadyRemoved := errors.Is(logoutErr, controlplane.ErrDeviceRemoved)
+	if errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized) {
+		return LogoutResult{}, fmt.Errorf("%w: Core does not accept this device's keys, so they are kept; "+
+			"sign in again with meshctl login, or ask an administrator to remove the device: %w", ErrLogout, logoutErr)
+	}
 	if logoutErr != nil && !alreadyRemoved {
 		return LogoutResult{}, fmt.Errorf("%w: %w", ErrLogout, logoutErr)
 	}

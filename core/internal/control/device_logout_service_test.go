@@ -15,7 +15,7 @@ type deviceLogoutStoreFixture struct {
 	err      error
 }
 
-func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode) (
+func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode, _ bool) (
 	DeviceLogout, error) {
 	store.identity = identity
 	return store.logout, store.err
@@ -40,20 +40,20 @@ func TestDeviceLogoutService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Logout(t.Context(), machine, node.Key{}); !errors.Is(err, ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{}, true); !errors.Is(err, ErrDeviceLogoutNotFound) {
 		t.Fatalf("zero node key: %v", err)
 	}
-	logout, err := service.Logout(t.Context(), machine, node.Key{2})
+	logout, err := service.Logout(t.Context(), machine, node.Key{2}, true)
 	if err != nil || logout.DeviceID != device || store.identity.NodeKey() != (node.Key{2}) ||
 		store.identity.MachineFingerprint() != machine.key.Fingerprint() {
 		t.Fatalf("logout = %+v, %v", logout, err)
 	}
 	store.logout = DeviceLogout{}
-	if _, err := service.Logout(t.Context(), machine, node.Key{2}); !errors.Is(err, ErrDeviceLogoutUnavailable) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true); !errors.Is(err, ErrDeviceLogoutUnavailable) {
 		t.Fatalf("an empty outcome must not count as a logout: %v", err)
 	}
 	store.err = ErrDeviceLogoutNotFound
-	if _, err := service.Logout(t.Context(), machine, node.Key{2}); !errors.Is(err, ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true); !errors.Is(err, ErrDeviceLogoutNotFound) {
 		t.Fatalf("store error: %v", err)
 	}
 }

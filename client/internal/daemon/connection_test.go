@@ -113,7 +113,7 @@ func TestService_LogoutOfARemovedDeviceReplacesItsKeys(t *testing.T) {
 	oldMaterial := before.Material()
 	defer clearIdentityMaterial(oldMaterial)
 	control.mu.Lock()
-	control.logoutErr = fmt.Errorf("%w: not_authorized", controlplane.ErrDeviceNotAuthorized)
+	control.logoutErr = fmt.Errorf("%w: revoked", controlplane.ErrDeviceRemoved)
 	control.mu.Unlock()
 
 	result, err := service.Logout(t.Context())
@@ -121,6 +121,39 @@ func TestService_LogoutOfARemovedDeviceReplacesItsKeys(t *testing.T) {
 		t.Fatalf("Logout() = %+v, %v, want an already removed Device", result, err)
 	}
 	assertCredentialsReplaced(t, identities, profileID, oldMaterial.MachinePrivateKey, oldMaterial.NodePrivateKey)
+}
+
+// TD-CLI-100: a refusal is ambiguous (an expired Device on an older Core
+// still holds its address), so the keys stay.
+func TestService_LogoutRefusedKeepsTheKeys(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	startRegisteredRun(t, service, control)
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+	control.mu.Lock()
+	control.logoutErr = fmt.Errorf("%w: not_authorized", controlplane.ErrDeviceNotAuthorized)
+	control.mu.Unlock()
+
+	if _, err := service.Logout(t.Context()); !errors.Is(err, ErrLogout) ||
+		!errors.Is(err, controlplane.ErrDeviceNotAuthorized) {
+		t.Fatalf("Logout() error = %v, want a refused logout", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	material := after.Material()
+	defer clearIdentityMaterial(material)
+	if !bytes.Equal(material.MachinePrivateKey, oldMaterial.MachinePrivateKey) ||
+		!bytes.Equal(material.NodePrivateKey, oldMaterial.NodePrivateKey) {
+		t.Fatal("a refused logout replaced the profile's keys")
+	}
 }
 
 func TestService_LogoutKeepsTheDeviceWhenCoreFails(t *testing.T) {

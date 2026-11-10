@@ -17,9 +17,18 @@ import (
 )
 
 const (
+	// Schema 282: the map stream's resolution without its expiry check, so an
+	// expired Device can log out with a proven node key (TD-CORE-145).
 	resolveLogoutScopeSQL = `SELECT workspace_public_id::TEXT, network_public_id::TEXT
+FROM mesh_ops.resolve_logout_scope_v1($1::BYTEA, $2::BYTEA)`
+	// A node key only named in the hello logs out a Device that has not
+	// expired, as before schema 282.
+	resolveLiveLogoutScopeSQL = `SELECT workspace_public_id::TEXT, network_public_id::TEXT
 FROM mesh_ops.resolve_map_session_scope($1::BYTEA, $2::BYTEA)`
-	logoutDeviceSQL = `SELECT mesh_ops.logout_device_v1($1::BYTEA,$2::BYTEA,$3::UUID,$4::TIMESTAMPTZ)::TEXT`
+	// The predicate behind Lifecycle{REVOKED} (schema 279): these exact keys
+	// were current when their Device was revoked, or its Network deleted.
+	logoutKeysRevokedSQL = `SELECT mesh_ops.map_session_revoked_v2($1::BYTEA, $2::BYTEA)`
+	logoutDeviceSQL      = `SELECT mesh_ops.logout_device_v1($1::BYTEA,$2::BYTEA,$3::UUID,$4::TIMESTAMPTZ)::TEXT`
 	// deviceLogoutPermission names the authority a node uses on itself.
 	deviceLogoutPermission = "device.logout_self"
 )
@@ -45,8 +54,8 @@ func NewDeviceLogoutStore(pool *Pool, options AccountSessionOptions) (*DeviceLog
 
 // LogoutDevice implements control.DeviceLogoutStore. The logout is evaluated
 // and stamped on the database clock.
-func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity control.AuthenticatedNode) (
-	control.DeviceLogout, error) {
+func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity control.AuthenticatedNode,
+	anyExpiry bool) (control.DeviceLogout, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return control.DeviceLogout{}, control.ErrInvalidDeviceLogoutService
 	}
@@ -61,8 +70,15 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 			return deviceLogoutDatabaseError(err)
 		}
 		var workspaceID, networkID string
-		if err := tx.QueryRow(ctx, resolveLogoutScopeSQL, fingerprint[:], nodeKey[:]).Scan(&workspaceID,
+		resolve := resolveLiveLogoutScopeSQL
+		if anyExpiry {
+			resolve = resolveLogoutScopeSQL
+		}
+		if err := tx.QueryRow(ctx, resolve, fingerprint[:], nodeKey[:]).Scan(&workspaceID,
 			&networkID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return logoutWithoutDevice(ctx, tx, fingerprint[:], nodeKey[:])
+			}
 			return deviceLogoutDatabaseError(err)
 		}
 		scope, err := parseLogoutScope(workspaceID, networkID)
@@ -197,6 +213,20 @@ FROM mesh_audit.lock_network_stream_head()`).Scan(&streamID, &sequence, &previou
 		return control.DeviceLogout{}, errors.Join(control.ErrDeviceLogoutUnavailable, err)
 	}
 	return control.DeviceLogout{Scope: scope, DeviceID: afterState.DeviceID, NetworkRevision: record.NetworkRevision}, nil
+}
+
+// logoutWithoutDevice tells keys whose Device was removed with them (the
+// node may erase them) from keys Core does not know or that were replaced
+// (it must keep them: the cause is ambiguous, mtcp-v1 §10).
+func logoutWithoutDevice(ctx context.Context, tx accountSessionTransaction, fingerprint, nodeKey []byte) error {
+	var revoked bool
+	if err := tx.QueryRow(ctx, logoutKeysRevokedSQL, fingerprint, nodeKey).Scan(&revoked); err != nil {
+		return errors.Join(control.ErrDeviceLogoutUnavailable, err)
+	}
+	if revoked {
+		return control.ErrDeviceLogoutRevoked
+	}
+	return control.ErrDeviceLogoutNotFound
 }
 
 func deviceLogoutDatabaseError(err error) error {

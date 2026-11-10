@@ -643,7 +643,13 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		}
 		return conversation.rotateMachineKey(ctx, m)
 	case *mtcpv1.Logout:
-		return conversation.logout(ctx)
+		// Each costs a proof check and a transaction; a failed one leaves the
+		// session open, so it is paced like registration (TD-CORE-145 review).
+		if wait, ok := conversation.identity.spend(conversation.application.now(), 1); !ok {
+			conversation.application.options.Metrics.limited(limitIdentity)
+			return conversation.sendError(mtcpv1.Error_OVERLOADED, "too many logout requests", retryAfterMS(wait))
+		}
+		return conversation.logout(ctx, m)
 	case *mtcpv1.KubeCertRequest:
 		return conversation.kubeCert(ctx, m)
 	case *mtcpv1.KubeAuditIntents:

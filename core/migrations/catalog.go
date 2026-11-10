@@ -684,6 +684,7 @@ func Catalog() []Migration {
 		newMigration(279, "Network deletion, phase 1", networkDeletionSQL),
 		newMigration(280, "Network deletion, phase 2 worker", networkDeletionWorkerSQL),
 		newMigration(281, "Writes a deleted Network still let through", deletedNetworkGapsSQL),
+		newMigration(282, "An expired Device can log out", logoutExpiredDeviceSQL),
 	}
 }
 
@@ -1306,3 +1307,6 @@ var networkDeletionWorkerSQL string
 
 //go:embed 000281_deleted_network_gaps.up.sql
 var deletedNetworkGapsSQL string
+
+//go:embed 000282_logout_expired_device.up.sql
+var logoutExpiredDeviceSQL string

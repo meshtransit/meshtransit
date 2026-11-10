@@ -48,7 +48,8 @@ type BrowserApproval interface {
 // DeviceLogout deauthorizes the Device whose current keys the node holds
 // (control.DeviceLogoutService).
 type DeviceLogout interface {
-	Logout(ctx context.Context, machine control.AuthenticatedMachine, nodeKey node.Key) (control.DeviceLogout, error)
+	Logout(ctx context.Context, machine control.AuthenticatedMachine, nodeKey node.Key,
+		keyProven bool) (control.DeviceLogout, error)
 }
 
 // errLoggedOut ends a session after a Logout (mtcp-v1 §6.5).
@@ -588,8 +589,12 @@ func (conversation *conversation) sendError(code mtcpv1.Error_Code, message stri
 }
 
 // logout answers Logout: the Device is revoked, the node is told LOGGED_OUT
-// and the session ends (mtcp-v1 §6.5).
-func (conversation *conversation) logout(ctx context.Context) error {
+// and the session ends (mtcp-v1 §6.5). A Device whose map stream is not
+// authorized (it expired) logs out with the node key its session proved:
+// by the Logout's proof, or an earlier one in the session (§6.7); keys Core
+// proves were revoked with their Device are told REVOKED, so the node may
+// erase them (TD-CORE-145).
+func (conversation *conversation) logout(ctx context.Context, request *mtcpv1.Logout) error {
 	logout := conversation.application.options.Logout
 	if logout == nil {
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "logout is not available", 0)
@@ -599,7 +604,24 @@ func (conversation *conversation) logout(ctx context.Context) error {
 		// (mtcp-v1 §6.5).
 		return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "a Kubernetes gateway cannot log out", 0)
 	}
-	nodeKey, disco, hostname := conversation.suspendStream()
+	suspended, disco, hostname := conversation.suspendStream()
+	nodeKey := suspended
+	// A stream serves an authorized Device once it sent a map; before that the
+	// key is only the hello's, which an old node logs out with (a Device
+	// that has not expired, as before).
+	streaming := nodeKey.IsValid() && conversation.session.proven.Load()
+	keyProven := streaming
+	if !streaming {
+		conversation.mu.Lock()
+		proven := conversation.provenNodeKey
+		conversation.mu.Unlock()
+		if !proven.IsValid() {
+			proven, _ = conversation.session.ProveHelloNodeKey(request.GetNodeKeyProof())
+		}
+		if proven.IsValid() {
+			nodeKey, keyProven = proven, true
+		}
+	}
 	if !nodeKey.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
 	}
@@ -609,12 +631,22 @@ func (conversation *conversation) logout(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
-	if _, err := logout.Logout(ctx, machine, nodeKey); err != nil {
-		conversation.authorize(nodeKey, disco, hostname, false) // nothing changed: the stream resumes
-		if errors.Is(err, control.ErrDeviceLogoutNotFound) {
-			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
+	if _, err := logout.Logout(ctx, machine, nodeKey, keyProven); err != nil {
+		if errors.Is(err, control.ErrDeviceLogoutRevoked) {
+			if err := conversation.session.Send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
+				State: mtcpv1.Lifecycle_REVOKED, Reason: "the Device was removed",
+			}); err != nil {
+				return err
+			}
+			return errLoggedOut
 		}
-		if errors.Is(err, control.ErrDeviceLogoutNotPermitted) {
+		if suspended.IsValid() {
+			conversation.authorize(suspended, disco, hostname, false) // nothing changed: the stream resumes
+		}
+		switch {
+		case errors.Is(err, control.ErrDeviceLogoutNotFound):
+			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
+		case errors.Is(err, control.ErrDeviceLogoutNotPermitted):
 			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "a Kubernetes gateway cannot log out", 0)
 		}
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "logout unavailable", 2000)

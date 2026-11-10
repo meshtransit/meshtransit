@@ -155,6 +155,17 @@ func (session *Session) VerifyKeyProof(public []byte, proof []byte) bool {
 	return sharedmtcp.VerifyKeyProof(session.control, session.noise.HandshakeHash(), [key.Size]byte(public), proof)
 }
 
+// ProveHelloNodeKey checks a session proof of the ClientHello node key
+// (§6.7's proof, here carried by Logout) and returns that key when it holds.
+func (session *Session) ProveHelloNodeKey(proof []byte) (node.Key, bool) {
+	nodeKey := session.hello.GetNodeKey()
+	if len(nodeKey) != key.Size || !sharedmtcp.VerifyNodeKeySessionProof(session.control,
+		session.noise.HandshakeHash(), [key.Size]byte(nodeKey), proof) {
+		return node.Key{}, false
+	}
+	return node.Key(nodeKey), true
+}
+
 // ProvenNodeKey returns the ClientHello node key when the session proved it
 // as its first record (mtcp-v1 §6.7).
 func (session *Session) ProvenNodeKey() (node.Key, bool) {

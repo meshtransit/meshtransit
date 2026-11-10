@@ -2369,6 +2369,7 @@ func (x *RotateNodeKeyResponse) GetKeyExpiryMs() int64 {
 
 type Logout struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeKeyProof  []byte                 `protobuf:"bytes,1,opt,name=node_key_proof,json=nodeKeyProof,proto3" json:"node_key_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2401,6 +2402,13 @@ func (x *Logout) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Logout.ProtoReflect.Descriptor instead.
 func (*Logout) Descriptor() ([]byte, []int) {
 	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Logout) GetNodeKeyProof() []byte {
+	if x != nil {
+		return x.NodeKeyProof
+	}
+	return nil
 }
 
 type NodeKeyProof struct {
@@ -9408,8 +9416,9 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x15service_account_token\x18\x05 \x01(\tB\x03\x80\x01\x01R\x13serviceAccountToken\"V\n" +
 	"\x15RotateNodeKeyResponse\x12\x19\n" +
 	"\bnode_key\x18\x01 \x01(\fR\anodeKey\x12\"\n" +
-	"\rkey_expiry_ms\x18\x02 \x01(\x03R\vkeyExpiryMs\"\b\n" +
-	"\x06Logout\"F\n" +
+	"\rkey_expiry_ms\x18\x02 \x01(\x03R\vkeyExpiryMs\".\n" +
+	"\x06Logout\x12$\n" +
+	"\x0enode_key_proof\x18\x01 \x01(\fR\fnodeKeyProof\"F\n" +
 	"\fNodeKeyProof\x12\x14\n" +
 	"\x05proof\x18\x01 \x01(\fR\x05proof\x12 \n" +
 	"\tpod_token\x18\x02 \x01(\tB\x03\x80\x01\x01R\bpodToken\"3\n" +
