@@ -808,11 +808,13 @@ type fakeClient struct {
 	completeLogin      func(context.Context) (localapi.Login, error)
 	receivedAuthKey    string
 	completeCalls      int
-	removedProfiles    []string
-	removedLocal       []bool
-	removal            localapi.ProfileRemoval
-	removeErr          error
-	err                error
+	// statuses, when set, answer Status calls in turn (the last repeats).
+	statuses        []localapi.Status
+	removedProfiles []string
+	removedLocal    []bool
+	removal         localapi.ProfileRemoval
+	removeErr       error
+	err             error
 }
 
 func (f *fakeClient) RefreshNAT(_ context.Context) (localapi.Netcheck, error) {
@@ -824,6 +826,13 @@ func (f *fakeClient) ApproveExitNodes(_ context.Context, ids []string) (localapi
 }
 
 func (f *fakeClient) Status(_ context.Context) (localapi.Status, error) {
+	if len(f.statuses) > 0 {
+		next := f.statuses[0]
+		if len(f.statuses) > 1 {
+			f.statuses = f.statuses[1:]
+		}
+		return next, f.err
+	}
 	return f.status, f.err
 }
 
@@ -916,6 +925,8 @@ func testOptions(client DaemonClient) Options {
 		},
 		// exit use waits for meshd: not for long in tests.
 		ExitWait: 20 * time.Millisecond,
+		// login does not wait for a map unless a test asks.
+		ConnectWait: -1,
 	}
 }
 

@@ -5,6 +5,16 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshd and meshctl (device logout design S2c, TD-CLI-102): `meshctl login`
+  waits up to 10 s for the first map and prints the machine's addresses, or
+  says it is still connecting, that `meshctl down` keeps it off, or that it
+  is blocked or suspended. `meshctl status` of a signed-out machine says its
+  addresses are kept in the Network and that `meshctl login` signs it back
+  in, instead of "none"; `meshctl down` on a signed-out machine says to sign
+  in, then `up`. The local API status gains `disconnected` (set by `meshctl
+  down`), and the status note says why a signed-out or down machine is
+  offline. `meshctl status` leaves out the `Network:` line when the map
+  names no Network.
 - meshd and meshctl (device logout design S2c): `meshctl profile remove
   PROFILE_ID|NAME [--local]` removes a profile that is not active. Core first
   removes its Device, signed in or signed out, with that profile's own keys

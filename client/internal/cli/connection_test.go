@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/client/internal/cli/localapi"
 )
@@ -272,5 +274,151 @@ func TestRun_ProfileRemove(t *testing.T) {
 	if code := Run(t.Context(), []string{"profile", "remove", "p2"}, &stdout, &stderr, testOptions(client)); code != 1 ||
 		!strings.Contains(stderr.String(), "update it first") {
 		t.Fatalf("older meshd: exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+// TD-CLI-102: login waits for the first map and prints the addresses; it
+// says why when meshd stays down or is stopped, and never fails the login.
+func TestRun_LoginPrintsTheAddressesOnceConnected(t *testing.T) {
+	t.Parallel()
+	ready := localapi.Status{
+		APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "synchronized",
+		SelfAddresses: []string{"100.64.1.3/32", "fd07::3/128"},
+	}
+	for _, test := range []struct {
+		name     string
+		statuses []localapi.Status
+		says     string
+	}{
+		{"connected after a while", []localapi.Status{
+			{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "connecting"}, ready,
+		}, "Connected. Addresses: 100.64.1.3/32, fd07::3/128."},
+		{
+			"down",
+			[]localapi.Status{{APIVersion: "v1", ActiveProfileID: "p1", Disconnected: true}},
+			"meshctl up connects",
+		},
+		{
+			"down on an older meshd",
+			[]localapi.Status{{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "down"}},
+			"meshctl up connects",
+		},
+		{"suspended", []localapi.Status{
+			{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "connecting"},
+			{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "suspended"},
+		}, "Not connected (suspended)"},
+		// Blocked before the login, then connected: not a failure.
+		{"stale blocked", []localapi.Status{
+			{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "blocked"},
+			{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "connecting"},
+			ready,
+		}, "Connected. Addresses:"},
+		{
+			"blocked throughout",
+			[]localapi.Status{{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "blocked"}},
+			"Still connecting",
+		},
+		{
+			"never connects",
+			[]localapi.Status{{APIVersion: "v1", ActiveProfileID: "p1", ControlSession: "connecting"}},
+			"Still connecting",
+		},
+		// Another profile became active meanwhile: its addresses are not ours.
+		{"another profile", []localapi.Status{{
+			APIVersion: "v1", ActiveProfileID: "p9", ControlSession: "synchronized",
+			SelfAddresses: []string{"100.64.9.9/32"},
+		}}, "Still connecting"},
+	} {
+		var stdout, stderr bytes.Buffer
+		client := &fakeClient{statuses: test.statuses, login: localapi.Login{
+			APIVersion: "v1", State: "registered",
+			ProfileID: "p1",
+		}}
+		options := testOptions(client)
+		options.ConnectWait = 600 * time.Millisecond
+		if code := Run(t.Context(), []string{"login"}, &stdout, &stderr, options); code != 0 ||
+			!strings.Contains(stdout.String(), "Registered active profile p1.\nConnecting...") ||
+			!strings.Contains(stdout.String(), test.says) {
+			t.Fatalf("%s: exit %d, stdout %q, stderr %q", test.name, code, stdout.String(), stderr.String())
+		}
+	}
+	// The browser path and login complete print the addresses too.
+	for _, args := range [][]string{{"login"}, {"login", "complete"}} {
+		var stdout, stderr bytes.Buffer
+		client := &fakeClient{
+			status: ready, login: localapi.Login{
+				APIVersion: "v1", State: "authorization_required",
+				AuthURL: "https://control.example.com/register/v1/x",
+			},
+			completedLogin: localapi.Login{APIVersion: "v1", State: "registered", ProfileID: "p1"},
+		}
+		if args[len(args)-1] == "complete" {
+			client.login = client.completedLogin
+		}
+		options := testOptions(client)
+		options.ConnectWait = 600 * time.Millisecond
+		if code := Run(t.Context(), args, &stdout, &stderr, options); code != 0 ||
+			!strings.Contains(stdout.String(), "Connected. Addresses:") {
+			t.Fatalf("%v: exit %d, stdout %q, stderr %q", args, code, stdout.String(), stderr.String())
+		}
+	}
+	// Cancelled while waiting: the login succeeded, nothing more is said.
+	ctx, cancel := context.WithCancel(t.Context())
+	var stdout, stderr bytes.Buffer
+	client := &fakeClient{
+		status: localapi.Status{ActiveProfileID: "p1", ControlSession: "connecting"},
+		login:  localapi.Login{APIVersion: "v1", State: "registered", ProfileID: "p1"},
+	}
+	options := testOptions(client)
+	options.ConnectWait = 5 * time.Second
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if code := Run(ctx, []string{"login"}, &stdout, &stderr, options); code != 0 ||
+		strings.Contains(stdout.String(), "Still connecting") {
+		t.Fatalf("cancelled: exit %d, stdout %q", code, stdout.String())
+	}
+	// JSON output stays one object.
+	stdout.Reset()
+	client = &fakeClient{status: ready, login: localapi.Login{APIVersion: "v1", State: "registered", ProfileID: "p1"}}
+	options = testOptions(client)
+	options.ConnectWait = 600 * time.Millisecond
+	if code := Run(t.Context(), []string{"--json", "login"}, &stdout, &stderr, options); code != 0 ||
+		strings.Contains(stdout.String(), "Connected.") || strings.Contains(stdout.String(), "Connecting") {
+		t.Fatalf("json login: exit %d, stdout %q", code, stdout.String())
+	}
+}
+
+func TestRun_StatusOfASignedOutMachine(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	client := &fakeClient{status: localapi.Status{
+		APIVersion: "v1", Registration: "signed_out",
+		DeviceExpiry: "unknown",
+	}}
+	if code := Run(t.Context(), []string{"status"}, &stdout, &stderr, testOptions(client)); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Self addresses: kept in the Network while signed out") ||
+		!strings.Contains(out, "Device expiry: not applicable while signed out") || strings.Contains(out, "Network: ") {
+		t.Fatalf("status = %q", out)
+	}
+}
+
+func TestRun_DownOfASignedOutMachineSaysToSignIn(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	client := &fakeClient{
+		connection: localapi.Connection{APIVersion: "v1", State: "down", Changed: true},
+		status:     localapi.Status{APIVersion: "v1", Registration: "signed_out"},
+	}
+	if code := Run(t.Context(), []string{"down"}, &stdout, &stderr, testOptions(client)); code != 0 ||
+		!strings.Contains(stdout.String(), "This machine is also signed out: meshctl login") {
+		t.Fatalf("exit %d, stdout %q", code, stdout.String())
+	}
+	stdout.Reset()
+	client.status.Registration = "registered"
+	if code := Run(t.Context(), []string{"down"}, &stdout, &stderr, testOptions(client)); code != 0 ||
+		strings.Contains(stdout.String(), "signed out") {
+		t.Fatalf("registered down: exit %d, stdout %q", code, stdout.String())
 	}
 }

@@ -15,21 +15,23 @@ type healthResponse struct {
 }
 
 type statusResponse struct {
-	APIVersion         string       `json:"api_version"`
-	Daemon             version.Info `json:"daemon"`
-	State              string       `json:"state"`
-	DataPlane          string       `json:"data_plane"`
-	DNS                string       `json:"dns"`
-	DNSError           string       `json:"dns_error,omitempty"`
-	ActiveProfileID    string       `json:"active_profile_id"`
-	ProfileCount       int          `json:"profile_count"`
-	ControlTrust       string       `json:"control_trust"`
-	Registration       string       `json:"registration"`
-	ControlFingerprint string       `json:"control_key_fingerprint,omitempty"`
-	ControlSession     string       `json:"control_session"`
-	NetmapRevision     uint64       `json:"netmap_revision"`
-	NetworkName        string       `json:"network_name,omitempty"`
-	SelfAddresses      []string     `json:"self_addresses,omitempty"`
+	APIVersion      string       `json:"api_version"`
+	Daemon          version.Info `json:"daemon"`
+	State           string       `json:"state"`
+	DataPlane       string       `json:"data_plane"`
+	DNS             string       `json:"dns"`
+	DNSError        string       `json:"dns_error,omitempty"`
+	ActiveProfileID string       `json:"active_profile_id"`
+	ProfileCount    int          `json:"profile_count"`
+	ControlTrust    string       `json:"control_trust"`
+	Registration    string       `json:"registration"`
+	// Disconnected: meshctl down keeps meshd off the network until up.
+	Disconnected       bool     `json:"disconnected,omitempty"`
+	ControlFingerprint string   `json:"control_key_fingerprint,omitempty"`
+	ControlSession     string   `json:"control_session"`
+	NetmapRevision     uint64   `json:"netmap_revision"`
+	NetworkName        string   `json:"network_name,omitempty"`
+	SelfAddresses      []string `json:"self_addresses,omitempty"`
 	// DeviceExpiresAt is the Device's expiry (RFC 3339); omitted before a
 	// map arrives and for a Device that never expires.
 	DeviceExpiresAt string `json:"device_expires_at,omitempty"`

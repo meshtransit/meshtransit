@@ -149,12 +149,14 @@ type Status struct {
 	DNS       string
 	// DNSError is why the host refused the last map's DNS, while DNS is
 	// failed (TD-CLI-31).
-	DNSError           string
-	ActiveProfileID    string
-	ProfileCount       int
-	CompatibilityNote  string
-	ControlTrust       string
-	Registration       string
+	DNSError          string
+	ActiveProfileID   string
+	ProfileCount      int
+	CompatibilityNote string
+	ControlTrust      string
+	Registration      string
+	// Disconnected: meshctl down keeps meshd off the network until up.
+	Disconnected       bool
 	ControlFingerprint string
 	ControlSession     string
 	NetmapRevision     uint64
@@ -2604,6 +2606,19 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	case string(dataplane.StateFailed):
 		compatibilityNote = "data plane failed closed; encrypted tunnel is not active"
 	}
+	// Offline on purpose, not broken: these replace the data-plane note,
+	// which says nothing useful while meshd stays off the network.
+	switch {
+	case registration == RegistrationSignedOut && snapshot.Disconnected:
+		compatibilityNote = "signed out and disconnected (meshctl down): the Network keeps this device; " +
+			"meshctl login (without a key) signs it back in, then meshctl up connects"
+	case registration == RegistrationSignedOut:
+		// The Network keeps the Device, its addresses and name (schema 283).
+		compatibilityNote = "signed out: the Network keeps this device, its addresses and name; " +
+			"meshctl login (without a key) signs it back in"
+	case snapshot.Disconnected:
+		compatibilityNote = "disconnected (meshctl down): meshctl up connects"
+	}
 	daemonState := StateOffline
 	// Reconnecting keeps the last map: the mesh still works.
 	if syncState.state == ControlSessionSynchronized || syncState.state == ControlSessionReconnecting {
@@ -2622,6 +2637,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		CompatibilityNote:  compatibilityNote,
 		ControlTrust:       controlTrust,
 		Registration:       registration,
+		Disconnected:       snapshot.Disconnected,
 		ControlFingerprint: controlFingerprint,
 		ControlSession:     syncState.state,
 		NetmapRevision:     syncState.revision,

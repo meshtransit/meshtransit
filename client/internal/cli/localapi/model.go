@@ -23,6 +23,7 @@ type Status struct {
 	ProfileCount       int                 `json:"profile_count"`
 	ControlTrust       string              `json:"control_trust"`
 	Registration       string              `json:"registration"`
+	Disconnected       bool                `json:"disconnected,omitempty"`
 	ControlFingerprint string              `json:"control_key_fingerprint,omitempty"`
 	ControlSession     string              `json:"control_session"`
 	NetmapRevision     uint64              `json:"netmap_revision"`

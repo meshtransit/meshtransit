@@ -27,6 +27,7 @@ const (
 	defaultTimeout          = 5 * time.Second
 	defaultLoginWaitTimeout = 5 * time.Minute
 	loginRetryDelay         = 100 * time.Millisecond
+	connectPollDelay        = 250 * time.Millisecond
 	maxAuthKeyBytes         = 4096
 	netcheckTimeout         = 15 * time.Second
 	connectionTimeout       = 45 * time.Second
@@ -78,6 +79,10 @@ type Options struct {
 	// ExitWait bounds how long exit use waits for meshd to apply the
 	// choice; zero waits 15 s.
 	ExitWait time.Duration
+	// ConnectWait bounds how long login waits, once registered, for the
+	// first map to print this machine's addresses; zero waits 10 s, and a
+	// negative value does not wait.
+	ConnectWait time.Duration
 }
 
 // Run executes one meshctl command and returns a process exit code.
@@ -193,6 +198,7 @@ func Run(
 			stderr,
 			global.isJSON,
 			client,
+			cmp.Or(options.ConnectWait, connectWaitDefault),
 		)
 	case "identity":
 		return runIdentity(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
@@ -367,7 +373,17 @@ func runLogin(
 	stderr io.Writer,
 	isJSON bool,
 	client DaemonClient,
+	connectWait time.Duration,
 ) int {
+	// A registered login waits for the first map, so the addresses it
+	// prints are the ones the machine uses (TD-CLI-102).
+	finish := func(result localapi.Login) int {
+		code := writeLoginResult(stdout, stderr, isJSON, result)
+		if code == 0 && !isJSON && result.State == "registered" && connectWait > 0 {
+			writeConnectedAddresses(ctx, stdout, client, result.ProfileID, connectWait)
+		}
+		return code
+	}
 	if len(args) > 0 && args[0] == "complete" {
 		if len(args) != 1 {
 			_, _ = fmt.Fprintln(stderr, "usage: meshctl login complete")
@@ -379,7 +395,7 @@ func runLogin(
 			return writeRuntimeError(stderr, err)
 		}
 
-		return writeLoginResult(stdout, stderr, isJSON, result)
+		return finish(result)
 	}
 
 	flags := flag.NewFlagSet("meshctl login", flag.ContinueOnError)
@@ -444,7 +460,7 @@ func runLogin(
 		return writeRuntimeError(stderr, err)
 	}
 	if result.State != "authorization_required" {
-		return writeLoginResult(stdout, stderr, isJSON, result)
+		return finish(result)
 	}
 	if exitCode := writeLoginResult(stdout, stderr, isJSON, result); exitCode != 0 {
 		return exitCode
@@ -459,22 +475,21 @@ func runLogin(
 	waitCtx, cancel := context.WithTimeoutCause(ctx, *waitTimeout, errLoginWaitTimeout)
 	defer cancel()
 
-	return waitForLogin(waitCtx, stdout, stderr, isJSON, *waitTimeout, client)
+	return waitForLogin(waitCtx, stderr, *waitTimeout, client, finish)
 }
 
 func waitForLogin(
 	ctx context.Context,
-	stdout io.Writer,
 	stderr io.Writer,
-	isJSON bool,
 	waitTimeout time.Duration,
 	client DaemonClient,
+	finish func(localapi.Login) int,
 ) int {
 	for {
 		result, err := client.CompleteLogin(ctx)
 		switch {
 		case err == nil && result.State == "registered":
-			return writeLoginResult(stdout, stderr, isJSON, result)
+			return finish(result)
 		case err == nil && result.State == "authorization_required":
 		case err == nil:
 			return writeRuntimeError(
@@ -517,6 +532,67 @@ func writeLoginWaitError(ctx context.Context, stderr io.Writer, waitTimeout time
 	}
 
 	return writeRuntimeError(stderr, context.Cause(ctx))
+}
+
+// connectWaitDefault bounds how long login waits for the first map.
+const connectWaitDefault = 10 * time.Second
+
+// writeConnectedAddresses waits, within wait, for the control session to
+// deliver the first map, then prints the machine's addresses; it never
+// fails the login.
+func writeConnectedAddresses(ctx context.Context, stdout io.Writer, client DaemonClient, profileID string,
+	wait time.Duration,
+) {
+	_, _ = fmt.Fprintln(stdout, "Connecting...")
+	waitCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	// A blocked or suspended state seen first may be the one before this
+	// login: the session loop wakes to it in the background.
+	moved := false
+	for {
+		status, err := client.Status(waitCtx)
+		if err == nil && status.ActiveProfileID == profileID {
+			if line, done := connectionOutcome(status, moved); done {
+				_, _ = fmt.Fprintln(stdout, line)
+				return
+			}
+			moved = moved || !stoppedSession(status.ControlSession)
+		}
+		timer := time.NewTimer(connectPollDelay)
+		select {
+		case <-timer.C:
+		case <-waitCtx.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				// Cancelled (Ctrl-C): the login itself succeeded.
+				return
+			}
+			_, _ = fmt.Fprintln(stdout, "Still connecting; meshctl status shows the addresses once connected.")
+			return
+		}
+	}
+}
+
+// connectionOutcome is the line login prints for status, and whether the
+// wait is over: connected, kept down, or stopped for a reason status shows
+// (only once the session has moved since the login).
+func connectionOutcome(status localapi.Status, moved bool) (string, bool) {
+	switch {
+	// An older meshd reports down only as the control session state.
+	case status.Disconnected || status.ControlSession == "down":
+		return "meshd stays off the network (meshctl down): meshctl up connects.", true
+	case status.ControlSession == "synchronized" && len(status.SelfAddresses) > 0:
+		return "Connected. Addresses: " + strings.Join(status.SelfAddresses, ", ") + ".", true
+	case moved && stoppedSession(status.ControlSession):
+		return "Not connected (" + status.ControlSession + "): meshctl status says why.", true
+	}
+	return "", false
+}
+
+// stoppedSession reports a control session that stays stopped until
+// something changes.
+func stoppedSession(state string) bool {
+	return state == "blocked" || state == "suspended"
 }
 
 func writeLoginResult(
@@ -687,18 +763,24 @@ func runStatus(
 	if controlFingerprint == "" {
 		controlFingerprint = "none"
 	}
-	networkName := status.NetworkName
-	if networkName == "" {
-		networkName = "none"
+	// The map names the Network only when Core sends a name (TD-SPEC-19).
+	networkLine := ""
+	if status.NetworkName != "" {
+		networkLine = "Network: " + status.NetworkName + "\n"
 	}
 	selfAddresses := "none"
 	if len(status.SelfAddresses) > 0 {
 		selfAddresses = strings.Join(status.SelfAddresses, ", ")
 	}
 	deviceExpiry := formatDeviceExpiry(status.DeviceExpiry, status.DeviceExpiresAt, time.Now())
+	if status.Registration == "signed_out" {
+		// Offline, so nothing is known here; the Network keeps them.
+		selfAddresses = "kept in the Network while signed out"
+		deviceExpiry = "not applicable while signed out (the server may remove it after 30 days signed out)"
+	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nKubernetes clusters: %s\nConnection logging: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\n%sSelf addresses: %s\nDevice expiry: %s\nPeers: %d\nPeer paths: %s\nSubnet routes: %s\nSubnet router: %s\nExit node: %s\nExit: %s\nKubernetes clusters: %s\nConnection logging: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPort mapping: %s\nCloud: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -712,7 +794,7 @@ func runStatus(
 		status.Registration,
 		status.ControlSession,
 		status.NetmapRevision,
-		networkName,
+		networkLine,
 		selfAddresses,
 		deviceExpiry,
 		status.PeerCount,

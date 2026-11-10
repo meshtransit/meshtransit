@@ -156,7 +156,9 @@ func runUp(
 	}
 	waitCtx, cancel := context.WithTimeoutCause(ctx, *waitTimeout, errLoginWaitTimeout)
 	defer cancel()
-	if code := waitForLogin(waitCtx, io.Discard, stderr, true, *waitTimeout, client); code != 0 {
+	// up prints its own result below.
+	quiet := func(localapi.Login) int { return 0 }
+	if code := waitForLogin(waitCtx, stderr, *waitTimeout, client, quiet); code != 0 {
 		return code
 	}
 	result.State, result.AuthURL = "registered", ""

@@ -526,6 +526,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		ProfileCount:       status.ProfileCount,
 		ControlTrust:       status.ControlTrust,
 		Registration:       status.Registration,
+		Disconnected:       status.Disconnected,
 		ControlFingerprint: status.ControlFingerprint,
 		ControlSession:     status.ControlSession,
 		NetmapRevision:     status.NetmapRevision,

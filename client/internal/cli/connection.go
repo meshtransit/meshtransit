@@ -38,6 +38,11 @@ func runDown(
 	} else {
 		_, _ = fmt.Fprintln(stdout, "Already disconnected. Run meshctl up to connect again.")
 	}
+	// Signed out too, login alone would not reconnect it (TD-CLI-102).
+	if status, err := client.Status(ctx); err == nil && status.Registration == "signed_out" {
+		_, _ = fmt.Fprintln(stdout,
+			"This machine is also signed out: meshctl login signs it back in, then meshctl up connects.")
+	}
 
 	return 0
 }
