@@ -343,3 +343,46 @@ func TestStore_SetDisconnectedPersists(t *testing.T) {
 		t.Fatalf("SetDisconnected(false) = %t, %v", changed, err)
 	}
 }
+
+func TestStore_Remove(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	first, err := store.Create(t.Context(), CreateInput{Name: "production", ControlURL: "https://one.example.com"})
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	second, err := store.Create(t.Context(), CreateInput{Name: "staging", ControlURL: "https://two.example.com"})
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+
+	if _, err := store.Remove(t.Context(), first.ID); !errors.Is(err, ErrActive) {
+		t.Fatalf("Remove(active) error = %v, want ErrActive", err)
+	}
+	if _, err := store.Remove(t.Context(), "ffffffffffffffffffffffffffffffff"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Remove(missing) error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.Remove(t.Context(), "not-an-id"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Remove(invalid) error = %v, want ErrNotFound", err)
+	}
+	removed, err := store.Remove(t.Context(), second.ID)
+	if err != nil || removed.ID != second.ID {
+		t.Fatalf("Remove() = %+v, %v", removed, err)
+	}
+	snapshot := store.Snapshot()
+	if len(snapshot.Profiles) != 1 || snapshot.Profiles[0].ID != first.ID || snapshot.ActiveProfileID != first.ID {
+		t.Fatalf("snapshot after Remove = %+v", snapshot)
+	}
+	reopened, err := Open(store.dir)
+	if err != nil {
+		t.Fatalf("reopening store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if got := reopened.Snapshot().Profiles; len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("reopened profiles = %+v", got)
+	}
+	if _, err := store.Remove(t.Context(), second.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Remove() twice error = %v, want ErrNotFound", err)
+	}
+}

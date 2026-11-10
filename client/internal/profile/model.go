@@ -25,6 +25,9 @@ var (
 	ErrNotFound = errors.New("profile: not found")
 	// ErrDuplicate indicates that a profile name already exists.
 	ErrDuplicate = errors.New("profile: duplicate name")
+	// ErrActive indicates that the active profile cannot be removed: switch
+	// to another profile first.
+	ErrActive = errors.New("profile: active profile")
 )
 
 // Profile identifies one control-plane account and its isolated network view.

@@ -383,6 +383,37 @@ func (s *Store) SetSignedOut(ctx context.Context, profileID string) (Record, err
 	return record, nil
 }
 
+// Delete removes a profile's identity record, keys included (meshctl
+// profile remove). A store that mirrors its writes (a Kubernetes gateway)
+// refuses: the mirror has no remove, and a gateway never drops its profile.
+// A profile without a record reports ErrNotFound.
+func (s *Store) Delete(ctx context.Context, profileID string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("deleting identity: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return errors.New("identity store is not initialized")
+	}
+	if s.persistHook != nil {
+		return fmt.Errorf("%w: a mirrored identity store cannot delete a record", ErrUnsupported)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.root.Remove(recordFileName(profileID)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("deleting identity record: %w", err)
+	}
+
+	return privatefile.SyncDir(s.root)
+}
+
 // ReplaceCredentials gives the profile a new machine key and node key and
 // marks it unregistered, keeping its control key pin. A Device that logged
 // out or was revoked cannot reuse its keys: Core remembers them, so the
@@ -806,7 +837,7 @@ func (s *Store) decodeRecord(
 }
 
 // persistLocked is the only way a record reaches the directory, so the persist
-// hook sees every write; a future remove must go through the hook too.
+// hook sees every write; Delete refuses a store with a hook.
 func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) error {
 	encoded, err := s.encodeRecord(ctx, record)
 	if err != nil {

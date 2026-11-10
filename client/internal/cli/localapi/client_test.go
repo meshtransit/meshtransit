@@ -398,3 +398,35 @@ func jsonResponse(status int, body string) *http.Response {
 }
 
 var _ http.RoundTripper = roundTripFunc(nil)
+
+func TestClient_RemoveProfile(t *testing.T) {
+	t.Parallel()
+
+	const id = "0123456789abcdef0123456789abcdef"
+	var seen []string
+	client := newTestClient(func(request *http.Request) (*http.Response, error) {
+		seen = append(seen, request.Method+" "+request.URL.RequestURI())
+		return jsonResponse(http.StatusOK, `{"api_version":"v1","profile":{"id":"`+id+`","name":"home"},`+
+			`"device":"left"}`), nil
+	})
+	if _, err := client.RemoveProfile(t.Context(), "../forged", false); err == nil {
+		t.Fatal("RemoveProfile() error = nil, want id validation error")
+	}
+	removal, err := client.RemoveProfile(t.Context(), id, false)
+	if err != nil || removal.Profile.ID != id || removal.Device != "left" {
+		t.Fatalf("RemoveProfile() = %+v, %v", removal, err)
+	}
+	if _, err := client.RemoveProfile(t.Context(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0] != "DELETE /v1/profiles/"+id || seen[1] != "DELETE /v1/profiles/"+id+"?local=true" {
+		t.Fatalf("requests = %v", seen)
+	}
+
+	stale := newTestClient(func(_ *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"api_version":"v0","profile":{},"device":"none"}`), nil
+	})
+	if _, err := stale.RemoveProfile(t.Context(), id, false); err == nil {
+		t.Fatal("RemoveProfile() accepted an unknown api version")
+	}
+}

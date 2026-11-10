@@ -89,6 +89,7 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl profile list`
 - `meshctl profile create --name NAME --control-url HTTPS_URL`
 - `meshctl profile use PROFILE_ID`
+- `meshctl profile remove PROFILE_ID|NAME [--local]`
 - `meshctl profile trust --fingerprint sha256:...`
 - `meshctl login`
 - `meshctl login --wait-timeout 10m`

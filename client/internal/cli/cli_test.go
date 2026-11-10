@@ -808,6 +808,10 @@ type fakeClient struct {
 	completeLogin      func(context.Context) (localapi.Login, error)
 	receivedAuthKey    string
 	completeCalls      int
+	removedProfiles    []string
+	removedLocal       []bool
+	removal            localapi.ProfileRemoval
+	removeErr          error
 	err                error
 }
 
@@ -839,6 +843,15 @@ func (f *fakeClient) ActivateProfile(_ context.Context, id string) (localapi.Pro
 	f.activatedID = id
 	f.activatedIDs = append(f.activatedIDs, id)
 	return f.activated, f.err
+}
+
+func (f *fakeClient) RemoveProfile(_ context.Context, id string, local bool) (localapi.ProfileRemoval, error) {
+	f.removedProfiles = append(f.removedProfiles, id)
+	f.removedLocal = append(f.removedLocal, local)
+	if f.removeErr != nil {
+		return localapi.ProfileRemoval{}, f.removeErr
+	}
+	return f.removal, f.err
 }
 
 func (f *fakeClient) ProbeControl(_ context.Context) (localapi.ControlProbe, error) {

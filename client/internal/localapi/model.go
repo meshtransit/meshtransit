@@ -413,6 +413,13 @@ type logoutResponse struct {
 	AlreadyRemoved bool   `json:"already_removed"`
 }
 
+type profileRemovalResponse struct {
+	APIVersion string          `json:"api_version"`
+	Profile    profileResponse `json:"profile"`
+	// Device is removed, already_removed, none, pending or left (--local).
+	Device string `json:"device"`
+}
+
 type errorResponse struct {
 	APIVersion string `json:"api_version"`
 	Code       string `json:"code"`

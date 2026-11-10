@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -39,6 +40,7 @@ type DaemonClient interface {
 	ListProfiles(context.Context) (localapi.Profiles, error)
 	CreateProfile(context.Context, localapi.CreateProfile) (localapi.Profile, error)
 	ActivateProfile(context.Context, string) (localapi.Profile, error)
+	RemoveProfile(context.Context, string, bool) (localapi.ProfileRemoval, error)
 	ProbeControl(context.Context) (localapi.ControlProbe, error)
 	TrustControl(context.Context, string) (localapi.ControlTrust, error)
 	StartLogin(context.Context, string) (localapi.Login, error)
@@ -319,9 +321,17 @@ func addAccountProfile(ctx context.Context, client DaemonClient, name string) (l
 				created.Name, err, active.ID,
 			)
 		}
+		// The new profile holds no keys Core knows: drop it here.
+		if _, removeErr := client.RemoveProfile(ctx, created.ID, true); removeErr != nil {
+			return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
+				"could not pin the server's key for profile %q, so %q is active again, and could not remove the "+
+					"unused profile (meshctl profile remove %s): %w", created.Name, active.Name, created.ID,
+				errors.Join(err, removeErr),
+			)
+		}
 		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-			"could not pin the server's key for profile %q, so %q is active again; %q stays, unused, "+
-				"until profile removal exists: %w", created.Name, active.Name, created.Name, err,
+			"could not pin the server's key for a new profile, so %q is active again and nothing was added: %w",
+			active.Name, err,
 		)
 	}
 	return created, active, nil
@@ -1114,6 +1124,8 @@ func runProfile(
 		return runProfileUse(ctx, args[1:], stdout, stderr, isJSON, client)
 	case "trust":
 		return runProfileTrust(ctx, args[1:], stdout, stderr, isJSON, client)
+	case "remove":
+		return runProfileRemove(ctx, args[1:], stdout, stderr, isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown profile command %q\n", args[0])
 		writeProfileUsage(stderr)
@@ -1279,6 +1291,107 @@ func runProfileUse(
 	return 0
 }
 
+// runProfileRemove deletes an inactive profile by id or name. Core removes
+// its Device first; --local only drops the keys here (design §7, §2.2).
+func runProfileRemove(
+	ctx context.Context,
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+	isJSON bool,
+	client DaemonClient,
+) int {
+	flags := flag.NewFlagSet("meshctl profile remove", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	local := flags.Bool("local", false, "drop the profile's keys here without asking Core")
+	// The profile comes first or last: `remove NAME --local` reads naturally.
+	// After "--" nothing is a flag.
+	positional := []string{}
+	rest := args
+	for len(rest) > 0 {
+		before := len(rest)
+		if err := flags.Parse(rest); err != nil {
+			_, _ = fmt.Fprintln(stderr, "usage: meshctl profile remove PROFILE_ID|NAME [--local]")
+
+			return 2
+		}
+		rest = flags.Args()
+		consumed := before - len(rest)
+		if consumed > 0 && args[len(args)-before+consumed-1] == "--" {
+			positional = append(positional, rest...)
+			break
+		}
+		if len(rest) > 0 {
+			positional = append(positional, rest[0])
+			rest = rest[1:]
+		}
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
+		_, _ = fmt.Fprintln(stderr, "usage: meshctl profile remove PROFILE_ID|NAME [--local]")
+
+		return 2
+	}
+	target, err := resolveProfile(ctx, client, positional[0])
+	if err != nil {
+		return writeRuntimeError(stderr, err)
+	}
+	removal, err := client.RemoveProfile(ctx, target.ID, *local)
+	if err != nil {
+		apiErr := &localapi.APIError{}
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusMethodNotAllowed {
+			// An older meshd has no profile removal.
+			return writeRuntimeError(stderr, errors.New("this meshd cannot remove profiles; update it first"))
+		}
+		return writeRuntimeError(stderr, err)
+	}
+	if isJSON {
+		return writeJSON(stdout, stderr, removal)
+	}
+	_, _ = fmt.Fprintln(stdout, profileRemovalMessage(removal))
+
+	return 0
+}
+
+// resolveProfile finds a profile by id, else by name (case folded, as the
+// store compares names).
+func resolveProfile(ctx context.Context, client DaemonClient, reference string) (localapi.Profile, error) {
+	profiles, err := client.ListProfiles(ctx)
+	if err != nil {
+		return localapi.Profile{}, err
+	}
+	reference = strings.TrimSpace(reference)
+	for _, item := range profiles.Profiles {
+		if item.ID == reference {
+			return item, nil
+		}
+	}
+	for _, item := range profiles.Profiles {
+		if strings.EqualFold(item.Name, reference) {
+			return item, nil
+		}
+	}
+
+	return localapi.Profile{}, fmt.Errorf("no profile %q (meshctl profile list shows them)", reference)
+}
+
+func profileRemovalMessage(removal localapi.ProfileRemoval) string {
+	name := removal.Profile.Name
+	switch removal.Device {
+	case "removed":
+		return fmt.Sprintf("Removed profile %q and its device from the Network.", name)
+	case "already_removed":
+		return fmt.Sprintf("Removed profile %q; its device had already been removed from the Network.", name)
+	case "pending":
+		return fmt.Sprintf("Removed profile %q. Its browser sign-in was never approved: do not approve that link "+
+			"now, or remove the device it makes in the Console.", name)
+	case "left":
+		return fmt.Sprintf("Removed profile %q from this machine only. If its device is still in the Network, "+
+			"an administrator removes it in the Console.", name)
+	default:
+		return fmt.Sprintf("Removed profile %q; it had no device.", name)
+	}
+}
+
 func writeVersion(stdout io.Writer, isJSON bool, build version.Info) int {
 	if isJSON {
 		encoder := json.NewEncoder(stdout)
@@ -1332,6 +1445,7 @@ Commands:
   profile list                            List configured profiles
   profile create --name N --control-url U Create an isolated profile
   profile use PROFILE_ID                  Select the only active profile
+  profile remove PROFILE [--local]        Remove an inactive profile and its device (--local: only here)
   profile trust --fingerprint SHA256      Verify and pin the active control key
   login [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]
                                           Register the active profile and wait for browser approval
@@ -1363,6 +1477,7 @@ func writeProfileUsage(writer io.Writer) {
   meshctl profile list
   meshctl profile create --name NAME --control-url HTTPS_URL
   meshctl profile use PROFILE_ID
+  meshctl profile remove PROFILE_ID|NAME [--local]
   meshctl profile trust --fingerprint SHA256_FINGERPRINT`)
 }
 

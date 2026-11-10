@@ -960,3 +960,89 @@ func TestServer_SignOutRefusalsSayWhatToDo(t *testing.T) {
 		t.Fatalf("GET /v1/sign-out = %d", recorder.Code)
 	}
 }
+
+// docs/device-logout-design.md §7: DELETE /v1/profiles/{id} removes an
+// inactive profile; the active one is refused.
+func TestServer_RemoveProfile(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	active := createProfile(t, server, "work", "https://control.example.com")
+	other := createProfile(t, server, "home", "https://control.example.com")
+
+	recorder := performRequest(t, server, http.MethodDelete, "/v1/profiles/"+active.ID, "", nil)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "profile_active") {
+		t.Fatalf("DELETE active = %d %s, want 409 profile_active", recorder.Code, recorder.Body.String())
+	}
+	for _, query := range []string{"?local=yes", "?local=true&local=true", "?force=true"} {
+		recorder := performRequest(t, server, http.MethodDelete, "/v1/profiles/"+other.ID+query, "", nil)
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "invalid_query") {
+			t.Fatalf("DELETE %s = %d %s, want 400 invalid_query", query, recorder.Code, recorder.Body.String())
+		}
+	}
+	recorder = performRequest(t, server, http.MethodDelete, "/v1/profiles/"+other.ID+"?local=false", "", nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("DELETE inactive = %d %s", recorder.Code, recorder.Body.String())
+	}
+	removed := decodeResponse[profileRemovalResponse](t, recorder)
+	if removed.APIVersion != apiVersion || removed.Profile.ID != other.ID || removed.Device != daemon.ProfileDeviceNone ||
+		removed.Profile.IsActive {
+		t.Fatalf("removal = %#v, want home removed without a device", removed)
+	}
+	recorder = performRequest(t, server, http.MethodDelete, "/v1/profiles/"+other.ID+"?local=true", "", nil)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("DELETE removed profile = %d %s, want 404", recorder.Code, recorder.Body.String())
+	}
+	listed := performRequest(t, server, http.MethodGet, "/v1/profiles", "", nil)
+	if strings.Contains(listed.Body.String(), other.ID) {
+		t.Fatalf("profile list still shows the removed profile: %s", listed.Body.String())
+	}
+	if recorder := performRequest(t, server, http.MethodPut, "/v1/profiles/"+active.ID, "", nil); recorder.Code !=
+		http.StatusMethodNotAllowed || !strings.Contains(recorder.Header().Get("Allow"), http.MethodDelete) {
+		t.Fatalf("PUT profile = %d Allow=%q", recorder.Code, recorder.Header().Get("Allow"))
+	}
+}
+
+func TestServer_ProfileRemovalErrorsSayWhatToDo(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	for _, test := range []struct {
+		err    error
+		status int
+		code   string
+		says   string
+	}{
+		{
+			fmt.Errorf("%w: %w", daemon.ErrProfileRemoval, controlplane.ErrDeviceNotAuthorized), http.StatusConflict,
+			"profile_remove_refused", "--local",
+		},
+		{
+			fmt.Errorf("%w: %w", daemon.ErrProfileRemoval, controlplane.ErrRegistrationTemporary),
+			http.StatusServiceUnavailable, "profile_remove_unavailable", "try again",
+		},
+		{
+			fmt.Errorf("%w: unreachable", daemon.ErrProfileRemoval), http.StatusBadGateway, "profile_remove_failed",
+			"--local",
+		},
+		{daemon.ErrProfileActivated, http.StatusConflict, "profile_activated", "meshctl login"},
+		{daemon.ErrProfileRemoving, http.StatusConflict, "profile_removing", "try again"},
+		{daemon.ErrGatewayLogout, http.StatusConflict, "gateway_profile", "uninstall"},
+		// A timeout or a changed control key says so, not "use --local".
+		{
+			fmt.Errorf("%w: %w", daemon.ErrProfileRemoval, context.DeadlineExceeded), http.StatusRequestTimeout,
+			"request_cancelled", "cancelled",
+		},
+		{
+			fmt.Errorf("%w: %w", daemon.ErrProfileRemoval, controlplane.ErrControlKeyChanged), http.StatusBadGateway,
+			"control_key_changed", "no longer matches",
+		},
+	} {
+		recorder := httptest.NewRecorder()
+		server.writeServiceError(recorder, test.err)
+		if recorder.Code != test.status || !strings.Contains(recorder.Body.String(), test.code) ||
+			!strings.Contains(recorder.Body.String(), test.says) {
+			t.Fatalf("%v = %d %s", test.err, recorder.Code, recorder.Body.String())
+		}
+	}
+}

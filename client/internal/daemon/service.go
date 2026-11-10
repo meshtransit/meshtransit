@@ -491,6 +491,10 @@ type Service struct {
 	loggingOut       atomic.Bool
 	downAcks         atomic.Uint64
 	registrationGate chan struct{}
+	// removingProfiles are the profiles RemoveProfile is removing:
+	// ActivateProfile refuses them (ErrProfileRemoving).
+	removingMu       sync.Mutex
+	removingProfiles map[string]struct{}
 	dataPlaneMu      sync.Mutex
 	dnsApplyMu       sync.Mutex // orders DNS applies (applyNewestDNS)
 	// dnsEvidence is the DNS last applied, and dnsRepublish how the session
@@ -3136,6 +3140,12 @@ func (s *Service) CreateProfile(
 
 // ActivateProfile switches the selected profile without merging network views.
 func (s *Service) ActivateProfile(ctx context.Context, id string) (profile.Profile, error) {
+	// Held across the switch: a removal cannot start on id meanwhile.
+	s.removingMu.Lock()
+	defer s.removingMu.Unlock()
+	if _, removing := s.removingProfiles[id]; removing {
+		return profile.Profile{}, ErrProfileRemoving
+	}
 	previousActiveID := s.profiles.Snapshot().ActiveProfileID
 	selected, err := s.profiles.Activate(ctx, id)
 	if err == nil && previousActiveID != selected.ID {

@@ -303,7 +303,19 @@ Put `--json` before the command for JSON output: `meshctl --json status`. Common
   same server as a new profile (a new Device); the previous profile keeps its
   Device, and `meshctl profile use` switches between them without logging out.
   `meshctl profile list` shows each profile's state (registered, signed_out,
-  authorization_required, unregistered, untrusted).
+  authorization_required, unregistered, untrusted, unreadable).
+- `meshctl profile remove PROFILE_ID|NAME` removes a profile that is not
+  active: Core first removes its Device (signed in or signed out) with that
+  profile's own keys, then meshd deletes the profile and its keys. If Core
+  refuses the keys or is gone for good, `meshctl profile remove NAME --local`
+  deletes them here only; an administrator then removes the Device, if it is
+  still there, in the Console. A profile still waiting for a browser approval
+  is checked with Core too (a Device renewing its expiry waits the same way);
+  do not approve its link afterwards. Switch away (`meshctl profile use`)
+  before removing the active profile.
+- Before downgrading meshd below 0.1.0-dev.03be8648, sign back in or run
+  `meshctl logout --remove` on a signed-out machine: older builds cannot read
+  its identity and meshd does not start.
 - `sudo apt-get remove meshd meshctl` stops the services and keeps the identity,
   the encrypted credential and `/etc/meshd`; reinstalling reconnects the same
   Device.

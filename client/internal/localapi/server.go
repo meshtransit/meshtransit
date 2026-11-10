@@ -36,6 +36,7 @@ type service interface {
 	ListProfiles(context.Context) (profile.Snapshot, error)
 	CreateProfile(context.Context, profile.CreateInput) (profile.Profile, error)
 	ActivateProfile(context.Context, string) (profile.Profile, error)
+	RemoveProfile(context.Context, string, bool) (daemon.ProfileRemoval, error)
 	ProbeControl(context.Context) (daemon.ControlProbe, error)
 	TrustControl(context.Context, string) (daemon.ControlTrust, error)
 	StartLogin(context.Context, string) (daemon.Login, error)
@@ -945,13 +946,18 @@ func (s *Server) handleCreateProfile(writer http.ResponseWriter, request *http.R
 }
 
 func (s *Server) handleProfileAction(writer http.ResponseWriter, request *http.Request) {
+	remainder := strings.TrimPrefix(request.URL.Path, profilePathPrefix)
+	if request.Method == http.MethodDelete && isProfilePathID(remainder) {
+		s.handleProfileRemove(writer, request, remainder)
+
+		return
+	}
 	if request.Method != http.MethodPost {
-		s.writeMethodNotAllowed(writer, http.MethodPost)
+		s.writeMethodNotAllowed(writer, http.MethodPost, http.MethodDelete)
 
 		return
 	}
 
-	remainder := strings.TrimPrefix(request.URL.Path, profilePathPrefix)
 	profileID, found := strings.CutSuffix(remainder, "/activate")
 	invalidPath := !found || profileID == "" || strings.Contains(profileID, "/")
 	if invalidPath {
@@ -970,10 +976,49 @@ func (s *Server) handleProfileAction(writer http.ResponseWriter, request *http.R
 	s.writeJSON(writer, http.StatusOK, mapProfile(selected, selected.ID))
 }
 
+// handleProfileRemove deletes an inactive profile (meshctl profile remove):
+// DELETE /v1/profiles/{id}, with ?local=true to drop its keys without Core.
+func (s *Server) handleProfileRemove(writer http.ResponseWriter, request *http.Request, profileID string) {
+	if request.ContentLength > 0 {
+		s.writeError(writer, http.StatusBadRequest, "unexpected_body", "request body must be empty")
+
+		return
+	}
+	query := request.URL.Query()
+	local := false
+	for key, values := range query {
+		if key != "local" || len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			s.writeError(writer, http.StatusBadRequest, "invalid_query", "the only query parameter is local=true|false")
+
+			return
+		}
+		local = values[0] == "true"
+	}
+	removal, err := s.service.RemoveProfile(request.Context(), profileID, local)
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, profileRemovalResponse{
+		APIVersion: apiVersion,
+		Profile:    mapProfile(removal.Profile, ""),
+		Device:     removal.Device,
+	})
+}
+
+// isProfilePathID reports a single path segment, the profile id.
+func isProfilePathID(segment string) bool {
+	return segment != "" && !strings.Contains(segment, "/")
+}
+
 func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, profile.ErrNotFound):
 		s.writeError(writer, http.StatusNotFound, "profile_not_found", "profile not found")
+	case errors.Is(err, profile.ErrActive):
+		s.writeError(writer, http.StatusConflict, "profile_active",
+			"the active profile cannot be removed; switch to another with meshctl profile use first")
 	case errors.Is(err, profile.ErrDuplicate):
 		s.writeError(writer, http.StatusConflict, "profile_exists", "profile name already exists")
 	case errors.Is(err, profile.ErrInvalid):
@@ -988,6 +1033,30 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, controlplane.ErrControlKeyChanged):
 		s.logger.Error("pinned control key changed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_key_changed", "pinned control key no longer matches the control server")
+	case errors.Is(err, daemon.ErrProfileRemoving):
+		s.writeError(writer, http.StatusConflict, "profile_removing", "the profile is being removed; try again")
+	case errors.Is(err, daemon.ErrGatewayLogout):
+		s.writeError(writer, http.StatusConflict, "gateway_profile",
+			"a Kubernetes gateway does not log out or remove its profile; uninstall the gateway instead")
+	case errors.Is(err, daemon.ErrProfileActivated):
+		s.logger.Warn("profile became active during removal", "error", err)
+		s.writeError(writer, http.StatusConflict, "profile_activated",
+			"the profile became active while it was being removed; its keys are deleted, so sign in to it again "+
+				"with meshctl login")
+	case errors.Is(err, daemon.ErrProfileRemoval) &&
+		errors.Is(err, controlplane.ErrDeviceNotAuthorized):
+		s.writeError(writer, http.StatusConflict, "profile_remove_refused",
+			"Core did not accept this profile's keys, so nothing was removed; run meshctl profile remove --local "+
+				"to drop them here, and ask an administrator to remove the device")
+	case errors.Is(err, daemon.ErrProfileRemoval) &&
+		errors.Is(err, controlplane.ErrRegistrationTemporary):
+		s.logger.Warn("profile removal is temporarily unavailable", "error", err)
+		s.writeError(writer, http.StatusServiceUnavailable, "profile_remove_unavailable",
+			"Core could not remove the device right now; try again, or use --local")
+	case errors.Is(err, daemon.ErrProfileRemoval):
+		s.logger.Warn("profile removal failed", "error", err)
+		s.writeError(writer, http.StatusBadGateway, "profile_remove_failed",
+			"the profile was not removed; if Core is unreachable for good, use meshctl profile remove --local")
 	case errors.Is(err, daemon.ErrControlNotTrusted):
 		s.writeError(writer, http.StatusConflict, "control_not_trusted", "pin the active profile control key before login")
 	case errors.Is(err, daemon.ErrAuthorizationPending):

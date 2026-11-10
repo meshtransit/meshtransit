@@ -5,6 +5,15 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshd and meshctl (device logout design S2c): `meshctl profile remove
+  PROFILE_ID|NAME [--local]` removes a profile that is not active. Core first
+  removes its Device, signed in or signed out, with that profile's own keys
+  (`Logout`); meshd then deletes the profile and its identity record. A
+  refusal keeps everything and says to use `--local`, which deletes the
+  profile and its keys here only. A profile being removed cannot be made
+  active meanwhile; a pending node-key rotation is tried with its new key. New local API `DELETE /v1/profiles/{id}`
+  (`?local=true`). `meshctl login --new-account` now removes the profile it
+  created when pinning the server's key fails, instead of leaving it unused.
 - meshctl (device logout design S2b): `meshctl login --new-account [--name
   NAME]` adds a profile for the active profile's server, makes it active,
   pins the same control key and signs another account in as a new Device;

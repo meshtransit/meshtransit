@@ -116,6 +116,28 @@ func (c *Client) ActivateProfile(ctx context.Context, id string) (Profile, error
 	return response, nil
 }
 
+// RemoveProfile deletes an inactive profile and its keys. Core removes the
+// profile's Device first unless local is set.
+func (c *Client) RemoveProfile(ctx context.Context, id string, local bool) (ProfileRemoval, error) {
+	if !isProfileID(id) {
+		return ProfileRemoval{}, errors.New("localapi: invalid profile id")
+	}
+
+	response := ProfileRemoval{}
+	path := "/v1/profiles/" + id
+	if local {
+		path += "?local=true"
+	}
+	if err := c.do(ctx, http.MethodDelete, path, nil, http.StatusOK, &response); err != nil {
+		return ProfileRemoval{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return ProfileRemoval{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
 // ProbeControl verifies the active profile's HTTPS control-key endpoint.
 func (c *Client) ProbeControl(ctx context.Context) (ControlProbe, error) {
 	response := ControlProbe{}

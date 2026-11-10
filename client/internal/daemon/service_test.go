@@ -2621,10 +2621,16 @@ type fakeControl struct {
 	rotationMaterials   []controlplane.KeyMaterial
 	rotationResults     []controlplane.RegistrationResult
 	logoutMaterials     []controlplane.KeyMaterial
+	logoutURLs          []string
+	logoutOptions       []controlplane.RegisterOptions
 	logoutErr           error
-	signOutErr          error
-	signOutMaterials    []controlplane.KeyMaterial
-	rotateFunc          func(
+	// logoutErrs, when set, answer the Logout calls in turn before logoutErr.
+	logoutErrs []error
+	// logoutHook runs during each Logout, outside the lock.
+	logoutHook       func()
+	signOutErr       error
+	signOutMaterials []controlplane.KeyMaterial
+	rotateFunc       func(
 		context.Context,
 		[]byte,
 	) (controlplane.RegistrationResult, error)
@@ -2806,10 +2812,16 @@ func (f *fakeControl) Register(
 
 func (f *fakeControl) Logout(
 	_ context.Context,
-	_ string,
+	controlURL string,
 	material controlplane.KeyMaterial,
-	_ controlplane.RegisterOptions,
+	options controlplane.RegisterOptions,
 ) error {
+	f.mu.Lock()
+	hook := f.logoutHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logoutMaterials = append(f.logoutMaterials, controlplane.KeyMaterial{
@@ -2817,6 +2829,13 @@ func (f *fakeControl) Logout(
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
 		ControlPublicKey:  append([]byte(nil), material.ControlPublicKey...),
 	})
+	f.logoutURLs = append(f.logoutURLs, controlURL)
+	f.logoutOptions = append(f.logoutOptions, options)
+	if len(f.logoutErrs) > 0 {
+		err := f.logoutErrs[0]
+		f.logoutErrs = f.logoutErrs[1:]
+		return err
+	}
 
 	return f.logoutErr
 }

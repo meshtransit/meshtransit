@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -200,6 +201,40 @@ func (s *Store) Activate(ctx context.Context, id string) (Profile, error) {
 	s.state = next
 
 	return selected, nil
+}
+
+// Remove deletes the profile id from the persisted state. The active profile
+// is refused (ErrActive): meshd always has one profile to run.
+func (s *Store) Remove(ctx context.Context, id string) (Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return Profile{}, fmt.Errorf("removing profile: %w", err)
+	}
+	if !isProfileID(id) {
+		return Profile{}, ErrNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := slices.IndexFunc(s.state.Profiles, func(item Profile) bool { return item.ID == id })
+	if index < 0 {
+		return Profile{}, ErrNotFound
+	}
+	if s.state.ActiveProfileID == id {
+		return Profile{}, ErrActive
+	}
+	removed := s.state.Profiles[index]
+	next := cloneSnapshot(s.state)
+	next.Profiles = slices.Delete(next.Profiles, index, index+1)
+	if err := validateSnapshot(next); err != nil {
+		return Profile{}, fmt.Errorf("validating next profile state: %w", err)
+	}
+	if err := s.persist(ctx, next); err != nil {
+		return Profile{}, err
+	}
+	s.state = next
+
+	return removed, nil
 }
 
 // SetDisconnected persists whether meshd stays off the network (`meshctl

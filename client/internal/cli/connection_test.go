@@ -165,8 +165,21 @@ func TestRun_LoginNewAccountFailures(t *testing.T) {
 		Name: "Cloud 2",
 	}, trustErr: errors.New("control unreachable")}
 	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
-		strings.Join(client.activatedIDs, ",") != "p2,p1" || !strings.Contains(stderr.String(), "active again") {
-		t.Fatalf("exit %d, activated %v, stderr %q", code, client.activatedIDs, stderr.String())
+		strings.Join(client.activatedIDs, ",") != "p2,p1" || !strings.Contains(stderr.String(), "active again") ||
+		strings.Join(client.removedProfiles, ",") != "p2" || !client.removedLocal[0] ||
+		!strings.Contains(stderr.String(), "nothing was added") {
+		t.Fatalf("exit %d, activated %v, removed %v, stderr %q", code, client.activatedIDs, client.removedProfiles,
+			stderr.String())
+	}
+	// The unused profile cannot be dropped either: say how.
+	stderr.Reset()
+	client = &fakeClient{status: status, profiles: listing("registered"), created: localapi.Profile{
+		ID:   "p2",
+		Name: "Cloud 2",
+	}, trustErr: errors.New("control unreachable"), removeErr: errors.New("busy")}
+	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
+		!strings.Contains(stderr.String(), "meshctl profile remove p2") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 	stderr.Reset()
 	client = &fakeClient{status: status, profiles: listing("unregistered")}
@@ -196,5 +209,68 @@ func TestNextAccountName(t *testing.T) {
 		if got := nextAccountName(test.current, taken); got != test.want {
 			t.Errorf("nextAccountName(%q) = %q, want %q", test.current, got, test.want)
 		}
+	}
+}
+
+// Design §7: profile remove takes an id or a name, with --local before or
+// after it, and says what became of the Device.
+func TestRun_ProfileRemove(t *testing.T) {
+	t.Parallel()
+	profiles := localapi.Profiles{APIVersion: "v1", Profiles: []localapi.Profile{
+		{ID: "p1", Name: "Cloud", IsActive: true},
+		{ID: "p2", Name: "Cloud 2"},
+	}}
+	for _, test := range []struct {
+		args   []string
+		device string
+		local  bool
+		says   string
+	}{
+		{[]string{"profile", "remove", "p2"}, "removed", false, "and its device from the Network"},
+		{[]string{"profile", "remove", "cloud 2"}, "already_removed", false, "had already been removed"},
+		{[]string{"profile", "remove", "--local", "Cloud 2"}, "left", true, "an administrator removes it"},
+		{[]string{"profile", "remove", "Cloud 2", "--local"}, "left", true, "this machine only"},
+		{[]string{"profile", "remove", "p2"}, "none", false, "it had no device"},
+		{[]string{"profile", "remove", "p2"}, "pending", false, "do not approve that link"},
+		// After "--" nothing is a flag.
+		{[]string{"profile", "remove", "--local", "--", "p2"}, "left", true, "this machine only"},
+	} {
+		var stdout, stderr bytes.Buffer
+		client := &fakeClient{profiles: profiles, removal: localapi.ProfileRemoval{
+			APIVersion: "v1", Profile: localapi.Profile{ID: "p2", Name: "Cloud 2"}, Device: test.device,
+		}}
+		if code := Run(t.Context(), test.args, &stdout, &stderr, testOptions(client)); code != 0 ||
+			strings.Join(client.removedProfiles, ",") != "p2" || client.removedLocal[0] != test.local ||
+			!strings.Contains(stdout.String(), test.says) {
+			t.Fatalf("%v: exit %d, removed %v %v, stdout %q, stderr %q", test.args, code, client.removedProfiles,
+				client.removedLocal, stdout.String(), stderr.String())
+		}
+	}
+	for _, args := range [][]string{
+		{"profile", "remove"},
+		{"profile", "remove", "p1", "p2"},
+		{"profile", "remove", "--force", "p2"},
+		{"profile", "remove", "--", "p2", "--local"},
+	} {
+		var stdout, stderr bytes.Buffer
+		client := &fakeClient{profiles: profiles}
+		if code := Run(t.Context(), args, &stdout, &stderr, testOptions(client)); code != 2 ||
+			len(client.removedProfiles) != 0 {
+			t.Fatalf("%v: exit %d, removed %v", args, code, client.removedProfiles)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	client := &fakeClient{profiles: profiles}
+	if code := Run(t.Context(), []string{"profile", "remove", "nope"}, &stdout, &stderr, testOptions(client)); code != 1 ||
+		len(client.removedProfiles) != 0 || !strings.Contains(stderr.String(), "no profile") {
+		t.Fatalf("unknown profile: exit %d, stderr %q", code, stderr.String())
+	}
+	stderr.Reset()
+	client = &fakeClient{profiles: profiles, removeErr: &localapi.APIError{
+		StatusCode: http.StatusMethodNotAllowed, Code: "method_not_allowed", Message: "method not allowed",
+	}}
+	if code := Run(t.Context(), []string{"profile", "remove", "p2"}, &stdout, &stderr, testOptions(client)); code != 1 ||
+		!strings.Contains(stderr.String(), "update it first") {
+		t.Fatalf("older meshd: exit %d, stderr %q", code, stderr.String())
 	}
 }

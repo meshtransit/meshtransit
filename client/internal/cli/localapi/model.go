@@ -343,6 +343,14 @@ type RuntimeStatus struct {
 	GCCycles        uint32 `json:"gc_cycles"`
 }
 
+// ProfileRemoval reports a removed profile and what became of its Device:
+// removed, already_removed, none, pending or left (--local).
+type ProfileRemoval struct {
+	APIVersion string  `json:"api_version"`
+	Profile    Profile `json:"profile"`
+	Device     string  `json:"device"`
+}
+
 // Profile describes one isolated control-plane identity.
 type Profile struct {
 	ID         string    `json:"id"`

@@ -959,3 +959,63 @@ func TestStore_SignedOut(t *testing.T) {
 		t.Fatalf("a record not signed out must not write the field: %s, %v", encoded, err)
 	}
 }
+
+func TestStore_Delete(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.November, 10, 1, 2, 3, 0, time.UTC)
+	dir := t.TempDir()
+	store, err := openWith(dir, func() time.Time { return now }, testProtector(t, 0x11))
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Create(t.Context(), testRecord(t, now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), "not-a-profile"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete(invalid id) = %v, want ErrNotFound", err)
+	}
+	if err := store.Delete(t.Context(), testProfileID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := store.Get(t.Context(), testProfileID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get() after Delete = %v, want ErrNotFound", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, identityDirName, recordFileName(testProfileID))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the record file must be gone: %v", err)
+	}
+	if err := store.Delete(t.Context(), testProfileID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete() twice = %v, want ErrNotFound", err)
+	}
+	// Removed, the profile can enroll afresh under the same id.
+	if err := store.Create(t.Context(), testRecord(t, now)); err != nil {
+		t.Fatalf("Create() after Delete error = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := store.Delete(cancelled, testProfileID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Delete(cancelled) = %v, want context.Canceled", err)
+	}
+}
+
+func TestStore_DeleteRefusesAMirroredStore(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.November, 10, 1, 2, 3, 0, time.UTC)
+	hook := func(context.Context, string, []byte) error { return nil }
+	store, err := openWith(t.TempDir(), func() time.Time { return now }, testProtector(t, 0x12), WithPersistHook(hook))
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Create(t.Context(), testRecord(t, now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), testProfileID); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Delete() on a mirrored store = %v, want ErrUnsupported", err)
+	}
+	if _, err := store.Get(t.Context(), testProfileID); err != nil {
+		t.Fatalf("the record must stay: %v", err)
+	}
+}
