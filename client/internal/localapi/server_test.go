@@ -698,6 +698,10 @@ func (fakeProber) Logout(context.Context, string, controlplane.KeyMaterial, cont
 	return nil
 }
 
+func (fakeProber) SignOut(context.Context, string, controlplane.KeyMaterial, controlplane.RegisterOptions) error {
+	return nil
+}
+
 func (fakeProber) StreamNetmap(
 	ctx context.Context,
 	_ string,
@@ -929,5 +933,30 @@ func TestServer_RefusedLogoutSaysTheKeysWereKept(t *testing.T) {
 		!strings.Contains(recorder.Body.String(), "kept") {
 		t.Fatalf("refused logout = %d %s, want 409 logout_refused saying the keys were kept",
 			recorder.Code, recorder.Body.String())
+	}
+}
+
+// Schema 283: sign-out refusals say what to do instead.
+func TestServer_SignOutRefusalsSayWhatToDo(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{fmt.Errorf("%w: old server", daemon.ErrSignOutUnsupported), "sign_out_unsupported"},
+		{fmt.Errorf("%w: Workspace", daemon.ErrSignOutNotPermitted), "sign_out_not_permitted"},
+	} {
+		recorder := httptest.NewRecorder()
+		server.writeServiceError(recorder, test.err)
+		if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), test.code) ||
+			!strings.Contains(recorder.Body.String(), "logout --remove") {
+			t.Fatalf("%v = %d %s", test.err, recorder.Code, recorder.Body.String())
+		}
+	}
+	if recorder := performRequest(t, server, http.MethodGet, "/v1/sign-out", "", nil); recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/sign-out = %d", recorder.Code)
 	}
 }

@@ -48,6 +48,9 @@ type persistedRecord struct {
 	NextControlKeyFingerprint string `json:"next_control_key_fingerprint,omitempty"`
 	PendingAuthURL            string `json:"pending_auth_url,omitempty"`
 	IsRegistered              bool   `json:"is_registered"`
+	// Written only while the Device is signed out (schema 283): older builds
+	// refuse the unknown field, so a downgrade then needs logout --remove.
+	SignedOut bool `json:"signed_out,omitzero"`
 	// A Kubernetes gateway's state (mtcp-v1 §6.6–6.8), written only by
 	// meshgw: older builds refuse unknown fields, and a gateway is never
 	// downgraded.
@@ -331,6 +334,44 @@ func (s *Store) SetRegistration(
 	}
 	record.pendingAuthURL = pendingAuthURL
 	record.isRegistered = isRegistered
+	// Signed in again: no longer signed out. A pending browser login keeps
+	// the sign-out until Core authorizes the Device.
+	record.signedOut = record.signedOut && !isRegistered
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
+// SetSignedOut records that Core signed the Device out and kept it: the
+// keys stay, the profile is no longer registered, and any pending browser
+// login is dropped.
+func (s *Store) SetSignedOut(ctx context.Context, profileID string) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("updating identity sign-out: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	record.pendingAuthURL = ""
+	record.isRegistered = false
+	record.signedOut = true
 	record.updatedAt = s.clock().UTC()
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
@@ -377,6 +418,7 @@ func (s *Store) ReplaceCredentials(
 	record.pendingNodePrivateKey = ""
 	record.pendingAuthURL = ""
 	record.isRegistered = false
+	record.signedOut = false
 	record.gateway = false
 	record.pendingMachinePrivateKeys = nil
 	record.lastKeyRotationAt = time.Time{}
@@ -941,6 +983,7 @@ func sameRecord(left, right Record) bool {
 		left.nextControlKeyFingerprint == right.nextControlKeyFingerprint &&
 		left.pendingAuthURL == right.pendingAuthURL &&
 		left.isRegistered == right.isRegistered &&
+		left.signedOut == right.signedOut &&
 		left.gateway == right.gateway &&
 		slices.Equal(left.pendingMachinePrivateKeys, right.pendingMachinePrivateKeys) &&
 		left.lastKeyRotationAt.Equal(right.lastKeyRotationAt) &&
@@ -961,6 +1004,7 @@ func toPersisted(record Record) persistedRecord {
 		NextControlKeyFingerprint: record.nextControlKeyFingerprint,
 		PendingAuthURL:            record.pendingAuthURL,
 		IsRegistered:              record.isRegistered,
+		SignedOut:                 record.signedOut,
 		Gateway:                   record.gateway,
 		PendingMachinePrivateKeys: slices.Clone(record.pendingMachinePrivateKeys),
 		LastKeyRotationAt:         record.lastKeyRotationAt,
@@ -981,6 +1025,7 @@ func fromPersisted(record persistedRecord) Record {
 		nextControlKeyFingerprint: record.NextControlKeyFingerprint,
 		pendingAuthURL:            record.PendingAuthURL,
 		isRegistered:              record.IsRegistered,
+		signedOut:                 record.SignedOut,
 		gateway:                   record.Gateway,
 		pendingMachinePrivateKeys: slices.Clone(record.PendingMachinePrivateKeys),
 		lastKeyRotationAt:         record.LastKeyRotationAt,

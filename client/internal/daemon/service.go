@@ -84,6 +84,9 @@ const (
 	RegistrationPending = "authorization_required"
 	// RegistrationRegistered means the last registration response authorized the node.
 	RegistrationRegistered = "registered"
+	// RegistrationSignedOut means Core signed the Device out and kept it:
+	// meshctl login signs it back in (schema 283).
+	RegistrationSignedOut = "signed_out"
 	// ControlSessionInactive means no registered active profile can be synchronized.
 	ControlSessionInactive = "inactive"
 	// ControlSessionConnecting means a registered profile is opening its map stream.
@@ -267,6 +270,7 @@ type controlProber interface {
 		controlplane.RegisterOptions,
 	) (controlplane.RegistrationResult, error)
 	Logout(context.Context, string, controlplane.KeyMaterial, controlplane.RegisterOptions) error
+	SignOut(context.Context, string, controlplane.KeyMaterial, controlplane.RegisterOptions) error
 	StreamNetmap(
 		context.Context,
 		string,
@@ -2544,6 +2548,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 				registration = RegistrationRegistered
 			case record.HasPendingAuth():
 				registration = RegistrationPending
+			case record.SignedOut():
+				registration = RegistrationSignedOut
 			}
 		case errors.Is(err, identity.ErrNotFound):
 		default:
@@ -2714,6 +2720,15 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 		return Login{}, err
 	}
 	defer release()
+	// Only its owner signing in brings a signed-out Device back; Core
+	// refuses an enrollment key for it (schema 283).
+	if authKey != "" {
+		if active, err := s.profiles.Active(ctx); err == nil {
+			if record, err := s.identities.Get(ctx, active.ID); err == nil && record.SignedOut() {
+				return Login{}, ErrSignedOutNeedsSignIn
+			}
+		}
+	}
 
 	return s.register(ctx, authKey, "")
 }

@@ -97,7 +97,7 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl login complete`
 - `meshctl identity rotate-node-key`
 - `meshctl down`
-- `meshctl logout`
+- `meshctl logout [--remove]` (`deregister` is `logout --remove`)
 - `meshctl netcheck`
 - `meshctl version`
 - `meshctl doctor control`

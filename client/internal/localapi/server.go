@@ -44,6 +44,7 @@ type service interface {
 	Down(context.Context) (daemon.ConnectionChange, error)
 	Up(context.Context) (daemon.ConnectionChange, error)
 	Logout(context.Context) (daemon.LogoutResult, error)
+	SignOut(context.Context) (daemon.LogoutResult, error)
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
 	ApproveExitNodes(context.Context, []string) (daemon.ExitApproval, error)
 	CheckCaptiveWindow()
@@ -175,6 +176,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/down", s.handleDown)
 	mux.HandleFunc("/v1/up", s.handleUp)
 	mux.HandleFunc("/v1/logout", s.handleLogout)
+	mux.HandleFunc("/v1/sign-out", s.handleSignOut)
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 	mux.HandleFunc("/v1/exit/approve", s.handleExitApprove)
 	mux.HandleFunc("/v1/exit/captive/check", s.handleCaptiveCheck)
@@ -334,6 +336,27 @@ func (s *Server) handleLogout(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	result, err := s.service.Logout(request.Context())
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, logoutResponse{
+		APIVersion:     apiVersion,
+		ProfileID:      result.ProfileID,
+		State:          result.State,
+		AlreadyRemoved: result.AlreadyRemoved,
+	})
+}
+
+// handleSignOut signs the Device out and keeps it (meshctl logout): the
+// profile keeps its keys and meshctl login signs the same Device back in.
+// /v1/logout still removes it (meshctl logout --remove).
+func (s *Server) handleSignOut(writer http.ResponseWriter, request *http.Request) {
+	if !s.acceptEmptyPost(writer, request) {
+		return
+	}
+	result, err := s.service.SignOut(request.Context())
 	if err != nil {
 		s.writeServiceError(writer, err)
 
@@ -979,6 +1002,17 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		errors.Is(err, controlplane.ErrRegistrationTemporary):
 		s.logger.Warn("logout is temporarily unavailable", "error", err)
 		s.writeError(writer, http.StatusServiceUnavailable, "logout_unavailable", "logout is temporarily unavailable; try again")
+	case errors.Is(err, daemon.ErrSignedOutNeedsSignIn):
+		s.writeError(writer, http.StatusConflict, "signed_out",
+			"this device is signed out: run meshctl login without a key to sign back in, "+
+				"or meshctl logout --remove to remove it")
+	case errors.Is(err, daemon.ErrSignOutUnsupported):
+		s.writeError(writer, http.StatusConflict, "sign_out_unsupported",
+			"this server removes the device when it signs out; run meshctl logout --remove to remove it")
+	case errors.Is(err, daemon.ErrSignOutNotPermitted):
+		s.writeError(writer, http.StatusConflict, "sign_out_not_permitted",
+			"this device belongs to the Workspace and cannot sign out; remove it with meshctl logout --remove, "+
+				"or ask an administrator")
 	case errors.Is(err, daemon.ErrLogout) &&
 		errors.Is(err, controlplane.ErrDeviceNotAuthorized):
 		// The keys stay (TD-CLI-100): say so, and what to do.

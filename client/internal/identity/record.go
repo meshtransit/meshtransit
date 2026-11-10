@@ -64,6 +64,9 @@ type Record struct {
 	nextControlKeyFingerprint string
 	pendingAuthURL            string
 	isRegistered              bool
+	// signedOut: Core signed the Device out and kept it (schema 283); the
+	// keys stay, so login brings it back and logout --remove still removes it.
+	signedOut bool
 	// gateway marks a Kubernetes gateway replica; pendingMachinePrivateKeys
 	// are machine keys staged for a rotation, newest first, never sent
 	// twice; lastKeyRotationAt is when the last one was staged.
@@ -133,6 +136,15 @@ func (r Record) PendingAuthURL() string { return r.pendingAuthURL }
 
 // IsRegistered reports whether the last registration response authorized the node.
 func (r Record) IsRegistered() bool { return r.isRegistered }
+
+// SignedOut reports a Device Core signed out and kept: its keys are still
+// the Device's, though the profile is not registered.
+func (r Record) SignedOut() bool { return r.signedOut }
+
+func (r Record) withSignedOut(signedOut bool) Record {
+	r.signedOut = signedOut
+	return r
+}
 
 // HasPendingAuth reports whether browser authorization still needs completion.
 func (r Record) HasPendingAuth() bool { return r.pendingAuthURL != "" }
@@ -216,6 +228,9 @@ func validateRecord(record Record) error {
 			parsed.User != nil || parsed.Fragment != "" {
 			return fmt.Errorf("%w: pending authorization url is invalid", ErrInvalid)
 		}
+	}
+	if record.signedOut && record.isRegistered {
+		return errors.New("identity record cannot be signed out and registered")
 	}
 	if record.isRegistered && record.pendingAuthURL != "" {
 		return fmt.Errorf("%w: registered identity cannot have pending authorization", ErrInvalid)

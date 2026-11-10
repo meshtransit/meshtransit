@@ -294,8 +294,11 @@ Put `--json` before the command for JSON output: `meshctl --json status`. Common
 
 - `meshctl down` disconnects and stays disconnected across restarts;
   `meshctl up` reconnects.
-- `meshctl logout` removes the Device in Core and replaces the local keys; the
-  next `meshctl up` registers a new Device.
+- `meshctl logout` signs out and keeps the Device in Core (its address, name,
+  groups and rules) when Core supports it; `meshctl login` signs the same
+  Device back in. A Device left signed out for 30 days is removed.
+- `meshctl logout --remove` (or `meshctl deregister`) removes the Device in Core
+  and replaces the local keys; the next `meshctl up` registers a new Device.
 - `sudo apt-get remove meshd meshctl` stops the services and keeps the identity,
   the encrypted credential and `/etc/meshd`; reinstalling reconnects the same
   Device.
@@ -304,7 +307,7 @@ Put `--json` before the command for JSON output: `meshctl --json status`. Common
   remove systemd's host key, which other services may use.
 
 Removing the package does not remove the Device from its Network: run
-`meshctl logout` first, or revoke it in the Console. Maintainer scripts honor
+`meshctl logout --remove` first, or revoke it in the Console. Maintainer scripts honor
 `DPKG_ROOT`. To keep a node's identity across a purge, back up `/var/lib/meshd`
 with the matching credential to secret storage; the credential only decrypts
 on the same host, and one state directory must never run on two machines.

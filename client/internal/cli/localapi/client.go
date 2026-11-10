@@ -246,6 +246,19 @@ func (c *Client) Logout(ctx context.Context) (Logout, error) {
 	return response, nil
 }
 
+// SignOut signs the active profile's Device out and keeps it.
+func (c *Client) SignOut(ctx context.Context) (Logout, error) {
+	response := Logout{}
+	if err := c.do(ctx, http.MethodPost, "/v1/sign-out", nil, http.StatusOK, &response); err != nil {
+		return Logout{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return Logout{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
 // RotateNodeKey requests one crash-safe Node-key transition for the active
 // registered profile. Private key material remains owned by meshd.
 func (c *Client) RotateNodeKey(ctx context.Context) (NodeKeyRotation, error) {

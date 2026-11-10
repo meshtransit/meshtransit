@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshd and meshctl (device logout design S2a): `meshctl logout` signs out
+  and keeps the Device when Core offers `device.signout1` (schema 283): the
+  profile keeps its keys, is no longer registered (status `signed_out`), and
+  `meshctl login` signs the same Device back in, with its address, name and
+  rules. `meshctl logout --remove` (or `meshctl deregister`) removes it as
+  before, also once signed out. On an older Core meshctl refuses to sign out
+  and says to use `--remove`; an enrollment key on a signed-out machine is
+  refused with the same hint. New local API `POST /v1/sign-out`;
+  `/v1/logout` still removes. The identity record gains `signed_out`, written
+  only while signed out: sign in, or run `meshctl logout --remove`, before
+  downgrading meshd. The uninstall steps now say `meshctl logout --remove`.
 - Core (schema 284, device logout design S1b): a Device signed out for 30
   days is removed. With `MESHTRANSIT_SIGNED_OUT_DEVICE_WORKER_ENABLED=true`
   (worker role) the worker revokes, one Device a step, every Device whose

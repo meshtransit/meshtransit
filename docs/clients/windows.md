@@ -201,4 +201,4 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\MeshTransit\uninstall
 The script stops and removes the service, the NRPT rule and the `PATH` entry,
 and deletes the installed files (it leaves itself, so the folder remains).
 `-Purge` also deletes `C:\ProgramData\MeshTransit` and the MeshTransit Users
-group. Run `meshctl logout` first to remove the Device from its Network.
+group. Run `meshctl logout --remove` first to remove the Device from its Network.

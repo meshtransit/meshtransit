@@ -43,6 +43,10 @@ func (f *upFakeClient) Logout(context.Context) (localapi.Logout, error) {
 	return localapi.Logout{APIVersion: "v1", State: "not_registered"}, nil
 }
 
+func (f *upFakeClient) SignOut(context.Context) (localapi.Logout, error) {
+	return localapi.Logout{APIVersion: "v1", State: "not_registered"}, nil
+}
+
 func (f *upFakeClient) Status(context.Context) (localapi.Status, error) {
 	status := localapi.Status{APIVersion: "v1", Registration: f.registration, NetworkName: f.network}
 	for _, profile := range f.profiles {

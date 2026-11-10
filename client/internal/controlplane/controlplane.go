@@ -92,6 +92,12 @@ var (
 	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
 	// it keeps its identity and retries until an administrator resumes it.
 	ErrNetmapAuthorityPaused = errors.New("control: map authority paused")
+	// ErrSignOutUnsupported means Core cannot sign a Device out and keep it
+	// (no device.signout1): only removing it is possible. Nothing was sent.
+	ErrSignOutUnsupported = errors.New("control: this server removes the Device when it signs out")
+	// ErrSignOutNotPermitted means Core refused to sign this Device out and
+	// keep it: a Workspace Device is removed, or left to an administrator.
+	ErrSignOutNotPermitted = errors.New("control: this Device cannot sign out")
 	// ErrDeviceRemoved means Core proved the profile's current keys were
 	// removed with their Device (Lifecycle REVOKED, mtcp-v1 §10): the node
 	// may erase them.

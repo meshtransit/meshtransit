@@ -901,3 +901,61 @@ func TestStore_ReplaceCredentialsKeepsTheControlPin(t *testing.T) {
 		t.Fatalf("ReplaceCredentials(missing) error = %v, want ErrNotFound", err)
 	}
 }
+
+// Schema 283: a sign-out keeps the keys and survives a reopen; a pending
+// browser login keeps it, an authorized one ends it, new keys end it, and
+// the field is written only while signed out.
+func TestStore_SignedOut(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.November, 10, 1, 2, 3, 0, time.UTC)
+	dir := t.TempDir()
+	open := func() *Store {
+		t.Helper()
+		store, err := openWith(dir, func() time.Time { return now }, testProtector(t, 0x10))
+		if err != nil {
+			t.Fatalf("openWith() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	}
+	store := open()
+	record := testRecord(t, now)
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetRegistration(t.Context(), testProfileID, "", true); err != nil {
+		t.Fatal(err)
+	}
+	signedOut, err := store.SetSignedOut(t.Context(), testProfileID)
+	if err != nil || !signedOut.SignedOut() || signedOut.IsRegistered() ||
+		!bytes.Equal(signedOut.Material().NodePrivateKey, record.Material().NodePrivateKey) {
+		t.Fatalf("SetSignedOut() = %s, %v", signedOut, err)
+	}
+	reopened, err := open().Get(t.Context(), testProfileID)
+	if err != nil || !reopened.SignedOut() {
+		t.Fatalf("after reopen: %s, %v", reopened, err)
+	}
+	if pending, err := store.SetRegistration(t.Context(), testProfileID, "https://control.example.com/register/x",
+		false); err != nil || !pending.SignedOut() {
+		t.Fatalf("pending login: %s, %v", pending, err)
+	}
+	if signedIn, err := store.SetRegistration(t.Context(), testProfileID, "", true); err != nil || signedIn.SignedOut() {
+		t.Fatalf("authorized login: %s, %v", signedIn, err)
+	}
+	if _, err := store.SetSignedOut(t.Context(), testProfileID); err != nil {
+		t.Fatal(err)
+	}
+	machine, node := bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+	if replaced, err := store.ReplaceCredentials(t.Context(), testProfileID, machine, node); err != nil ||
+		replaced.SignedOut() {
+		t.Fatalf("new keys: %s, %v", replaced, err)
+	}
+	if persisted := toPersisted(signedOut); !persisted.SignedOut {
+		t.Fatal("a signed-out record must persist the flag")
+	}
+	if encoded, err := json.Marshal(toPersisted(reopened.withSignedOut(false))); err != nil ||
+		strings.Contains(string(encoded), "signed_out") {
+		t.Fatalf("a record not signed out must not write the field: %s, %v", encoded, err)
+	}
+}

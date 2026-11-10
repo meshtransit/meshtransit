@@ -786,23 +786,24 @@ func TestRun_UsageError(t *testing.T) {
 }
 
 type fakeClient struct {
-	dnsQuery        localapi.DNSQuery
-	status          localapi.Status
-	profiles        localapi.Profiles
-	created         localapi.Profile
-	activated       localapi.Profile
-	probe           localapi.ControlProbe
-	trusted         localapi.ControlTrust
-	login           localapi.Login
-	completedLogin  localapi.Login
-	rotation        localapi.NodeKeyRotation
-	connection      localapi.Connection
-	logout          localapi.Logout
-	netcheck        localapi.Netcheck
-	completeLogin   func(context.Context) (localapi.Login, error)
-	receivedAuthKey string
-	completeCalls   int
-	err             error
+	removed, signedOut bool
+	dnsQuery           localapi.DNSQuery
+	status             localapi.Status
+	profiles           localapi.Profiles
+	created            localapi.Profile
+	activated          localapi.Profile
+	probe              localapi.ControlProbe
+	trusted            localapi.ControlTrust
+	login              localapi.Login
+	completedLogin     localapi.Login
+	rotation           localapi.NodeKeyRotation
+	connection         localapi.Connection
+	logout             localapi.Logout
+	netcheck           localapi.Netcheck
+	completeLogin      func(context.Context) (localapi.Login, error)
+	receivedAuthKey    string
+	completeCalls      int
+	err                error
 }
 
 func (f *fakeClient) RefreshNAT(_ context.Context) (localapi.Netcheck, error) {
@@ -868,6 +869,12 @@ func (f *fakeClient) Up(_ context.Context) (localapi.Connection, error) {
 }
 
 func (f *fakeClient) Logout(_ context.Context) (localapi.Logout, error) {
+	f.removed = true
+	return f.logout, f.err
+}
+
+func (f *fakeClient) SignOut(_ context.Context) (localapi.Logout, error) {
+	f.signedOut = true
 	return f.logout, f.err
 }
 

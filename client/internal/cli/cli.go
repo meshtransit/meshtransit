@@ -46,6 +46,7 @@ type DaemonClient interface {
 	Down(context.Context) (localapi.Connection, error)
 	Up(context.Context) (localapi.Connection, error)
 	Logout(context.Context) (localapi.Logout, error)
+	SignOut(context.Context) (localapi.Logout, error)
 	RefreshNAT(context.Context) (localapi.Netcheck, error)
 	ApproveExitNodes(context.Context, []string) (localapi.ExitApproval, error)
 	CheckCaptiveWindow(context.Context) error
@@ -157,7 +158,7 @@ func Run(
 	case "netcheck":
 		// A classification waits for STUN answers; never cut it short.
 		timeout = max(timeout, netcheckTimeout)
-	case "logout", "down":
+	case "logout", "deregister", "down":
 		// meshd first stops the control session; logout then waits for Core.
 		timeout = max(timeout, connectionTimeout)
 	case "dns":
@@ -200,6 +201,14 @@ func Run(
 		return runDown(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "logout":
 		return runLogout(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "deregister":
+		// The same as logout --remove (NetBird's name for it).
+		if len(commandArgs) != 1 {
+			_, _ = fmt.Fprintln(stderr, "usage: meshctl deregister")
+
+			return 2
+		}
+		return runLogout(ctx, []string{"--remove"}, stdout, stderr, global.isJSON, client)
 	case "kube":
 		return runKube(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "exit":
@@ -1203,7 +1212,8 @@ func writeUsage(writer io.Writer) {
 Commands:
   up [--server U --fingerprint SHA256]    Connect this machine (MeshTransit Cloud by default)
   down                                    Disconnect this machine and stay off until up
-  logout                                  Remove this machine from its Network; up enrolls it again
+  logout [--remove]                       Sign out and keep this machine's device; login brings it back
+                                          (--remove, or deregister: remove it; up enrolls a new one)
   status                                  Show daemon and data-plane status
   profile list                            List configured profiles
   profile create --name N --control-url U Create an isolated profile

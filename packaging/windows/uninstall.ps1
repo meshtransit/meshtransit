@@ -2,7 +2,7 @@
 #   powershell -ExecutionPolicy Bypass -File "C:\Program Files\MeshTransit\uninstall.ps1" [-Purge]
 #
 # Keeps C:\ProgramData\MeshTransit (identity key, state, logs) unless -Purge
-# is given; run meshctl logout first to remove this machine from its Network.
+# is given; run meshctl logout --remove first to remove this machine from its Network.
 param([switch]$Purge)
 $ErrorActionPreference = 'Stop'
 

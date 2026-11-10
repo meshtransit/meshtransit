@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/shared/key"
@@ -361,5 +363,126 @@ func TestLogoutCarriesTheNodeKeyProof(t *testing.T) {
 	m, ok := logout.Load().(*mtcpv1.Logout)
 	if !ok || len(m.GetNodeKeyProof()) != 32 {
 		t.Fatalf("Logout = %v, want a 32-byte node key proof", logout.Load())
+	}
+}
+
+// Schema 283: SignOut keeps the Device with keep_device once Core offers
+// device.signout1, and asks nothing of a Core that would remove it.
+func TestSignOut(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		offered bool
+		answer  proto.Message
+		want    error
+		sent    bool
+	}{
+		{name: "kept", offered: true, answer: &mtcpv1.LogoutResponse{Outcome: mtcpv1.LogoutResponse_SIGNED_OUT}, sent: true},
+		{
+			name: "removed instead", offered: true, answer: &mtcpv1.LogoutResponse{Outcome: mtcpv1.LogoutResponse_REMOVED},
+			want: controlplane.ErrDeviceRemoved, sent: true,
+		},
+		{
+			name: "Workspace Device", offered: true, answer: &mtcpv1.Error{Code: mtcpv1.Error_NOT_PERMITTED},
+			want: controlplane.ErrSignOutNotPermitted, sent: true,
+		},
+		{
+			name: "refused keys", offered: true, answer: &mtcpv1.Error{Code: mtcpv1.Error_NOT_AUTHORIZED},
+			want: controlplane.ErrDeviceNotAuthorized, sent: true,
+		},
+		{name: "older Core", want: controlplane.ErrSignOutUnsupported},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			core := newRegistrationCore(t)
+			trust := core.trust(t)
+			var logout atomic.Value
+			core.set(func(fake *fakeCore) {
+				if test.offered {
+					fake.extra = []string{signOutCapability}
+				}
+				fake.serve = func(s *coreSession) {
+					// An expired Device is told EXPIRED first: it is not the answer.
+					_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_EXPIRED})
+					for {
+						_, message, err := s.receive(5 * time.Second)
+						if err != nil {
+							return
+						}
+						if m, ok := message.(*mtcpv1.Logout); ok {
+							logout.Store(m)
+							switch answer := test.answer.(type) {
+							case *mtcpv1.LogoutResponse:
+								_ = s.send(sharedmtcp.MessageLogoutResponse, answer)
+							case *mtcpv1.Error:
+								_ = s.send(sharedmtcp.MessageError, answer)
+							}
+							return
+						}
+					}
+				}
+			})
+			options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint}
+			err := core.client().SignOut(t.Context(), core.origin(), trust.Material, options)
+			if (test.want == nil) != (err == nil) || (test.want != nil && !errors.Is(err, test.want)) {
+				t.Fatalf("SignOut() = %v, want %v", err, test.want)
+			}
+			m, sent := logout.Load().(*mtcpv1.Logout)
+			if sent != test.sent || (sent && !m.GetKeepDevice()) {
+				t.Fatalf("Logout sent %t (%v), want %t with keep_device", sent, m, test.sent)
+			}
+		})
+	}
+}
+
+// With device.signout1 a removal is answered LogoutResponse{REMOVED}.
+func TestLogoutWithASignOutCore(t *testing.T) {
+	t.Parallel()
+	core := newRegistrationCore(t)
+	trust := core.trust(t)
+	core.set(func(fake *fakeCore) {
+		fake.extra = []string{signOutCapability}
+		fake.serve = func(s *coreSession) {
+			for {
+				_, message, err := s.receive(5 * time.Second)
+				if err != nil {
+					return
+				}
+				if m, ok := message.(*mtcpv1.Logout); ok && !m.GetKeepDevice() {
+					_ = s.send(sharedmtcp.MessageLogoutResponse,
+						&mtcpv1.LogoutResponse{Outcome: mtcpv1.LogoutResponse_REMOVED})
+					return
+				}
+			}
+		}
+	})
+	options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint}
+	if err := core.client().Logout(t.Context(), core.origin(), trust.Material, options); err != nil {
+		t.Fatalf("Logout() = %v", err)
+	}
+}
+
+// The map stream may tell REVOKED for these keys before Logout is read, and
+// end the session: that is the answer, capability or not.
+func TestLogoutTakesAnEarlyRevoked(t *testing.T) {
+	t.Parallel()
+	for _, keep := range []bool{false, true} {
+		core := newRegistrationCore(t)
+		trust := core.trust(t)
+		core.set(func(fake *fakeCore) {
+			fake.extra = []string{signOutCapability}
+			fake.serve = func(s *coreSession) {
+				_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+			}
+		})
+		options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint}
+		call := core.client().Logout
+		if keep {
+			call = core.client().SignOut
+		}
+		if err := call(t.Context(), core.origin(), trust.Material, options); !errors.Is(err,
+			controlplane.ErrDeviceRemoved) {
+			t.Fatalf("keep %t: error = %v, want ErrDeviceRemoved", keep, err)
+		}
 	}
 }

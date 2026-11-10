@@ -271,3 +271,99 @@ func drainSyncSignal(service *Service) {
 	default:
 	}
 }
+
+// Schema 283: signing out keeps the profile's keys, so login brings the
+// same Device back, and leaves it unregistered, so meshd stays off.
+func TestService_SignOutKeepsTheKeys(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	startRegisteredRun(t, service, control)
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+
+	result, err := service.SignOut(t.Context())
+	if err != nil || result.State != LogoutSignedOut {
+		t.Fatalf("SignOut() = %+v, %v", result, err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	material := after.Material()
+	defer clearIdentityMaterial(material)
+	if after.IsRegistered() || !bytes.Equal(material.MachinePrivateKey, oldMaterial.MachinePrivateKey) ||
+		!bytes.Equal(material.NodePrivateKey, oldMaterial.NodePrivateKey) {
+		t.Fatalf("after sign out: registered %t, keys kept %t", after.IsRegistered(),
+			bytes.Equal(material.NodePrivateKey, oldMaterial.NodePrivateKey))
+	}
+	control.mu.Lock()
+	signOuts, logouts := len(control.signOutMaterials), len(control.logoutMaterials)
+	control.mu.Unlock()
+	if signOuts != 1 || logouts != 0 {
+		t.Fatalf("sign outs %d, logouts %d, want one sign out", signOuts, logouts)
+	}
+}
+
+// A server without device.signout1 would remove the Device: nothing changes.
+func TestService_SignOutOnAnOlderServerChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	startRegisteredRun(t, service, control)
+	control.mu.Lock()
+	control.signOutErr = controlplane.ErrSignOutUnsupported
+	control.mu.Unlock()
+
+	if _, err := service.SignOut(t.Context()); !errors.Is(err, ErrSignOutUnsupported) {
+		t.Fatalf("SignOut() error = %v, want ErrSignOutUnsupported", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil || !after.IsRegistered() {
+		t.Fatalf("after a refused sign out: registered %t, %v", after.IsRegistered(), err)
+	}
+}
+
+// A signed-out Device still exists: removing it goes to Core and resets the
+// keys, signing out again asks nothing, status says so, and a key cannot
+// bring it back.
+func TestService_SignedOutDeviceCanStillBeRemoved(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	startRegisteredRun(t, service, control)
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+	if _, err := service.SignOut(t.Context()); err != nil {
+		t.Fatalf("SignOut() error = %v", err)
+	}
+	if again, err := service.SignOut(t.Context()); err != nil || again.State != LogoutSignedOut {
+		t.Fatalf("second SignOut() = %+v, %v", again, err)
+	}
+	status, err := service.Status(t.Context())
+	if err != nil || status.Registration != RegistrationSignedOut {
+		t.Fatalf("status registration = %q, %v", status.Registration, err)
+	}
+	if _, err := service.StartLogin(t.Context(), "mtc1.key.secret"); !errors.Is(err, ErrSignedOutNeedsSignIn) {
+		t.Fatalf("StartLogin(key) error = %v, want ErrSignedOutNeedsSignIn", err)
+	}
+	result, err := service.Logout(t.Context())
+	if err != nil || result.State != LogoutCompleted || result.AlreadyRemoved {
+		t.Fatalf("Logout() after sign out = %+v, %v", result, err)
+	}
+	control.mu.Lock()
+	signOuts, logouts := len(control.signOutMaterials), len(control.logoutMaterials)
+	control.mu.Unlock()
+	if signOuts != 1 || logouts != 1 {
+		t.Fatalf("Core asked %d sign outs and %d logouts, want one of each", signOuts, logouts)
+	}
+	assertCredentialsReplaced(t, identities, profileID, oldMaterial.MachinePrivateKey, oldMaterial.NodePrivateKey)
+}

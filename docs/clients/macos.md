@@ -174,4 +174,4 @@ sudo ./uninstall.sh --purge    # also delete state, key, logs, the users and gro
 
 Without `--purge` the identity and state are kept, so a new install reconnects
 the same Device. The Device stays registered in its Network until you run
-`meshctl logout` before uninstalling, or revoke it in the Console.
+`meshctl logout --remove` before uninstalling, or revoke it in the Console.

@@ -26,6 +26,9 @@ const (
 	LogoutCompleted = "logged_out"
 	// LogoutNotRegistered reports that the active profile had no Device.
 	LogoutNotRegistered = "not_registered"
+	// LogoutSignedOut reports that Core signed the Device out and kept it:
+	// the profile keeps its keys, and meshctl login signs it back in.
+	LogoutSignedOut = "signed_out"
 
 	// runtimeStopTimeout bounds how long Down and Logout wait for the session
 	// loop to stop the runtime.
@@ -37,6 +40,15 @@ const (
 var (
 	// ErrLogout indicates that Core could not log the Device out.
 	ErrLogout = errors.New("daemon: logout failed")
+	// ErrSignOutUnsupported means the server only removes Devices: signing
+	// out needs logout --remove there. Nothing was changed.
+	ErrSignOutUnsupported = errors.New("daemon: this server removes the device when it signs out")
+	// ErrSignedOutNeedsSignIn means an enrollment key was given for a
+	// signed-out Device: only its owner signing in brings it back.
+	ErrSignedOutNeedsSignIn = errors.New("daemon: this device is signed out; sign in without a key")
+	// ErrSignOutNotPermitted means the Device cannot sign out (a Workspace
+	// Device): remove it, or ask an administrator.
+	ErrSignOutNotPermitted = errors.New("daemon: this device cannot sign out")
 	// ErrControlSessionBusy means the session loop did not stop the runtime
 	// in time (it was finishing other control work); retrying succeeds.
 	ErrControlSessionBusy = errors.New("daemon: the control session is still stopping")
@@ -93,19 +105,34 @@ func (s *Service) Up(ctx context.Context) (ConnectionChange, error) {
 
 // Logout ends the active profile's Device in Core (mtcp-v1 §6.5) and gives
 // the profile new unregistered keys, so `meshctl up` enrolls a new Device.
-// The map stream stops first: its session uses the same machine key and
-// would replace the logout session. It stops before Logout takes the
-// registration gate, which the session loop may need to finish a pending
-// node-key rotation on its way to the down state.
 func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
+	return s.logout(ctx, false)
+}
+
+// SignOut signs the active profile's Device out and keeps it (schema 283):
+// the profile keeps its keys but is no longer registered, so meshd stays off
+// the network until `meshctl login` signs the same Device back in. A server
+// without device.signout1 answers ErrSignOutUnsupported and nothing changes.
+func (s *Service) SignOut(ctx context.Context) (LogoutResult, error) {
+	return s.logout(ctx, true)
+}
+
+// logout runs Logout or SignOut. The map stream stops first: its session
+// uses the same machine key and would replace the logout session. It stops
+// before taking the registration gate, which the session loop may need to
+// finish a pending node-key rotation on its way to the down state.
+func (s *Service) logout(ctx context.Context, keep bool) (LogoutResult, error) {
 	if s.gateway {
 		return LogoutResult{}, ErrGatewayLogout
 	}
 	// Nothing to stop or tell Core when the profile holds no Device; the
-	// check repeats under the gate.
-	if profileID, registered, err := s.activeRegistration(ctx); err != nil {
+	// check repeats under the gate. A signed-out Device is still one:
+	// removing it goes to Core, signing it out again changes nothing.
+	if profileID, registered, signedOut, err := s.activeRegistration(ctx); err != nil {
 		return LogoutResult{}, err
-	} else if !registered {
+	} else if signedOut && keep {
+		return LogoutResult{ProfileID: profileID, State: LogoutSignedOut}, nil
+	} else if !registered && !signedOut {
 		return LogoutResult{ProfileID: profileID, State: LogoutNotRegistered}, nil
 	}
 	s.loggingOut.Store(true)
@@ -136,7 +163,10 @@ func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
 	if err != nil {
 		return LogoutResult{}, fmt.Errorf("reading identity: %w", err)
 	}
-	if !record.IsRegistered() {
+	if record.SignedOut() && keep {
+		return LogoutResult{ProfileID: active.ID, State: LogoutSignedOut}, nil
+	}
+	if !record.IsRegistered() && !record.SignedOut() {
 		return LogoutResult{ProfileID: active.ID, State: LogoutNotRegistered}, nil
 	}
 
@@ -144,18 +174,41 @@ func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
 	defer clearIdentityMaterial(identityMaterial)
 	protocolMaterial := toProtocolMaterial(identityMaterial)
 	defer clearProtocolMaterial(protocolMaterial)
-	logoutErr := s.prober.Logout(ctx, active.ControlURL, protocolMaterial, controlplane.RegisterOptions{
+	options := controlplane.RegisterOptions{
 		Hostname:          s.hostname,
 		Version:           "meshd/" + s.build.Version,
 		PinnedFingerprint: record.ControlKeyFingerprint(),
-	})
-	// Only a removal Core proved for exactly these keys lets the profile drop
-	// them; a refusal is ambiguous (the Device may still hold its address),
-	// so the keys stay and the user is told (TD-CLI-100).
-	alreadyRemoved := errors.Is(logoutErr, controlplane.ErrDeviceRemoved)
-	if errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized) {
+	}
+	call := s.prober.Logout
+	if keep {
+		call = s.prober.SignOut
+	}
+	logoutErr := call(ctx, active.ControlURL, protocolMaterial, options)
+	switch {
+	case keep && logoutErr == nil:
+		// Signed out and kept: the keys stay, so signing in again brings the
+		// same Device back; unregistered, so meshd stays off the network.
+		if _, err := s.identities.SetSignedOut(context.WithoutCancel(ctx), active.ID); err != nil {
+			return LogoutResult{}, fmt.Errorf("%w: the device is signed out but the profile was not updated: %w",
+				ErrLogout, err)
+		}
+		return LogoutResult{ProfileID: active.ID, State: LogoutSignedOut}, nil
+	case errors.Is(logoutErr, controlplane.ErrSignOutUnsupported):
+		return LogoutResult{}, fmt.Errorf("%w: %w", ErrSignOutUnsupported, logoutErr)
+	case errors.Is(logoutErr, controlplane.ErrSignOutNotPermitted):
+		return LogoutResult{}, fmt.Errorf("%w: %w", ErrSignOutNotPermitted, logoutErr)
+	case errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized):
+		// A refusal is ambiguous (the Device may still hold its address), so
+		// the keys stay and the user is told (TD-CLI-100).
 		return LogoutResult{}, fmt.Errorf("%w: Core does not accept this device's keys, so they are kept; "+
 			"sign in again with meshctl login, or ask an administrator to remove the device: %w", ErrLogout, logoutErr)
+	}
+	// Only a removal Core proved for exactly these keys lets the profile drop
+	// them. Asked to keep it, Core may remove it instead (an ephemeral
+	// Device): that is a removal now, not an earlier one.
+	alreadyRemoved := errors.Is(logoutErr, controlplane.ErrDeviceRemoved) && !keep
+	if keep && errors.Is(logoutErr, controlplane.ErrDeviceRemoved) {
+		logoutErr = nil
 	}
 	if logoutErr != nil && !alreadyRemoved {
 		return LogoutResult{}, fmt.Errorf("%w: %w", ErrLogout, logoutErr)
@@ -171,20 +224,20 @@ func (s *Service) Logout(ctx context.Context) (LogoutResult, error) {
 
 // activeRegistration reports the active profile and whether it holds a
 // registered Device.
-func (s *Service) activeRegistration(ctx context.Context) (string, bool, error) {
+func (s *Service) activeRegistration(ctx context.Context) (string, bool, bool, error) {
 	active, err := s.profiles.Active(ctx)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	record, err := s.identities.Get(ctx, active.ID)
 	if errors.Is(err, identity.ErrNotFound) {
-		return active.ID, false, nil
+		return active.ID, false, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("reading identity: %w", err)
+		return "", false, false, fmt.Errorf("reading identity: %w", err)
 	}
 
-	return active.ID, record.IsRegistered(), nil
+	return active.ID, record.IsRegistered(), record.SignedOut(), nil
 }
 
 // replaceCredentials gives the profile new machine and node keys: Core keeps

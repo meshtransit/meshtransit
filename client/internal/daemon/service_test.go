@@ -2622,6 +2622,8 @@ type fakeControl struct {
 	rotationResults     []controlplane.RegistrationResult
 	logoutMaterials     []controlplane.KeyMaterial
 	logoutErr           error
+	signOutErr          error
+	signOutMaterials    []controlplane.KeyMaterial
 	rotateFunc          func(
 		context.Context,
 		[]byte,
@@ -2817,6 +2819,22 @@ func (f *fakeControl) Logout(
 	})
 
 	return f.logoutErr
+}
+
+func (f *fakeControl) SignOut(
+	_ context.Context,
+	_ string,
+	material controlplane.KeyMaterial,
+	_ controlplane.RegisterOptions,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.signOutMaterials = append(f.signOutMaterials, controlplane.KeyMaterial{
+		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
+		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
+	})
+
+	return f.signOutErr
 }
 
 func (f *fakeControl) RotateNodeKey(

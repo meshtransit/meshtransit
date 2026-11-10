@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -325,6 +326,10 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 	}
 }
 
+// signOutCapability is device.signout1: Logout.keep_device keeps the Device
+// and Core answers LogoutResponse (mtcp-v1 §6.5).
+const signOutCapability = "device.signout1"
+
 // Logout ends the Device over a session that its current keys open
 // (mtcp-v1 §6.5): Core revokes the Device and its keys and answers
 // Lifecycle{LOGGED_OUT}. Logout carries the session proof of the node key,
@@ -336,6 +341,25 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 // keeps them (TD-CLI-100).
 func (c *Client) Logout(ctx context.Context, controlURL string, material controlplane.KeyMaterial,
 	options controlplane.RegisterOptions,
+) error {
+	return c.logout(ctx, controlURL, material, options, false)
+}
+
+// SignOut signs the Device out and keeps it (device.signout1, schema 283):
+// nil once Core answers LogoutResponse{SIGNED_OUT}, and the node keeps its
+// keys; its owner signs in again on this installation to bring it back.
+// Without the capability nothing is sent and the error wraps
+// controlplane.ErrSignOutUnsupported. REMOVED (an ephemeral Device, or keys
+// removed before) wraps controlplane.ErrDeviceRemoved; a Workspace Device's
+// refusal wraps controlplane.ErrSignOutNotPermitted.
+func (c *Client) SignOut(ctx context.Context, controlURL string, material controlplane.KeyMaterial,
+	options controlplane.RegisterOptions,
+) error {
+	return c.logout(ctx, controlURL, material, options, true)
+}
+
+func (c *Client) logout(ctx context.Context, controlURL string, material controlplane.KeyMaterial,
+	options controlplane.RegisterOptions, keep bool,
 ) error {
 	keys, err := c.openKeys(material)
 	if err != nil {
@@ -352,49 +376,96 @@ func (c *Client) Logout(ctx context.Context, controlURL string, material control
 	s, err := c.open(ctx, origin, sessionOptions{
 		machine: keys.machine, control: keys.control,
 		nodeKey: nodePublic[:], version: options.Version, prove: c.gatewayProof(keys.node),
+		capabilities: []string{signOutCapability},
 	})
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	answers := slices.Contains(s.reply.GetCapabilities(), signOutCapability)
+	if keep && !answers {
+		// An older Core would remove the Device: ask nothing.
+		return controlplane.ErrSignOutUnsupported
+	}
 	// A session is established by a Ping or a RegisterRequest (mtcp-v1 §3).
 	if err := s.send(sharedmtcp.MessagePing, &mtcpv1.Ping{}); err != nil {
-		return temporary(err)
+		return revokedOr(ctx, s, temporary(err))
 	}
 	proof, err := sharedmtcp.NodeKeySessionProof(keys.node, s.control, s.noise.HandshakeHash())
 	if err != nil {
 		return controlplane.ErrInvalidMaterial
 	}
-	if err := s.send(sharedmtcp.MessageLogout, &mtcpv1.Logout{NodeKeyProof: proof[:]}); err != nil {
-		return temporary(err)
+	if err := s.send(sharedmtcp.MessageLogout, &mtcpv1.Logout{NodeKeyProof: proof[:], KeepDevice: keep}); err != nil {
+		return revokedOr(ctx, s, temporary(err))
 	}
 	deadline := time.Now().Add(answerTimeout)
 	for {
 		message, err := s.receiveUntil(ctx, deadline)
 		if err != nil {
 			// The answer may have been lost after Core logged the Device out;
-			// asking again is safe: Core then answers REVOKED for these keys.
+			// asking again is safe: Core then answers REVOKED for these keys,
+			// or SIGNED_OUT again for a Device it kept.
 			return temporary(err)
 		}
 		switch m := message.(type) {
-		case *mtcpv1.Lifecycle:
-			switch m.GetState() {
-			case mtcpv1.Lifecycle_LOGGED_OUT:
+		case *mtcpv1.LogoutResponse:
+			switch m.GetOutcome() {
+			case mtcpv1.LogoutResponse_SIGNED_OUT:
+				if keep {
+					return nil
+				}
+				return fmt.Errorf("%w: Core kept a Device asked to be removed", controlplane.ErrRegistration)
+			case mtcpv1.LogoutResponse_REMOVED:
+				if keep {
+					return fmt.Errorf("%w: Core removed the Device", controlplane.ErrDeviceRemoved)
+				}
 				return nil
-			case mtcpv1.Lifecycle_REVOKED:
-				// Only a revocation of exactly these keys (mtcp-v1 §10).
+			}
+			return fmt.Errorf("%w: unknown logout outcome", controlplane.ErrRegistration)
+		case *mtcpv1.Lifecycle:
+			// REVOKED proves these exact keys were removed with their Device
+			// (mtcp-v1 §10), whoever sends it: the map stream may tell it
+			// before Logout is read and then end the session.
+			if m.GetState() == mtcpv1.Lifecycle_REVOKED {
 				return fmt.Errorf("%w: %s", controlplane.ErrDeviceRemoved, boundedText(m.GetReason()))
+			}
+			if answers {
+				// device.signout1: only LogoutResponse answers Logout.
+				continue
+			}
+			if m.GetState() == mtcpv1.Lifecycle_LOGGED_OUT {
+				return nil
 			}
 			// EXPIRED and the rest describe the session before Core read the
 			// Logout (an expired Device is told EXPIRED on connect): wait for
 			// the answer.
 		case *mtcpv1.Error:
-			if m.GetCode() == mtcpv1.Error_NOT_AUTHORIZED {
+			switch m.GetCode() {
+			case mtcpv1.Error_NOT_AUTHORIZED:
 				return fmt.Errorf("%w: %s", controlplane.ErrDeviceNotAuthorized, boundedText(m.GetMessage()))
+			case mtcpv1.Error_NOT_PERMITTED:
+				if keep {
+					return fmt.Errorf("%w: %s", controlplane.ErrSignOutNotPermitted, boundedText(m.GetMessage()))
+				}
 			}
 			return c.sessionError(m)
 		}
 		// Map messages for the session are not needed.
+	}
+}
+
+// revokedOr reads what Core sent before a send failed: the map stream may
+// have told REVOKED for these keys and ended the session. Otherwise fallback.
+func revokedOr(ctx context.Context, s *session, fallback error) error {
+	deadline := time.Now().Add(time.Second)
+	for {
+		message, err := s.receiveUntil(ctx, deadline)
+		if err != nil {
+			return fallback
+		}
+		if m, ok := message.(*mtcpv1.Lifecycle); ok && m.GetState() == mtcpv1.Lifecycle_REVOKED {
+			return fmt.Errorf("%w: %s", controlplane.ErrDeviceRemoved, boundedText(m.GetReason()))
+		}
 	}
 }
 
