@@ -345,6 +345,10 @@ type profileResponse struct {
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	IsActive   bool      `json:"is_active"`
+	// State is the profile's state (profile list only), its own enum:
+	// registered, signed_out, authorization_required, unregistered,
+	// untrusted (control key not pinned) or unreadable (identity damaged).
+	State string `json:"state,omitempty"`
 }
 
 type profilesResponse struct {

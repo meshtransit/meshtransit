@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -260,6 +261,94 @@ func runIdentity(
 	return 0
 }
 
+// addAccountProfile creates a profile for the active profile's server,
+// activates it and pins the same control key, so the next login signs in
+// another account as a new Device while the previous profile keeps its own
+// (design §7). Profiles are switched, never logged out. A step that fails
+// after the switch goes back to the previous profile.
+func addAccountProfile(ctx context.Context, client DaemonClient, name string) (localapi.Profile,
+	localapi.Profile, error,
+) {
+	status, err := client.Status(ctx)
+	if err != nil {
+		return localapi.Profile{}, localapi.Profile{}, err
+	}
+	if status.ActiveProfileID == "" || status.ControlFingerprint == "" {
+		return localapi.Profile{}, localapi.Profile{}, errors.New(
+			"--new-account needs an active profile whose control key is pinned (meshctl profile use to pick one)",
+		)
+	}
+	profiles, err := client.ListProfiles(ctx)
+	if err != nil {
+		return localapi.Profile{}, localapi.Profile{}, err
+	}
+	var active localapi.Profile
+	taken := map[string]bool{}
+	for _, item := range profiles.Profiles {
+		taken[strings.ToLower(item.Name)] = true
+		if item.ID == status.ActiveProfileID {
+			active = item
+		}
+	}
+	if active.ID == "" {
+		return localapi.Profile{}, localapi.Profile{}, errors.New("the active profile is not listed")
+	}
+	// A profile still without a Device is where to sign in: another would
+	// only pile up.
+	if active.State == "unregistered" || active.State == "authorization_required" {
+		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
+			"the active profile %q has no device yet: sign in to it with meshctl login", active.Name,
+		)
+	}
+	if name == "" {
+		name = nextAccountName(active.Name, taken)
+	}
+	created, err := client.CreateProfile(ctx, localapi.CreateProfile{Name: name, ControlURL: active.ControlURL})
+	if err != nil {
+		return localapi.Profile{}, localapi.Profile{}, err
+	}
+	if _, err := client.ActivateProfile(ctx, created.ID); err != nil {
+		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
+			"created profile %q but could not switch to it (meshctl profile use %s): %w", created.Name, created.ID, err,
+		)
+	}
+	if _, err := client.TrustControl(ctx, status.ControlFingerprint); err != nil {
+		if _, backErr := client.ActivateProfile(ctx, active.ID); backErr != nil {
+			return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
+				"could not pin the server's key for profile %q (%w), nor switch back: run meshctl profile use %s",
+				created.Name, err, active.ID,
+			)
+		}
+		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
+			"could not pin the server's key for profile %q, so %q is active again; %q stays, unused, "+
+				"until profile removal exists: %w", created.Name, active.Name, created.Name, err,
+		)
+	}
+	return created, active, nil
+}
+
+// nextAccountName is "<base> N" for the first N not taken (case folded, as
+// the store compares), within the store's 64 characters.
+func nextAccountName(current string, taken map[string]bool) string {
+	base := strings.TrimSpace(current)
+	if index := strings.LastIndex(base, " "); index > 0 {
+		if _, err := strconv.Atoi(base[index+1:]); err == nil {
+			base = base[:index]
+		}
+	}
+	for count := 2; ; count++ {
+		suffix := " " + strconv.Itoa(count)
+		runes := []rune(base)
+		if limit := 64 - len(suffix); len(runes) > limit {
+			runes = runes[:limit]
+		}
+		name := strings.TrimSpace(string(runes)) + suffix
+		if !taken[strings.ToLower(name)] {
+			return name
+		}
+	}
+}
+
 func runLogin(
 	ctx context.Context,
 	args []string,
@@ -286,6 +375,9 @@ func runLogin(
 	flags := flag.NewFlagSet("meshctl login", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	authKeyStdin := flags.Bool("auth-key-stdin", false, "read an auth key from stdin")
+	newAccount := flags.Bool("new-account", false,
+		"sign in with another account in a new profile for the same server; the current one keeps its device")
+	accountName := flags.String("name", "", "the new profile's name with --new-account")
 	noWait := flags.Bool("no-wait", false, "return after printing the browser authorization URL")
 	waitTimeout := flags.Duration(
 		"wait-timeout",
@@ -298,13 +390,18 @@ func runLogin(
 	if flags.NArg() != 0 {
 		_, _ = fmt.Fprintln(
 			stderr,
-			"usage: meshctl login [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]",
+			"usage: meshctl login [--new-account [--name NAME]] [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]",
 		)
 
 		return 2
 	}
 	if *waitTimeout <= 0 {
 		_, _ = fmt.Fprintln(stderr, "meshctl: login wait timeout must be positive")
+
+		return 2
+	}
+	if *accountName != "" && !*newAccount {
+		_, _ = fmt.Fprintln(stderr, "meshctl: --name goes with --new-account")
 
 		return 2
 	}
@@ -318,6 +415,19 @@ func runLogin(
 
 			return 2
 		}
+	}
+	if *newAccount {
+		created, previous, err := addAccountProfile(ctx, client, *accountName)
+		if err != nil {
+			return writeRuntimeError(stderr, err)
+		}
+		// On stderr in --json mode, so the login result stays the output.
+		notice := stdout
+		if isJSON {
+			notice = stderr
+		}
+		_, _ = fmt.Fprintf(notice, "Created profile %q (%s) for this server and made it active. %q keeps its "+
+			"device: meshctl profile use %s switches back.\n", created.Name, created.ID, previous.Name, previous.ID)
 	}
 	result, err := client.StartLogin(ctx, authKey)
 	if err != nil {
@@ -1082,13 +1192,17 @@ func runProfileList(
 	}
 
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tID\tCONTROL URL")
+	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tSTATE\tID\tCONTROL URL")
 	for _, item := range response.Profiles {
 		marker := ""
 		if item.IsActive {
 			marker = "*"
 		}
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", marker, item.Name, item.ID, item.ControlURL)
+		state := item.State
+		if state == "" {
+			state = "-"
+		}
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", marker, item.Name, state, item.ID, item.ControlURL)
 	}
 	if err := table.Flush(); err != nil {
 		return writeRuntimeError(stderr, fmt.Errorf("writing profile table: %w", err))

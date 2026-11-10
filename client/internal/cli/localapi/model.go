@@ -351,6 +351,8 @@ type Profile struct {
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	IsActive   bool      `json:"is_active"`
+	// State is the profile's registration; empty from an older meshd.
+	State string `json:"state,omitempty"`
 }
 
 // Profiles is the stable v1 profile-list response.

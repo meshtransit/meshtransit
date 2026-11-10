@@ -299,6 +299,11 @@ Put `--json` before the command for JSON output: `meshctl --json status`. Common
   Device back in. A Device left signed out for 30 days is removed.
 - `meshctl logout --remove` (or `meshctl deregister`) removes the Device in Core
   and replaces the local keys; the next `meshctl up` registers a new Device.
+- `meshctl login --new-account [--name NAME]` signs another account in on the
+  same server as a new profile (a new Device); the previous profile keeps its
+  Device, and `meshctl profile use` switches between them without logging out.
+  `meshctl profile list` shows each profile's state (registered, signed_out,
+  authorization_required, unregistered, untrusted).
 - `sudo apt-get remove meshd meshctl` stops the services and keeps the identity,
   the encrypted credential and `/etc/meshd`; reinstalling reconnects the same
   Device.

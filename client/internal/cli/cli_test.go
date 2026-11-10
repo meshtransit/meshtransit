@@ -787,6 +787,11 @@ func TestRun_UsageError(t *testing.T) {
 
 type fakeClient struct {
 	removed, signedOut bool
+	createdWith        localapi.CreateProfile
+	activatedID        string
+	activatedIDs       []string
+	trustErr           error
+	trustedWith        string
 	dnsQuery           localapi.DNSQuery
 	status             localapi.Status
 	profiles           localapi.Profiles
@@ -824,12 +829,15 @@ func (f *fakeClient) ListProfiles(_ context.Context) (localapi.Profiles, error) 
 
 func (f *fakeClient) CreateProfile(
 	_ context.Context,
-	_ localapi.CreateProfile,
+	input localapi.CreateProfile,
 ) (localapi.Profile, error) {
+	f.createdWith = input
 	return f.created, f.err
 }
 
-func (f *fakeClient) ActivateProfile(_ context.Context, _ string) (localapi.Profile, error) {
+func (f *fakeClient) ActivateProfile(_ context.Context, id string) (localapi.Profile, error) {
+	f.activatedID = id
+	f.activatedIDs = append(f.activatedIDs, id)
 	return f.activated, f.err
 }
 
@@ -837,7 +845,11 @@ func (f *fakeClient) ProbeControl(_ context.Context) (localapi.ControlProbe, err
 	return f.probe, f.err
 }
 
-func (f *fakeClient) TrustControl(_ context.Context, _ string) (localapi.ControlTrust, error) {
+func (f *fakeClient) TrustControl(_ context.Context, fingerprint string) (localapi.ControlTrust, error) {
+	f.trustedWith = fingerprint
+	if f.trustErr != nil {
+		return localapi.ControlTrust{}, f.trustErr
+	}
 	return f.trusted, f.err
 }
 

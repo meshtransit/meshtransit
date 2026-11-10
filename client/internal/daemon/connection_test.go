@@ -352,6 +352,11 @@ func TestService_SignedOutDeviceCanStillBeRemoved(t *testing.T) {
 	if err != nil || status.Registration != RegistrationSignedOut {
 		t.Fatalf("status registration = %q, %v", status.Registration, err)
 	}
+	snapshot := service.profiles.Snapshot()
+	if states, err := service.ProfileStates(t.Context(), snapshot.Profiles); err != nil ||
+		states[profileID] != RegistrationSignedOut {
+		t.Fatalf("profile states = %v, %v", states, err)
+	}
 	if _, err := service.StartLogin(t.Context(), "mtc1.key.secret"); !errors.Is(err, ErrSignedOutNeedsSignIn) {
 		t.Fatalf("StartLogin(key) error = %v, want ErrSignedOutNeedsSignIn", err)
 	}

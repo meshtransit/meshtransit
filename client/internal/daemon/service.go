@@ -84,6 +84,11 @@ const (
 	RegistrationPending = "authorization_required"
 	// RegistrationRegistered means the last registration response authorized the node.
 	RegistrationRegistered = "registered"
+	// ProfileUntrusted and ProfileUnreadable are profile-list states besides
+	// the Registration ones: the control key is not pinned yet, or the
+	// identity cannot be read.
+	ProfileUntrusted  = "untrusted"
+	ProfileUnreadable = "unreadable"
 	// RegistrationSignedOut means Core signed the Device out and kept it:
 	// meshctl login signs it back in (schema 283).
 	RegistrationSignedOut = "signed_out"
@@ -3078,6 +3083,41 @@ func (s *Service) ListProfiles(ctx context.Context) (profile.Snapshot, error) {
 	}
 
 	return s.profiles.Snapshot(), nil
+}
+
+// ProfileStates reports each profile's registration as Status does for the
+// active one: registered, signed_out, authorization_required, unregistered,
+// or untrusted when its control key is not pinned yet.
+//
+// One unreadable identity does not hide the others: the list is how the
+// user switches away from a broken profile. It reads the profiles the
+// caller listed, so both come from one snapshot.
+func (s *Service) ProfileStates(ctx context.Context, profiles []profile.Profile) (map[string]string, error) {
+	states := make(map[string]string, len(profiles))
+	for _, item := range profiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		record, err := s.identities.Get(ctx, item.ID)
+		switch {
+		case errors.Is(err, identity.ErrNotFound):
+			states[item.ID] = ProfileUntrusted
+		case err != nil:
+			if s.logger != nil {
+				s.logger.WarnContext(ctx, "profile identity unreadable", "profile_id", item.ID, "error", err)
+			}
+			states[item.ID] = ProfileUnreadable
+		case record.IsRegistered():
+			states[item.ID] = RegistrationRegistered
+		case record.HasPendingAuth():
+			states[item.ID] = RegistrationPending
+		case record.SignedOut():
+			states[item.ID] = RegistrationSignedOut
+		default:
+			states[item.ID] = RegistrationUnregistered
+		}
+	}
+	return states, nil
 }
 
 // CreateProfile validates and persists one control-plane profile.

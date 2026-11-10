@@ -45,6 +45,7 @@ type service interface {
 	Up(context.Context) (daemon.ConnectionChange, error)
 	Logout(context.Context) (daemon.LogoutResult, error)
 	SignOut(context.Context) (daemon.LogoutResult, error)
+	ProfileStates(context.Context, []profile.Profile) (map[string]string, error)
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
 	ApproveExitNodes(context.Context, []string) (daemon.ExitApproval, error)
 	CheckCaptiveWindow()
@@ -898,9 +899,17 @@ func (s *Server) handleListProfiles(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
+	states, err := s.service.ProfileStates(request.Context(), snapshot.Profiles)
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
 	profiles := make([]profileResponse, 0, len(snapshot.Profiles))
 	for _, item := range snapshot.Profiles {
-		profiles = append(profiles, mapProfile(item, snapshot.ActiveProfileID))
+		mapped := mapProfile(item, snapshot.ActiveProfileID)
+		mapped.State = states[item.ID]
+		profiles = append(profiles, mapped)
 	}
 
 	s.writeJSON(writer, http.StatusOK, profilesResponse{

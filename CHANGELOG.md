@@ -5,6 +5,12 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshctl (device logout design S2b): `meshctl login --new-account [--name
+  NAME]` adds a profile for the active profile's server, makes it active,
+  pins the same control key and signs another account in as a new Device;
+  the previous profile keeps its Device and `meshctl profile use` switches
+  back without logging out. `meshctl profile list` (and the local API) show
+  each profile's state.
 - meshd and meshctl (device logout design S2a): `meshctl logout` signs out
   and keeps the Device when Core offers `device.signout1` (schema 283): the
   profile keeps its keys, is no longer registered (status `signed_out`), and
