@@ -96,7 +96,7 @@ func (release browserHostnameRelease) logOut(identity node.RegistrationIdentity)
 	if err != nil {
 		release.t.Fatal(err)
 	}
-	if _, err := release.logout.Logout(release.ctx, machine, identity.NodeKey(), true); err != nil {
+	if _, err := release.logout.Logout(release.ctx, machine, identity.NodeKey(), true, false); err != nil {
 		release.t.Fatalf("logout: %v", err)
 	}
 }

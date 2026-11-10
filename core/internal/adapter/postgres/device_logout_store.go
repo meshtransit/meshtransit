@@ -28,7 +28,8 @@ FROM mesh_ops.resolve_map_session_scope($1::BYTEA, $2::BYTEA)`
 	// The predicate behind Lifecycle{REVOKED} (schema 279): these exact keys
 	// were current when their Device was revoked, or its Network deleted.
 	logoutKeysRevokedSQL = `SELECT mesh_ops.map_session_revoked_v2($1::BYTEA, $2::BYTEA)`
-	logoutDeviceSQL      = `SELECT mesh_ops.logout_device_v1($1::BYTEA,$2::BYTEA,$3::UUID,$4::TIMESTAMPTZ)::TEXT`
+	// Schema 283: keep_device signs the Device out and keeps it.
+	logoutDeviceSQL = `SELECT mesh_ops.logout_device_v2($1::BYTEA,$2::BYTEA,$3::BOOLEAN,$4::UUID,$5::TIMESTAMPTZ)::TEXT`
 	// deviceLogoutPermission names the authority a node uses on itself.
 	deviceLogoutPermission = "device.logout_self"
 )
@@ -55,7 +56,7 @@ func NewDeviceLogoutStore(pool *Pool, options AccountSessionOptions) (*DeviceLog
 // LogoutDevice implements control.DeviceLogoutStore. The logout is evaluated
 // and stamped on the database clock.
 func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity control.AuthenticatedNode,
-	anyExpiry bool) (control.DeviceLogout, error) {
+	anyExpiry, keepDevice bool) (control.DeviceLogout, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return control.DeviceLogout{}, control.ErrInvalidDeviceLogoutService
 	}
@@ -91,7 +92,7 @@ func (store *DeviceLogoutStore) LogoutDevice(ctx context.Context, identity contr
 			return errors.Join(control.ErrDeviceLogoutNotFound, err)
 		}
 		var encoded string
-		if err := tx.QueryRow(ctx, logoutDeviceSQL, fingerprint[:], nodeKey[:], changeID.String(),
+		if err := tx.QueryRow(ctx, logoutDeviceSQL, fingerprint[:], nodeKey[:], keepDevice, changeID.String(),
 			now).Scan(&encoded); err != nil {
 			return deviceLogoutDatabaseError(err)
 		}
@@ -150,9 +151,11 @@ func parseLogoutScope(workspaceID, networkID string) (network.Scope, error) {
 }
 
 type deviceLogoutRecord struct {
+	Outcome           string          `json:"outcome"`
 	Before            json.RawMessage `json:"before"`
 	After             json.RawMessage `json:"after"`
 	ActorPrincipalID  string          `json:"actor_principal_id"`
+	SignedOutAt       *time.Time      `json:"signed_out_at"`
 	NetworkRevision   int64           `json:"network_revision"`
 	InventoryRevision int64           `json:"inventory_revision"`
 	GroupRevision     int64           `json:"group_revision"`
@@ -163,8 +166,7 @@ type deviceLogoutRecord struct {
 func appendDeviceLogoutEvidence(ctx context.Context, tx accountSessionTransaction, scope network.Scope,
 	changeID publicid.ID, encoded string) (control.DeviceLogout, error) {
 	var record deviceLogoutRecord
-	if err := decodeIdentityCatalogJSON([]byte(encoded), &record); err != nil || record.NetworkRevision <= 0 ||
-		record.InventoryRevision <= 0 || record.GroupRevision <= 0 {
+	if err := decodeIdentityCatalogJSON([]byte(encoded), &record); err != nil {
 		return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
 	}
 	var before, after deviceLifecycleDocument
@@ -174,8 +176,29 @@ func appendDeviceLogoutEvidence(ctx context.Context, tx accountSessionTransactio
 	beforeState, beforeErr := before.state()
 	afterState, afterErr := after.state()
 	actor, actorErr := publicid.Parse(record.ActorPrincipalID)
-	if beforeErr != nil || afterErr != nil || actorErr != nil || afterState.DeviceID != beforeState.DeviceID ||
-		afterState.State != "revoked" || afterState.Version <= beforeState.Version {
+	if beforeErr != nil || afterErr != nil || actorErr != nil || afterState.DeviceID != beforeState.DeviceID {
+		return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
+	}
+	var action, wantState string
+	switch record.Outcome {
+	case control.LogoutUnchanged:
+		// Already signed out: nothing was written, nothing to seal.
+		if record.SignedOutAt == nil || afterState.Version != beforeState.Version || record.NetworkRevision != 0 {
+			return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
+		}
+		return control.DeviceLogout{Scope: scope, DeviceID: afterState.DeviceID, Outcome: control.LogoutUnchanged}, nil
+	case control.LogoutRemoved:
+		action, wantState = "device.logged_out", "revoked"
+	case control.LogoutSignedOut:
+		if record.SignedOutAt == nil || afterState.ExpiresAt.After(*record.SignedOutAt) {
+			return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
+		}
+		action, wantState = "device.signed_out", "active"
+	default:
+		return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
+	}
+	if record.NetworkRevision <= 0 || record.InventoryRevision <= 0 || record.GroupRevision <= 0 ||
+		afterState.State != wantState || afterState.Version <= beforeState.Version {
 		return control.DeviceLogout{}, control.ErrDeviceLogoutUnavailable
 	}
 	var streamID, sequence int64
@@ -188,7 +211,7 @@ FROM mesh_audit.lock_network_stream_head()`).Scan(&streamID, &sequence, &previou
 	event := catalogEvent{
 		correlationID: changeID, changeID: changeID, aggregateKind: "device",
 		aggregateID: publicid.ID(afterState.DeviceID), version: afterState.Version,
-		networkVersion: record.NetworkRevision, action: "device.logged_out", permission: deviceLogoutPermission,
+		networkVersion: record.NetworkRevision, action: action, permission: deviceLogoutPermission,
 		before: &beforeHash, after: sha256.Sum256(record.After), actor: actor,
 		payload: struct {
 			NetworkID  string          `json:"network_id"`
@@ -212,7 +235,8 @@ FROM mesh_audit.lock_network_stream_head()`).Scan(&streamID, &sequence, &previou
 	if err := appendCatalogEvent(ctx, tx, streamID, sequence, previous, event); err != nil {
 		return control.DeviceLogout{}, errors.Join(control.ErrDeviceLogoutUnavailable, err)
 	}
-	return control.DeviceLogout{Scope: scope, DeviceID: afterState.DeviceID, NetworkRevision: record.NetworkRevision}, nil
+	return control.DeviceLogout{Scope: scope, DeviceID: afterState.DeviceID, NetworkRevision: record.NetworkRevision,
+		Outcome: record.Outcome}, nil
 }
 
 // logoutWithoutDevice tells keys whose Device was removed with them (the
@@ -240,6 +264,8 @@ func deviceLogoutDatabaseError(err error) error {
 			return control.ErrDeviceLogoutNotFound
 		case "MTK11":
 			return control.ErrDeviceLogoutNotPermitted
+		case "MTL04":
+			return control.ErrDeviceSignOutNotPermitted
 		}
 	}
 	return errors.Join(control.ErrDeviceLogoutUnavailable, err)

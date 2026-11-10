@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core (schema 283, device logout design S1): signing out keeps the Device.
+  With `device.signout1`, `Logout.keep_device` makes `logout_device_v2`
+  set `signed_out_at` and an expiry at or before it: the Device keeps its
+  identity, keys, addresses, name, owner, groups and rules but leaves every
+  map, and `device.signed_out` is recorded; Core answers
+  `LogoutResponse{SIGNED_OUT}` (or `REMOVED` when removing). Only the owner
+  signing in again on the same installation, or a handover, brings it back;
+  an enrollment key never does, admin extension refuses (MTL01), and a
+  trigger keeps any other path that raises the expiry from bringing it back.
+  A Workspace Device cannot sign out (MTL04, `NOT_PERMITTED`); an ephemeral
+  one is removed. A node without the capability is answered as before.
 - Core (schema 282, TD-CORE-145) and meshd (TD-CLI-100): an expired Device
   can log out. `Logout` carries the session proof of the node key
   (`node_key_proof`), and Core finds the Device with

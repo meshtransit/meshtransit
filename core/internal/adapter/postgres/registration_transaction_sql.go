@@ -64,7 +64,8 @@ const lockRegistrationDeviceSQL = `SELECT
     device.hostname_locked,
     device.ownership = 'workspace',
     device.expires_at,
-    device.owner_principal_id
+    device.owner_principal_id,
+    device.signed_out_at IS NOT NULL
 FROM mesh.device_machine_key_epoch AS machine
 JOIN mesh.device AS device
   ON device.workspace_id = machine.workspace_id

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
@@ -64,11 +65,11 @@ func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.
 	var otherKey node.Key
 	copy(otherKey[:], nodeKey[:])
 	otherKey[0] ^= 0xff
-	if _, err := service.Logout(ctx, machine, otherKey, true); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(ctx, machine, otherKey, true, false); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
 		t.Fatalf("logout with another node key: %v", err)
 	}
 	networkBefore, groupBefore := fixtureNetworkRevisions(ctx, t, admin)
-	logout, err := service.Logout(ctx, machine, nodeKey, true)
+	logout, err := service.Logout(ctx, machine, nodeKey, true, false)
 	if err != nil || logout.DeviceID != device {
 		t.Fatalf("logout = %+v, %v", logout, err)
 	}
@@ -102,7 +103,7 @@ func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.
 	}
 	// A logged-out Device cannot log out again or open a map; its keys were
 	// revoked with it, so the node is told it may erase them (schema 282).
-	if _, err := service.Logout(ctx, machine, nodeKey, true); !errors.Is(err, control.ErrDeviceLogoutRevoked) {
+	if _, err := service.Logout(ctx, machine, nodeKey, true, false); !errors.Is(err, control.ErrDeviceLogoutRevoked) {
 		t.Fatalf("second logout: %v", err)
 	}
 	// Keys Core never knew stay ambiguous: the node keeps them.
@@ -113,10 +114,123 @@ func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Logout(ctx, stranger, nodeKey, true); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(ctx, stranger, nodeKey, true, false); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
 		t.Fatalf("logout with unknown keys: %v", err)
 	}
 	assertPostgreSQLExpiredDeviceLogout(ctx, t, admin, service)
+	assertPostgreSQLDeviceSignOut(ctx, t, admin, service)
+}
+
+// assertPostgreSQLDeviceSignOut qualifies schema 283: signing out keeps the
+// Device and its address, leaves no map, seals device.signed_out once; a
+// repeat writes nothing; a path that raises the expiry keeps it signed out.
+func assertPostgreSQLDeviceSignOut(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	service *control.DeviceLogoutService) {
+	t.Helper()
+	device, machineKey, nodeKey := activeFixtureDeviceKeys(ctx, t, admin)
+	machine, err := control.NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leases := func() int {
+		var count int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.node_address_lease AS lease
+JOIN mesh.device AS device ON device.id = lease.device_id
+WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	leasesBefore := leases()
+	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
+	logout, err := service.Logout(ctx, machine, nodeKey, true, true)
+	if err != nil || logout.DeviceID != device || logout.Outcome != control.LogoutSignedOut {
+		t.Fatalf("sign out = %+v, %v", logout, err)
+	}
+	networkAfter, _ := fixtureNetworkRevisions(ctx, t, admin)
+	var state string
+	var signedOut, live bool
+	if err := admin.QueryRow(ctx, `SELECT state, signed_out_at IS NOT NULL, expires_at > now()
+FROM mesh.device WHERE public_id = $1::UUID`, device.String()).Scan(&state, &signedOut, &live); err != nil {
+		t.Fatal(err)
+	}
+	if state != "active" || !signedOut || live || networkAfter != networkBefore+1 || leases() != leasesBefore ||
+		leasesBefore == 0 {
+		t.Fatalf("after sign out: state %q, signed out %t, live %t, revision %d→%d, leases %d→%d",
+			state, signedOut, live, networkBefore, networkAfter, leasesBefore, leases())
+	}
+	if countDeviceAudit(ctx, t, admin, device, "device.signed_out") != 1 ||
+		countDeviceAudit(ctx, t, admin, device, "device.logged_out") != 0 {
+		t.Fatal("a sign out must seal exactly one device.signed_out and no device.logged_out")
+	}
+	// Only logout_device_v2 starts a sign-out: the runtime role cannot.
+	func() {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000103'::UUID,'01890f00-0000-7000-8000-000000000203'::UUID)`); err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(ctx, `UPDATE mesh.device SET signed_out_at = now() + INTERVAL '1 day'
+WHERE public_id = $1::UUID`, device.String())
+		var pgError *pgconn.PgError
+		if !errors.As(err, &pgError) || pgError.Code != "42501" {
+			t.Fatalf("a runtime UPDATE of signed_out_at = %v, want 42501", err)
+		}
+	}()
+	// A repeat changes nothing.
+	again, err := service.Logout(ctx, machine, nodeKey, true, true)
+	if err != nil || again.Outcome != control.LogoutUnchanged {
+		t.Fatalf("second sign out = %+v, %v", again, err)
+	}
+	if repeated, _ := fixtureNetworkRevisions(ctx, t, admin); repeated != networkAfter ||
+		countDeviceAudit(ctx, t, admin, device, "device.signed_out") != 1 {
+		t.Fatalf("a repeated sign out wrote: revision %d→%d", networkAfter, repeated)
+	}
+	// A path that raises the expiry (as transfer to the Workspace does)
+	// leaves it signed out.
+	version := readIntegrationDevice(ctx, t, admin, device).version
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000002831",
+		eventPublicID:  "01890f02-0000-7000-8000-000000002831",
+		outboxPublicID: "01890f03-0000-7000-8000-000000002831",
+		streamID:       203, aggregateKind: "device", aggregatePublicID: device.String(),
+		aggregateVersion: version + 1, networkRevision: networkAfter + 1,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "device.expiry.fixture", permission: "system.bootstrap",
+		outboxEventClass: "device.expiry.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `UPDATE mesh.device
+SET expires_at = mesh_ops.device_never_expires_v1(), version = version + 1, updated_at = pg_catalog.now()
+WHERE public_id = $1::UUID`, device.String()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000103'::UUID,'01890f00-0000-7000-8000-000000000203'::UUID)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.advance_network_inventory_revision()`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := admin.QueryRow(ctx, `SELECT expires_at > now() FROM mesh.device WHERE public_id = $1::UUID`,
+		device.String()).Scan(&live); err != nil || live {
+		t.Fatalf("raising the expiry of a signed-out Device brought it back: live %t, %v", live, err)
+	}
+	// Removing it still works, and seals device.logged_out.
+	removed, err := service.Logout(ctx, machine, nodeKey, true, false)
+	if err != nil || removed.Outcome != control.LogoutRemoved {
+		t.Fatalf("removing a signed-out Device = %+v, %v", removed, err)
+	}
+	if row := readIntegrationDevice(ctx, t, admin, device); row.state != "revoked" {
+		t.Fatalf("signed-out Device state %q after removal", row.state)
+	}
 }
 
 // assertPostgreSQLExpiredDeviceLogout qualifies schema 282 (TD-CORE-145):
@@ -157,10 +271,10 @@ WHERE public_id = $1::UUID`, device.String()); err != nil {
 		t.Fatal(err)
 	}
 	// A node key only named in the hello still logs out no expired Device.
-	if _, err := service.Logout(ctx, machine, nodeKey, false); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(ctx, machine, nodeKey, false, false); !errors.Is(err, control.ErrDeviceLogoutNotFound) {
 		t.Fatalf("expired Device logout without a proven key: %v", err)
 	}
-	logout, err := service.Logout(ctx, machine, nodeKey, true)
+	logout, err := service.Logout(ctx, machine, nodeKey, true, false)
 	if err != nil || logout.DeviceID != device {
 		t.Fatalf("expired Device logout = %+v, %v", logout, err)
 	}

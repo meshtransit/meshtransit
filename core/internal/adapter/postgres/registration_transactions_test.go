@@ -214,11 +214,14 @@ func TestRegistrationTransactionResumeRequiresTheOwnersKey(t *testing.T) {
 		name           string
 		owner          int64
 		workspaceOwned bool
+		signedOut      bool
 		want           error
 	}{
 		{name: "another member's Device", owner: 12, want: registration.ErrIntentConflict},
 		{name: "the issuer's own Device", owner: 11},
 		{name: "a Workspace Device", owner: 12, workspaceOwned: true},
+		// Schema 283: only the owner signing in reopens a signed-out Device.
+		{name: "a signed-out Device", owner: 11, signedOut: true, want: registration.ErrIntentConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -237,6 +240,7 @@ func TestRegistrationTransactionResumeRequiresTheOwnersKey(t *testing.T) {
 				*destinations[6].(*[]byte) = append([]byte(nil), nodeKey[:]...)
 				*destinations[8].(*bool) = test.workspaceOwned
 				*destinations[10].(*int64) = test.owner
+				*destinations[11].(*bool) = test.signedOut
 				return nil
 			}}
 			database.enqueueRows(lockRegistrationDeviceLeasesSQL, &registrationTestRows{scans: []func(...any) error{

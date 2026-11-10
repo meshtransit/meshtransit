@@ -364,19 +364,29 @@ func (browser *fakeBrowser) approve() {
 }
 
 type fakeLogout struct {
-	mu     sync.Mutex
-	err    error
-	keys   []node.Key
-	proven []bool
+	mu      sync.Mutex
+	err     error
+	keys    []node.Key
+	proven  []bool
+	kept    []bool
+	outcome string
 }
 
 func (logout *fakeLogout) Logout(_ context.Context, _ control.AuthenticatedMachine, nodeKey node.Key,
-	keyProven bool) (control.DeviceLogout, error) {
+	keyProven, keepDevice bool) (control.DeviceLogout, error) {
 	logout.mu.Lock()
 	defer logout.mu.Unlock()
 	logout.keys = append(logout.keys, nodeKey)
 	logout.proven = append(logout.proven, keyProven)
-	return control.DeviceLogout{}, logout.err
+	logout.kept = append(logout.kept, keepDevice)
+	outcome := control.LogoutRemoved
+	if keepDevice {
+		outcome = control.LogoutSignedOut
+	}
+	if logout.outcome != "" {
+		outcome = logout.outcome
+	}
+	return control.DeviceLogout{Outcome: outcome}, logout.err
 }
 
 type fakePaths struct {
@@ -1146,6 +1156,70 @@ func TestLogoutCarriesTheNodeKeyProof(t *testing.T) {
 	}
 	if len(f.logout.keys) != 1 || f.logout.keys[0] != node.Key(nodePublic) || !f.logout.proven[0] {
 		t.Fatalf("logout named %v (proven %v), want the proven hello key", f.logout.keys, f.logout.proven)
+	}
+}
+
+// Schema 283: a node that negotiated device.signout1 keeps its Device with
+// keep_device and is answered LogoutResponse; an older node, whatever it
+// asks, removes it and is told by Lifecycle.
+func TestLogoutKeepsTheDeviceForASignOutNode(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		offered   bool
+		keep      bool
+		outcome   string
+		err       error
+		wantKept  bool
+		wantReply sharedmtcp.MessageType
+		wantValue any
+	}{
+		{name: "sign out", offered: true, keep: true, wantKept: true,
+			wantReply: sharedmtcp.MessageLogoutResponse, wantValue: mtcpv1.LogoutResponse_SIGNED_OUT},
+		{name: "already signed out", offered: true, keep: true, outcome: control.LogoutUnchanged, wantKept: true,
+			wantReply: sharedmtcp.MessageLogoutResponse, wantValue: mtcpv1.LogoutResponse_SIGNED_OUT},
+		{name: "remove", offered: true, wantReply: sharedmtcp.MessageLogoutResponse,
+			wantValue: mtcpv1.LogoutResponse_REMOVED},
+		{name: "removed before", offered: true, keep: true, err: control.ErrDeviceLogoutRevoked, wantKept: true,
+			wantReply: sharedmtcp.MessageLogoutResponse, wantValue: mtcpv1.LogoutResponse_REMOVED},
+		{name: "older node", keep: true, wantReply: sharedmtcp.MessageLifecycle,
+			wantValue: mtcpv1.Lifecycle_LOGGED_OUT},
+		{name: "Workspace Device", offered: true, keep: true, err: control.ErrDeviceSignOutNotPermitted,
+			wantKept: true, wantReply: sharedmtcp.MessageError, wantValue: mtcpv1.Error_NOT_PERMITTED},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+			if test.offered {
+				f.session.capabilities = append(f.session.capabilities, CapabilitySignOut)
+			}
+			f.talk.prove(node.Key(f.session.Hello().GetNodeKey()), false)
+			f.logout.outcome, f.logout.err = test.outcome, test.err
+			f.run()
+			err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{KeepDevice: test.keep})
+			if test.wantReply == sharedmtcp.MessageError {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, errLoggedOut) {
+				t.Fatalf("logout returned %v; the session must end", err)
+			}
+			var got any
+			switch m := f.expect(test.wantReply).(type) {
+			case *mtcpv1.LogoutResponse:
+				got = m.GetOutcome()
+			case *mtcpv1.Lifecycle:
+				got = m.GetState()
+			case *mtcpv1.Error:
+				got = m.GetCode()
+			}
+			if got != test.wantValue {
+				t.Fatalf("answer = %v, want %v", got, test.wantValue)
+			}
+			if len(f.logout.kept) != 1 || f.logout.kept[0] != test.wantKept {
+				t.Fatalf("keep_device reached the domain as %v, want %t", f.logout.kept, test.wantKept)
+			}
+		})
 	}
 }
 

@@ -124,7 +124,10 @@ type deviceLifecycleDocument struct {
 	HandoverTo      *string   `json:"handover_principal_id"`
 	HostnameLocked  bool      `json:"hostname_locked"`
 	ExpiresAt       time.Time `json:"expires_at"`
-	Version         int64     `json:"version"`
+	// SignedOutAt is read once the document carries it (schema 283 and
+	// later), so a document that adds it does not fail on this Core.
+	SignedOutAt *time.Time `json:"signed_out_at,omitempty"`
+	Version     int64      `json:"version"`
 }
 
 func (document deviceLifecycleDocument) state() (devicelifecycle.State, error) {

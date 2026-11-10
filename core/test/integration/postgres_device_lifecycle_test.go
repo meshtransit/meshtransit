@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/devicelifecycle"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -348,6 +349,136 @@ func assertPostgreSQLBrowserHandover(
 	if row.state != "active" || row.ownership != "member" || row.ownerKind != "account" || row.handover != nil ||
 		row.expiresAt.Year() == 2200 || countDeviceAudit(ctx, t, admin, device, "device.handover_completed") != 1 {
 		t.Fatalf("completed handover = %+v", row)
+	}
+	browserLogin := func() registration.Result {
+		t.Helper()
+		id, err := publicid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		intentID, err := enrollment.ParseBrowserIntentID(id.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		nonce, err := enrollment.NewBrowserIntentNonce()
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, 5*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if approved, err := approvals.Approve(ctx, session, token.Encoded(), networkID); err != nil || !approved {
+			t.Fatalf("login approval = %v: %v", approved, err)
+		}
+		result, found, err := completion.Complete(ctx, identity, hostname, token.Encoded())
+		if err != nil || !found {
+			t.Fatalf("login = %+v/%v/%v", result, found, err)
+		}
+		return result
+	}
+	assertPostgreSQLSignOutAndSignIn(ctx, t, admin, runtime, lifecycle, owner, scope, device, identity, browserLogin)
+}
+
+// assertPostgreSQLSignOutAndSignIn qualifies schema 283 on the real paths:
+// the owner signs out and signs back in through the browser to the same
+// Device and addresses (device.signed_in); signed out again, a transfer to
+// the Workspace keeps it signed out and a repeat answers unchanged; the
+// handover back to the owner ends the sign-out.
+func assertPostgreSQLSignOutAndSignIn(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	runtime *postgresadapter.Pool, lifecycle *devicelifecycle.Service, owner accountsession.Session,
+	scope network.Scope, device node.ID, identity node.RegistrationIdentity,
+	browserLogin func() registration.Result) {
+	t.Helper()
+	store, err := postgresadapter.NewDeviceLogoutStore(runtime, postgresadapter.AccountSessionOptions{
+		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout, err := control.NewDeviceLogoutService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := control.NewAuthenticatedMachine(identity.MachineKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedOut := func() (bool, bool) {
+		t.Helper()
+		var out, live bool
+		if err := admin.QueryRow(ctx, `SELECT signed_out_at IS NOT NULL, expires_at > now()
+FROM mesh.device WHERE public_id = $1::UUID`, device.String()).Scan(&out, &live); err != nil {
+			t.Fatal(err)
+		}
+		return out, live
+	}
+	addresses := func() string {
+		t.Helper()
+		var got string
+		if err := admin.QueryRow(ctx, `SELECT COALESCE(string_agg(host(lease.address), ',' ORDER BY lease.address), '')
+FROM mesh.node_address_lease AS lease JOIN mesh.device AS device ON device.id = lease.device_id
+WHERE device.public_id = $1::UUID AND lease.state = 'active'`, device.String()).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	held := addresses()
+	if result, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil ||
+		result.Outcome != control.LogoutSignedOut {
+		t.Fatalf("sign out = %+v, %v", result, err)
+	}
+	if out, live := signedOut(); !out || live || addresses() != held || held == "" {
+		t.Fatalf("signed out %t, live %t, addresses %q → %q", out, live, held, addresses())
+	}
+	// The owner signs in again: the same Device, its addresses, live.
+	if result := browserLogin(); result.NodeID() != device || result.Disposition() != registration.DispositionResumed {
+		t.Fatalf("sign in = %+v", result)
+	}
+	if out, live := signedOut(); out || !live || addresses() != held ||
+		countDeviceAudit(ctx, t, admin, device, "device.signed_in") != 1 {
+		t.Fatalf("after sign in: signed out %t, live %t, addresses %q", out, live, addresses())
+	}
+	// Signed out again, then moved to the Workspace: still signed out.
+	if _, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	request := devicelifecycle.Request{Action: devicelifecycle.ActionTransferWorkspace, Reason: "Signed-out laptop",
+		Scope: scope, DeviceID: device, CorrelationID: newCorrelationID(t),
+		ExpectedVersion: readIntegrationDevice(ctx, t, admin, device).version}
+	if _, err := lifecycle.Change(ctx, owner, request); err != nil {
+		t.Fatalf("transfer a signed-out Device to the Workspace: %v", err)
+	}
+	if out, live := signedOut(); !out || live {
+		t.Fatalf("a transfer to the Workspace brought a signed-out Device back: signed out %t, live %t", out, live)
+	}
+	if result, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); err != nil ||
+		result.Outcome != control.LogoutUnchanged {
+		t.Fatalf("repeat sign out of a moved Device = %+v, %v", result, err)
+	}
+	// The handover back to the owner ends the sign-out.
+	request = devicelifecycle.Request{Action: devicelifecycle.ActionTransferMember,
+		NewOwner: publicid.ID(owner.PrincipalID()), Reason: "Back to owner", Scope: scope, DeviceID: device,
+		CorrelationID: newCorrelationID(t), ExpectedVersion: readIntegrationDevice(ctx, t, admin, device).version}
+	if _, err := lifecycle.Change(ctx, owner, request); err != nil {
+		t.Fatalf("hand the Device back: %v", err)
+	}
+	if result := browserLogin(); result.NodeID() != device {
+		t.Fatalf("handover login = %+v", result)
+	}
+	if out, live := signedOut(); out || !live || addresses() != held {
+		t.Fatalf("after handover: signed out %t, live %t, addresses %q", out, live, addresses())
+	}
+	// A Workspace Device cannot sign out.
+	request = devicelifecycle.Request{Action: devicelifecycle.ActionTransferWorkspace, Reason: "Server now",
+		Scope: scope, DeviceID: device, CorrelationID: newCorrelationID(t),
+		ExpectedVersion: readIntegrationDevice(ctx, t, admin, device).version}
+	if _, err := lifecycle.Change(ctx, owner, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := logout.Logout(ctx, machine, identity.NodeKey(), true, true); !errors.Is(err,
+		control.ErrDeviceSignOutNotPermitted) {
+		t.Fatalf("Workspace Device sign out: %v", err)
 	}
 }
 

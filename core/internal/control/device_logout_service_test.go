@@ -15,7 +15,7 @@ type deviceLogoutStoreFixture struct {
 	err      error
 }
 
-func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode, _ bool) (
+func (store *deviceLogoutStoreFixture) LogoutDevice(_ context.Context, identity AuthenticatedNode, _, _ bool) (
 	DeviceLogout, error) {
 	store.identity = identity
 	return store.logout, store.err
@@ -35,25 +35,25 @@ func TestDeviceLogoutService(t *testing.T) {
 		t.Fatal(err)
 	}
 	device := node.ID(parsed)
-	store := &deviceLogoutStoreFixture{logout: DeviceLogout{DeviceID: device, NetworkRevision: 4}}
+	store := &deviceLogoutStoreFixture{logout: DeviceLogout{DeviceID: device, NetworkRevision: 4, Outcome: LogoutRemoved}}
 	service, err := NewDeviceLogoutService(store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Logout(t.Context(), machine, node.Key{}, true); !errors.Is(err, ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{}, true, false); !errors.Is(err, ErrDeviceLogoutNotFound) {
 		t.Fatalf("zero node key: %v", err)
 	}
-	logout, err := service.Logout(t.Context(), machine, node.Key{2}, true)
+	logout, err := service.Logout(t.Context(), machine, node.Key{2}, true, false)
 	if err != nil || logout.DeviceID != device || store.identity.NodeKey() != (node.Key{2}) ||
 		store.identity.MachineFingerprint() != machine.key.Fingerprint() {
 		t.Fatalf("logout = %+v, %v", logout, err)
 	}
 	store.logout = DeviceLogout{}
-	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true); !errors.Is(err, ErrDeviceLogoutUnavailable) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true, false); !errors.Is(err, ErrDeviceLogoutUnavailable) {
 		t.Fatalf("an empty outcome must not count as a logout: %v", err)
 	}
 	store.err = ErrDeviceLogoutNotFound
-	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true); !errors.Is(err, ErrDeviceLogoutNotFound) {
+	if _, err := service.Logout(t.Context(), machine, node.Key{2}, true, false); !errors.Is(err, ErrDeviceLogoutNotFound) {
 		t.Fatalf("store error: %v", err)
 	}
 }

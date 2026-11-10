@@ -25,25 +25,27 @@ const (
 	MessageRotateNodeKey         MessageType = 0x12
 	MessageLogout                MessageType = 0x13
 	MessageRotateNodeKeyResponse MessageType = 0x14
-	MessageMapSnapshot           MessageType = 0x20
-	MessageMapDelta              MessageType = 0x21
-	MessageMapAck                MessageType = 0x22
-	MessageMapResync             MessageType = 0x23
-	MessageMapFresh              MessageType = 0x24
-	MessageEndpointReport        MessageType = 0x30
-	MessageHostinfoReport        MessageType = 0x31
-	MessageHealthReport          MessageType = 0x32
-	MessagePathStatsReport       MessageType = 0x33
-	MessageEnforcementReport     MessageType = 0x34
-	MessageRouteHealthReport     MessageType = 0x35
-	MessageRouteSelectionReport  MessageType = 0x36
-	MessageCaptiveWindowReport   MessageType = 0x37
-	MessageDNSHealthReport       MessageType = 0x38
-	MessageRelayTicket           MessageType = 0x40
-	MessageFlowTicket            MessageType = 0x41
-	MessageLifecycle             MessageType = 0x50
-	MessageKeyUpdate             MessageType = 0x51
-	MessageNotice                MessageType = 0x52
+	// MessageLogoutResponse is device.signout1 (mtcp-v1 §6.5).
+	MessageLogoutResponse       MessageType = 0x1e
+	MessageMapSnapshot          MessageType = 0x20
+	MessageMapDelta             MessageType = 0x21
+	MessageMapAck               MessageType = 0x22
+	MessageMapResync            MessageType = 0x23
+	MessageMapFresh             MessageType = 0x24
+	MessageEndpointReport       MessageType = 0x30
+	MessageHostinfoReport       MessageType = 0x31
+	MessageHealthReport         MessageType = 0x32
+	MessagePathStatsReport      MessageType = 0x33
+	MessageEnforcementReport    MessageType = 0x34
+	MessageRouteHealthReport    MessageType = 0x35
+	MessageRouteSelectionReport MessageType = 0x36
+	MessageCaptiveWindowReport  MessageType = 0x37
+	MessageDNSHealthReport      MessageType = 0x38
+	MessageRelayTicket          MessageType = 0x40
+	MessageFlowTicket           MessageType = 0x41
+	MessageLifecycle            MessageType = 0x50
+	MessageKeyUpdate            MessageType = 0x51
+	MessageNotice               MessageType = 0x52
 )
 
 // Kubernetes gateway messages (mtcp-v1 §6.7, §6.8).
@@ -113,6 +115,7 @@ var specs = map[MessageType]messageSpec{
 		NodeToCore, 4*kib + kubejoin.MaxTokenSize, func() proto.Message { return &mtcpv1.RotateNodeKey{} },
 	},
 	MessageLogout:                {NodeToCore, kib, func() proto.Message { return &mtcpv1.Logout{} }},
+	MessageLogoutResponse:        {CoreToNode, 256, func() proto.Message { return &mtcpv1.LogoutResponse{} }},
 	MessageRotateNodeKeyResponse: {CoreToNode, kib, func() proto.Message { return &mtcpv1.RotateNodeKeyResponse{} }},
 	MessageMapSnapshot:           {CoreToNode, 32 * mib, func() proto.Message { return &mtcpv1.MapSnapshot{} }},
 	MessageMapDelta:              {CoreToNode, 8 * mib, func() proto.Message { return &mtcpv1.MapDelta{} }},

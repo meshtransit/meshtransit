@@ -49,8 +49,12 @@ type BrowserApproval interface {
 // (control.DeviceLogoutService).
 type DeviceLogout interface {
 	Logout(ctx context.Context, machine control.AuthenticatedMachine, nodeKey node.Key,
-		keyProven bool) (control.DeviceLogout, error)
+		keyProven, keepDevice bool) (control.DeviceLogout, error)
 }
+
+// CapabilitySignOut is device.signout1: Logout.keep_device signs the
+// Device out and keeps it, and Core answers LogoutResponse (mtcp-v1 §6.5).
+const CapabilitySignOut = "device.signout1"
 
 // errLoggedOut ends a session after a Logout (mtcp-v1 §6.5).
 var errLoggedOut = errors.New("mtcp: device logged out")
@@ -631,14 +635,15 @@ func (conversation *conversation) logout(ctx context.Context, request *mtcpv1.Lo
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
-	if _, err := logout.Logout(ctx, machine, nodeKey, keyProven); err != nil {
+	// Only a node that negotiated device.signout1 reads LogoutResponse, so
+	// only it may keep its Device (an older node erases its keys after any
+	// logout and would leave the Device behind).
+	answers := conversation.session.Supports(CapabilitySignOut)
+	keep := answers && request.GetKeepDevice()
+	result, err := logout.Logout(ctx, machine, nodeKey, keyProven, keep)
+	if err != nil {
 		if errors.Is(err, control.ErrDeviceLogoutRevoked) {
-			if err := conversation.session.Send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
-				State: mtcpv1.Lifecycle_REVOKED, Reason: "the Device was removed",
-			}); err != nil {
-				return err
-			}
-			return errLoggedOut
+			return conversation.loggedOut(answers, mtcpv1.Lifecycle_REVOKED, "the Device was removed")
 		}
 		if suspended.IsValid() {
 			conversation.authorize(suspended, disco, hostname, false) // nothing changed: the stream resumes
@@ -648,12 +653,35 @@ func (conversation *conversation) logout(ctx context.Context, request *mtcpv1.Lo
 			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
 		case errors.Is(err, control.ErrDeviceLogoutNotPermitted):
 			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED, "a Kubernetes gateway cannot log out", 0)
+		case errors.Is(err, control.ErrDeviceSignOutNotPermitted):
+			return conversation.sendError(mtcpv1.Error_NOT_PERMITTED,
+				"this Device belongs to the Workspace: remove it, or ask an administrator", 0)
 		}
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "logout unavailable", 2000)
 	}
-	if err := conversation.session.Send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{
-		State: mtcpv1.Lifecycle_LOGGED_OUT, Reason: "the Device logged out",
-	}); err != nil {
+	if result.Outcome == control.LogoutRemoved {
+		return conversation.loggedOut(answers, mtcpv1.Lifecycle_LOGGED_OUT, "the Device logged out")
+	}
+	// Signed out (now or before): the Device stays, its keys with it.
+	if err := conversation.session.Send(sharedmtcp.MessageLogoutResponse,
+		&mtcpv1.LogoutResponse{Outcome: mtcpv1.LogoutResponse_SIGNED_OUT}); err != nil {
+		return err
+	}
+	return errLoggedOut
+}
+
+// loggedOut tells the node its Device is gone and ends the session: by
+// LogoutResponse once device.signout1 is negotiated, else by Lifecycle.
+func (conversation *conversation) loggedOut(answers bool, state mtcpv1.Lifecycle_State, reason string) error {
+	if answers {
+		if err := conversation.session.Send(sharedmtcp.MessageLogoutResponse,
+			&mtcpv1.LogoutResponse{Outcome: mtcpv1.LogoutResponse_REMOVED}); err != nil {
+			return err
+		}
+		return errLoggedOut
+	}
+	if err := conversation.session.Send(sharedmtcp.MessageLifecycle,
+		&mtcpv1.Lifecycle{State: state, Reason: reason}); err != nil {
 		return err
 	}
 	return errLoggedOut

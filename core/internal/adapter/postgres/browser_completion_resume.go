@@ -19,7 +19,8 @@ const lockBrowserResumeDeviceSQL = `SELECT
     device.owner_principal_id, device.state, machine.state,
     device.deleted_at IS NULL AND machine.valid_from <= pg_catalog.clock_timestamp()
       AND device.is_ephemeral=$2::BOOLEAN,
-    COALESCE(device.suspended_reason, ''), COALESCE(device.handover_principal_id, 0)
+    COALESCE(device.suspended_reason, ''), COALESCE(device.handover_principal_id, 0),
+    device.signed_out_at IS NOT NULL
 FROM mesh.device_machine_key_epoch machine
 JOIN mesh.device device ON device.workspace_id=machine.workspace_id
  AND device.network_id=machine.network_id AND device.id=machine.device_id
@@ -34,8 +35,9 @@ WHERE device_id=$1::BIGINT AND state='active'
   AND valid_from <= pg_catalog.clock_timestamp()
 FOR UPDATE`
 
+// Signing in again ends a sign-out (schema 283).
 const resumeBrowserDeviceSQL = `UPDATE mesh.device
-SET expires_at=$2::TIMESTAMPTZ, updated_at=$3::TIMESTAMPTZ, version=version+1
+SET expires_at=$2::TIMESTAMPTZ, signed_out_at=NULL, updated_at=$3::TIMESTAMPTZ, version=version+1
 WHERE id=$1::BIGINT AND version=$4::BIGINT
   AND owner_principal_id=$5::BIGINT AND enrollment_profile_id=$6::BIGINT
   AND state='active' AND deleted_at IS NULL
@@ -46,7 +48,7 @@ RETURNING version`
 const handoverBrowserDeviceSQL = `UPDATE mesh.device
 SET owner_principal_id=$5::BIGINT, custodian_principal_id=$5::BIGINT, ownership='member',
     state='active', suspended_reason=NULL, handover_principal_id=NULL,
-    expires_at=$2::TIMESTAMPTZ, session_generation=session_generation+1,
+    expires_at=$2::TIMESTAMPTZ, signed_out_at=NULL, session_generation=session_generation+1,
     updated_at=$3::TIMESTAMPTZ, version=version+1
 WHERE id=$1::BIGINT AND version=$4::BIGINT
   AND state='suspended' AND suspended_reason='handover' AND handover_principal_id=$5::BIGINT
@@ -66,7 +68,7 @@ func lockBrowserResumeDevice(ctx context.Context, tx registrationDatabaseTransac
 	err := tx.QueryRow(ctx, lockBrowserResumeDeviceSQL, fingerprint[:], authority.ephemeralMode == "ephemeral").Scan(
 		&record.internalID, &record.publicID, &record.profileInternalID,
 		&record.hostname, &record.version, &record.machineKey, &owner,
-		&deviceState, &machineState, &current, &suspendedReason, &handoverTo,
+		&deviceState, &machineState, &current, &suspendedReason, &handoverTo, &record.signedOut,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, registrationDeviceRecord{}, nil

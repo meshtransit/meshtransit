@@ -462,6 +462,7 @@ func completeApprovedBrowserRegistration(
 	if err := appendBrowserCompletionEvidence(ctx, tx, helper.locked.audit,
 		authority, ids, selectedHostname, deviceVersion,
 		newNetworkRevision, newInventoryRevision, disposition, resumed && existing.handover,
+		resumed && existing.signedOut,
 	); err != nil {
 		return registration.Result{}, err
 	}
@@ -482,11 +483,15 @@ func appendBrowserCompletionEvidence(
 	head registrationAuditHead, authority browserCompletionAuthority,
 	ids browserCompletionIDs, hostname node.Hostname,
 	deviceVersion, networkRevision, inventoryRevision int64, disposition registration.Disposition,
-	handover bool,
+	handover, signedIn bool,
 ) error {
 	action := "device.registered"
 	if disposition == registration.DispositionResumed {
 		action = "device.resumed"
+	}
+	// The owner signed in again on a Device they had signed out (schema 283).
+	if signedIn {
+		action = "device.signed_in"
 	}
 	if handover {
 		action = "device.handover_completed"

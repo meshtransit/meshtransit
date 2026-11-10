@@ -243,6 +243,8 @@ type registrationDeviceRecord struct {
 	// ownerInternalID owns the Device; a resume names it on the owner's
 	// behalf, whoever issued the enrollment key.
 	ownerInternalID int64
+	// signedOut: the owner signed out; only signing in reopens it (schema 283).
+	signedOut bool
 }
 
 type registrationLockedState struct {

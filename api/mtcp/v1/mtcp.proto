@@ -188,6 +188,23 @@ message RotateNodeKeyResponse {
 // not authorized, because it expired, logs out too. An older Core ignores it.
 message Logout {
   bytes node_key_proof = 1;
+  // keep_device asks Core to sign the Device out and keep it (device.signout1,
+  // §6.5): its owner signs in again on this installation to bring it back.
+  // false, or a Core without device.signout1, removes the Device.
+  bool keep_device = 2;
+}
+
+// LogoutResponse answers Logout once device.signout1 is negotiated (§6.5).
+message LogoutResponse {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    // The Device is signed out and kept: the node keeps its keys.
+    SIGNED_OUT = 1;
+    // The Device is removed (now, or before with these keys): the node may
+    // erase them.
+    REMOVED = 2;
+  }
+  Outcome outcome = 1;
 }
 
 // NodeKeyProof proves, as the session's first record, that the node holds

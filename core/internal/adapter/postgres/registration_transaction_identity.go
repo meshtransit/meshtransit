@@ -152,6 +152,7 @@ func (transaction *registrationTransaction) lockExistingDevice(
 		&record.workspaceOwned,
 		&record.expiresAt,
 		&record.ownerInternalID,
+		&record.signedOut,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return node.ID{}, nil
@@ -175,6 +176,11 @@ func (transaction *registrationTransaction) lockExistingDevice(
 	// A Workspace Device keeps its expiry and its name on resume, so the key
 	// changes neither.
 	if !record.workspaceOwned && record.ownerInternalID != locked.credential.issuerInternalID {
+		return node.ID{}, registration.ErrIntentConflict
+	}
+	// A signed-out Device comes back only by its owner signing in on it
+	// (schema 283): a key never reopens it.
+	if record.signedOut {
 		return node.ID{}, registration.ErrIntentConflict
 	}
 	nodeID, err := node.ParseID(record.publicID)

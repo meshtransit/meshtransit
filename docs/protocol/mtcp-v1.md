@@ -242,6 +242,7 @@ payload     bytes[...]
 | 0x1B | `KubeAuditAck` | C→N | 32 KiB |
 | 0x1C | `KubeAuditOutcomes` | N→C | 128 KiB |
 | 0x1D | `GatewayPodToken` | N→C | 8,256 B (64 B plus a pod token of 8 KiB) |
+| 0x1E | `LogoutResponse` | C→N | 256 B |
 | 0x20 | `MapSnapshot` | C→N | 32 MiB |
 | 0x21 | `MapDelta` | C→N | 8 MiB |
 | 0x22 | `MapAck` | N→C | 256 B |
@@ -424,6 +425,26 @@ forbid self-logout for managed Devices; Core then answers
 `Error{code: NOT_PERMITTED}`. A Kubernetes gateway never logs out: Core,
 and its database, answer `Error{code: NOT_PERMITTED}`, so a copy of the
 gateway's keys cannot remove it; an administrator does (6.7).
+
+**Signing out (`device.signout1`).** Once `device.signout1` is negotiated,
+`Logout.keep_device` asks Core to sign the Device out and keep it: its
+identity, keys, addresses, name, owner, groups, tags and the rules that name
+it stay, and it leaves every map (its expiry is at or before the sign-out).
+Core records `device.signed_out` and answers
+`LogoutResponse{outcome: SIGNED_OUT}`; the node keeps its keys, stops, and
+does not register again until the user signs in. Its owner signing in again
+on the same installation (the interactive flow, 6.2) brings the same Device
+back; an enrollment key never does. Without `keep_device` Core removes the
+Device as above and answers `LogoutResponse{outcome: REMOVED}`, also for
+keys revoked with their Device; the node may then erase them. A repeated
+sign-out answers `SIGNED_OUT` and writes nothing. A Workspace Device cannot
+sign out (nobody could sign it back in): `Error{code: NOT_PERMITTED}`. An
+ephemeral Device is removed whatever the node asks. Without
+`device.signout1`, Core ignores `keep_device` and answers with `Lifecycle`
+as above, so a node that erases its keys after a logout never leaves a
+Device behind. With `device.signout1`, a refusal still answers with `Error`
+(`NOT_AUTHORIZED`, `NOT_PERMITTED`, `OVERLOADED`, `INTERNAL`), never with a
+`LogoutResponse`, and the node keeps its keys.
 
 ### 6.6 Kubernetes cluster join
 
@@ -1992,6 +2013,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7) and `RotateMachineKey` from gateways (6.8); a Kubernetes gateway requires it |
+| `device.signout1` | `Logout.keep_device` signs the Device out and keeps it, and Core answers `Logout` with `LogoutResponse` (6.5) |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` (Sites) or `router.exit.v1` (its Exit Pool) |

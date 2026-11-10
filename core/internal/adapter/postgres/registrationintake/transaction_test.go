@@ -273,11 +273,13 @@ func TestTransactionMarksAnotherMembersKey(t *testing.T) {
 		name           string
 		owner          int64
 		workspaceOwned bool
+		signedOut      bool
 		refused        bool
 	}{
 		{name: "another member's Device", owner: 99, refused: true},
 		{name: "the issuer's Device", owner: 11},
 		{name: "a Workspace Device", owner: 99, workspaceOwned: true},
+		{name: "a signed-out Device", owner: 11, signedOut: true, refused: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -288,6 +290,7 @@ func TestTransactionMarksAnotherMembersKey(t *testing.T) {
 			databaseTransaction.rows[readBoundDeviceOwnerSQL] = []databaseRow{testRow{scan: func(destinations ...any) error {
 				*destinations[0].(*int64) = test.owner
 				*destinations[1].(*bool) = test.workspaceOwned
+				*destinations[2].(*bool) = test.signedOut
 				return nil
 			}}}
 			transactions := newTestTransactions(t, databaseTransaction)

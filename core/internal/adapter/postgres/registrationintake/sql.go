@@ -58,7 +58,8 @@ FOR UPDATE OF registration`
 // owns in this Network: a key renews it only when its issuer owns it, or
 // the Workspace does (TD-SEC-75). Read before an intent is written, so a
 // refused key leaves nothing that blocks the owner's own key.
-const readBoundDeviceOwnerSQL = `SELECT device.owner_principal_id, device.ownership = 'workspace'
+const readBoundDeviceOwnerSQL = `SELECT device.owner_principal_id, device.ownership = 'workspace',
+    device.signed_out_at IS NOT NULL
 FROM mesh.device_machine_key_epoch AS machine
 JOIN mesh.device AS device
   ON device.workspace_id = machine.workspace_id

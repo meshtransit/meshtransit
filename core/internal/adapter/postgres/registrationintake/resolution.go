@@ -54,16 +54,17 @@ func (transaction *transaction) Resolve(
 func (transaction *transaction) boundToAnotherOwner(ctx context.Context, lookup appintake.Lookup,
 	issuer int64) (bool, error) {
 	var owner int64
-	var workspaceOwned bool
+	var workspaceOwned, signedOut bool
 	err := transaction.database.QueryRow(ctx, readBoundDeviceOwnerSQL, lookup.MachineFingerprint[:]).
-		Scan(&owner, &workspaceOwned)
+		Scan(&owner, &workspaceOwned, &signedOut)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("read the machine key's Device: %w", err)
 	}
-	return !workspaceOwned && owner != issuer, nil
+	// A signed-out Device reopens only by its owner signing in (schema 283).
+	return signedOut || (!workspaceOwned && owner != issuer), nil
 }
 
 func (transaction *transaction) resolveLocked(
