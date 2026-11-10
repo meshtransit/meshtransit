@@ -814,7 +814,18 @@ type fakeClient struct {
 	removedLocal    []bool
 	removal         localapi.ProfileRemoval
 	removeErr       error
+	added           localapi.AccountAdded
+	addErr          error
+	addedWith       []string
 	err             error
+}
+
+func (f *fakeClient) AddAccount(_ context.Context, name string) (localapi.AccountAdded, error) {
+	f.addedWith = append(f.addedWith, name)
+	if f.addErr != nil {
+		return localapi.AccountAdded{}, f.addErr
+	}
+	return f.added, f.err
 }
 
 func (f *fakeClient) RefreshNAT(_ context.Context) (localapi.Netcheck, error) {

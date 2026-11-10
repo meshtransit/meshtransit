@@ -19,7 +19,6 @@ import (
 	"unicode/utf8"
 
 	"meshtransit.net/client/internal/cli/localapi"
-	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/version"
 )
 
@@ -42,6 +41,7 @@ type DaemonClient interface {
 	CreateProfile(context.Context, localapi.CreateProfile) (localapi.Profile, error)
 	ActivateProfile(context.Context, string) (localapi.Profile, error)
 	RemoveProfile(context.Context, string, bool) (localapi.ProfileRemoval, error)
+	AddAccount(context.Context, string) (localapi.AccountAdded, error)
 	ProbeControl(context.Context) (localapi.ControlProbe, error)
 	TrustControl(context.Context, string) (localapi.ControlTrust, error)
 	StartLogin(context.Context, string) (localapi.Login, error)
@@ -269,78 +269,22 @@ func runIdentity(
 	return 0
 }
 
-// addAccountProfile creates a profile for the active profile's server,
-// activates it and pins the same control key, so the next login signs in
-// another account as a new Device while the previous profile keeps its own
-// (design §7). Profiles are switched, never logged out. A step that fails
-// after the switch goes back to the previous profile.
+// addAccountProfile has meshd add an account on the active profile's server
+// (design §7): a profile pinned with the same key before it becomes active,
+// so the next login signs another account in as a new Device while the
+// previous profile keeps its own. Profiles are switched, never logged out.
 func addAccountProfile(ctx context.Context, client DaemonClient, name string) (localapi.Profile,
 	localapi.Profile, error,
 ) {
-	status, err := client.Status(ctx)
+	added, err := client.AddAccount(ctx, name)
+	if errors.Is(err, localapi.ErrEndpointMissing) {
+		// An older meshd has no account endpoint; a JSON 404 is its own answer.
+		return localapi.Profile{}, localapi.Profile{}, errors.New("this meshd cannot add accounts; update it first")
+	}
 	if err != nil {
 		return localapi.Profile{}, localapi.Profile{}, err
 	}
-	if status.ActiveProfileID == "" || status.ControlFingerprint == "" {
-		return localapi.Profile{}, localapi.Profile{}, errors.New(
-			"--new-account needs an active profile whose control key is pinned (meshctl profile use to pick one)",
-		)
-	}
-	profiles, err := client.ListProfiles(ctx)
-	if err != nil {
-		return localapi.Profile{}, localapi.Profile{}, err
-	}
-	var active localapi.Profile
-	taken := map[string]bool{}
-	for _, item := range profiles.Profiles {
-		taken[strings.ToLower(item.Name)] = true
-		if item.ID == status.ActiveProfileID {
-			active = item
-		}
-	}
-	if active.ID == "" {
-		return localapi.Profile{}, localapi.Profile{}, errors.New("the active profile is not listed")
-	}
-	// A profile still without a Device is where to sign in: another would
-	// only pile up.
-	if active.State == "unregistered" || active.State == "authorization_required" {
-		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-			"the active profile %q has no device yet: sign in to it with meshctl login", active.Name,
-		)
-	}
-	if name == "" {
-		name = profile.NextName(active.Name, taken)
-	}
-	created, err := client.CreateProfile(ctx, localapi.CreateProfile{Name: name, ControlURL: active.ControlURL})
-	if err != nil {
-		return localapi.Profile{}, localapi.Profile{}, err
-	}
-	if _, err := client.ActivateProfile(ctx, created.ID); err != nil {
-		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-			"created profile %q but could not switch to it (meshctl profile use %s): %w", created.Name, created.ID, err,
-		)
-	}
-	if _, err := client.TrustControl(ctx, status.ControlFingerprint); err != nil {
-		if _, backErr := client.ActivateProfile(ctx, active.ID); backErr != nil {
-			return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-				"could not pin the server's key for profile %q (%w), nor switch back: run meshctl profile use %s",
-				created.Name, err, active.ID,
-			)
-		}
-		// The new profile holds no keys Core knows: drop it here.
-		if _, removeErr := client.RemoveProfile(ctx, created.ID, true); removeErr != nil {
-			return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-				"could not pin the server's key for profile %q, so %q is active again, and could not remove the "+
-					"unused profile (meshctl profile remove %s): %w", created.Name, active.Name, created.ID,
-				errors.Join(err, removeErr),
-			)
-		}
-		return localapi.Profile{}, localapi.Profile{}, fmt.Errorf(
-			"could not pin the server's key for a new profile, so %q is active again and nothing was added: %w",
-			active.Name, err,
-		)
-	}
-	return created, active, nil
+	return added.Profile, added.Previous, nil
 }
 
 func runLogin(

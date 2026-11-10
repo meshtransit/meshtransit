@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1042,6 +1043,45 @@ func TestServer_ProfileRemovalErrorsSayWhatToDo(t *testing.T) {
 		server.writeServiceError(recorder, test.err)
 		if recorder.Code != test.status || !strings.Contains(recorder.Body.String(), test.code) ||
 			!strings.Contains(recorder.Body.String(), test.says) {
+			t.Fatalf("%v = %d %s", test.err, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+// Design §7: POST /v1/accounts adds an account through the daemon, which
+// refuses while the server in use is not trusted.
+func TestServer_AddAccount(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	createProfile(t, server, "work", "https://control.example.com")
+	recorder := performRequest(t, server, http.MethodPost, "/v1/accounts", "application/json", []byte(`{}`))
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "add_account_untrusted") {
+		t.Fatalf("POST /v1/accounts = %d %s, want 409 add_account_untrusted", recorder.Code, recorder.Body.String())
+	}
+	if recorder := performRequest(t, server, http.MethodGet, "/v1/accounts", "", nil); recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/accounts = %d", recorder.Code)
+	}
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{daemon.ErrAddAccountNoDevice, "add_account_no_device"},
+		{daemon.ErrAddAccountUntrusted, "add_account_untrusted"},
+		{fmt.Errorf("%w: pin", daemon.ErrAddAccount), "add_account_failed"},
+		{profile.ErrDuplicate, "profile_exists"},
+		{daemon.ErrGatewayProfiles, "does not add accounts"},
+		// A failed setup wraps causes that mean something else elsewhere.
+		{fmt.Errorf("%w: switching to it: %w", daemon.ErrAddAccount, profile.ErrNotFound), "add_account_failed"},
+		{errors.Join(fmt.Errorf("%w: switching: x", daemon.ErrAddAccount), profile.ErrActive), "add_account_failed"},
+		{fmt.Errorf("%w: pinning: %w", daemon.ErrAddAccount, controlplane.ErrFingerprintMismatch),
+			"no longer offers the pinned key"},
+		{fmt.Errorf("%w: pinning: %w", daemon.ErrAddAccount, context.Canceled), "request_cancelled"},
+	} {
+		recorder := httptest.NewRecorder()
+		server.writeAddAccountError(recorder, test.err)
+		if !strings.Contains(recorder.Body.String(), test.code) {
 			t.Fatalf("%v = %d %s", test.err, recorder.Code, recorder.Body.String())
 		}
 	}

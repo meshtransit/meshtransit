@@ -344,6 +344,14 @@ type RuntimeStatus struct {
 	GCCycles        uint32 `json:"gc_cycles"`
 }
 
+// AccountAdded reports an account meshd added: the new profile, now active,
+// and the previous one, which keeps its Device.
+type AccountAdded struct {
+	APIVersion string  `json:"api_version"`
+	Profile    Profile `json:"profile"`
+	Previous   Profile `json:"previous"`
+}
+
 // ProfileRemoval reports a removed profile and what became of its Device:
 // removed, already_removed, none, pending or left (--local).
 type ProfileRemoval struct {

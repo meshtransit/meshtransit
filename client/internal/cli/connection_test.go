@@ -3,7 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -117,33 +117,33 @@ func TestRun_LogoutSignsOutUnlessRemoving(t *testing.T) {
 func TestRun_LogoutOnAnOlderMeshd(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	client := &fakeClient{err: &localapi.APIError{StatusCode: http.StatusNotFound, Code: "not_found"}}
+	client := &fakeClient{err: fmt.Errorf("%w: POST /v1/sign-out", localapi.ErrEndpointMissing)}
 	if code := Run(t.Context(), []string{"logout"}, &stdout, &stderr, testOptions(client)); code != 1 ||
 		!strings.Contains(stderr.String(), "logout --remove") {
 		t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
 	}
 }
 
-// Design §7: login --new-account adds a profile for the same server, makes
-// it active and pins the same control key before signing in.
+// Design §7: login --new-account has meshd add an account (pinned with the
+// same key before it becomes active), then signs in to it.
 func TestRun_LoginNewAccount(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	client := &fakeClient{
-		status: localapi.Status{APIVersion: "v1", ActiveProfileID: "p1", ControlFingerprint: "sha256:abc"},
-		profiles: localapi.Profiles{APIVersion: "v1", Profiles: []localapi.Profile{
-			{ID: "p1", Name: "Cloud", ControlURL: "https://control.example.com", IsActive: true},
-			{ID: "p0", Name: "Cloud 2", ControlURL: "https://control.example.com"},
-		}},
-		created: localapi.Profile{ID: "p2", Name: "Cloud 3"},
-		login:   localapi.Login{APIVersion: "v1", State: "registered"},
+		added: localapi.AccountAdded{
+			APIVersion: "v1",
+			Profile:    localapi.Profile{ID: "p2", Name: "Cloud 2"},
+			Previous:   localapi.Profile{ID: "p1", Name: "Cloud"},
+		},
+		login: localapi.Login{APIVersion: "v1", State: "registered"},
 	}
-	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code != 0 {
+	if code := Run(t.Context(), []string{"login", "--new-account", "--name", "Work"}, &stdout, &stderr,
+		testOptions(client)); code != 0 {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
-	if client.createdWith.Name != "Cloud 3" || client.createdWith.ControlURL != "https://control.example.com" ||
-		client.activatedID != "p2" || client.trustedWith != "sha256:abc" {
-		t.Fatalf("created %+v, activated %q, trusted %q", client.createdWith, client.activatedID, client.trustedWith)
+	if strings.Join(client.addedWith, ",") != "Work" || !strings.Contains(stdout.String(), `"Cloud" keeps its device`) ||
+		!strings.Contains(stdout.String(), "meshctl profile use p1") {
+		t.Fatalf("added with %v, stdout %q", client.addedWith, stdout.String())
 	}
 	if code := Run(t.Context(), []string{"login", "--name", "Work"}, &stdout, &stderr,
 		testOptions(&fakeClient{})); code != 2 {
@@ -151,43 +151,29 @@ func TestRun_LoginNewAccount(t *testing.T) {
 	}
 }
 
-// A failed pin goes back to the previous profile; a profile still without
-// a Device is where to sign in.
+// A refusal stops before any sign-in; an older meshd says to update it.
 func TestRun_LoginNewAccountFailures(t *testing.T) {
 	t.Parallel()
-	listing := func(state string) localapi.Profiles {
-		return localapi.Profiles{APIVersion: "v1", Profiles: []localapi.Profile{
-			{ID: "p1", Name: "Cloud", ControlURL: "https://control.example.com", IsActive: true, State: state},
-		}}
-	}
-	status := localapi.Status{APIVersion: "v1", ActiveProfileID: "p1", ControlFingerprint: "sha256:abc"}
-	var stdout, stderr bytes.Buffer
-	client := &fakeClient{status: status, profiles: listing("registered"), created: localapi.Profile{
-		ID:   "p2",
-		Name: "Cloud 2",
-	}, trustErr: errors.New("control unreachable")}
-	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
-		strings.Join(client.activatedIDs, ",") != "p2,p1" || !strings.Contains(stderr.String(), "active again") ||
-		strings.Join(client.removedProfiles, ",") != "p2" || !client.removedLocal[0] ||
-		!strings.Contains(stderr.String(), "nothing was added") {
-		t.Fatalf("exit %d, activated %v, removed %v, stderr %q", code, client.activatedIDs, client.removedProfiles,
-			stderr.String())
-	}
-	// The unused profile cannot be dropped either: say how.
-	stderr.Reset()
-	client = &fakeClient{status: status, profiles: listing("registered"), created: localapi.Profile{
-		ID:   "p2",
-		Name: "Cloud 2",
-	}, trustErr: errors.New("control unreachable"), removeErr: errors.New("busy")}
-	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
-		!strings.Contains(stderr.String(), "meshctl profile remove p2") {
-		t.Fatalf("exit %d, stderr %q", code, stderr.String())
-	}
-	stderr.Reset()
-	client = &fakeClient{status: status, profiles: listing("unregistered")}
-	if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
-		client.createdWith.Name != "" || !strings.Contains(stderr.String(), "no device yet") {
-		t.Fatalf("exit %d, created %+v, stderr %q", code, client.createdWith, stderr.String())
+	for _, test := range []struct {
+		err  error
+		says string
+	}{
+		{&localapi.APIError{
+			StatusCode: http.StatusConflict, Code: "add_account_no_device",
+			Message: "the account in use has no device yet: sign in to it first",
+		}, "no device yet"},
+		{fmt.Errorf("%w: POST /v1/accounts", localapi.ErrEndpointMissing), "update it first"},
+		// A new meshd's own 404 (the new profile went away) is its answer,
+		// not a sign of an older meshd.
+		{&localapi.APIError{StatusCode: http.StatusNotFound, Code: "profile_not_found", Message: "profile not found"},
+			"profile not found"},
+	} {
+		var stdout, stderr bytes.Buffer
+		client := &fakeClient{addErr: test.err, login: localapi.Login{APIVersion: "v1", State: "registered"}}
+		if code := Run(t.Context(), []string{"login", "--new-account"}, &stdout, &stderr, testOptions(client)); code == 0 ||
+			!strings.Contains(stderr.String(), test.says) || strings.Contains(stdout.String(), "Registered") {
+			t.Fatalf("%v: exit %d, stdout %q, stderr %q", test.err, code, stdout.String(), stderr.String())
+		}
 	}
 }
 

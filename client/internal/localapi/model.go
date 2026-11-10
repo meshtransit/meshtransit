@@ -369,6 +369,17 @@ type controlProbeResponse struct {
 	NoiseVersion     int    `json:"noise_version"`
 }
 
+type addAccountRequest struct {
+	// Name is optional: "<name in use> N" when empty.
+	Name string `json:"name"`
+}
+
+type addAccountResponse struct {
+	APIVersion string          `json:"api_version"`
+	Profile    profileResponse `json:"profile"`
+	Previous   profileResponse `json:"previous"`
+}
+
 type createProfileRequest struct {
 	Name       string `json:"name"`
 	ControlURL string `json:"control_url"`

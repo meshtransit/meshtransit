@@ -15,6 +15,15 @@ merge (2026-10-09) are kept below.
   `incomplete:<device>`), with a 70 s bound. The daemon gains `AddAccount`
   (one at a time) and pins a given profile (`trustProfile`); a Kubernetes
   gateway refuses both with its own error.
+- local API (device logout design S4): `POST /v1/accounts` (body `{}` or
+  `{"name": ...}`) has meshd add an account the same way, answering 201 with
+  the new profile and the previous one (with their state).
+  `meshctl login --new-account` uses it instead of switching, pinning and
+  switching back itself, so the profile in use is never touched when the pin
+  fails. meshctl reads a plain-text 404 from an older meshd as a missing
+  endpoint (`ErrEndpointMissing`): "update meshd" now shows for
+  `login --new-account` and for `logout` (the sign-out hint pushed in S2
+  never showed, as the content-type check came first).
 - Core (schema 286): a signed-out Device's page shows the addresses it
   keeps. `read_console_device_v6` answers a signed-out Device's active
   primary leases although signing out ended its expiry; other Devices answer

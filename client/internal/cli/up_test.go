@@ -70,6 +70,10 @@ func (f *upFakeClient) CreateProfile(_ context.Context, input localapi.CreatePro
 	return profile, nil
 }
 
+func (f *upFakeClient) AddAccount(context.Context, string) (localapi.AccountAdded, error) {
+	return localapi.AccountAdded{}, errors.New("up does not add accounts")
+}
+
 func (f *upFakeClient) RemoveProfile(context.Context, string, bool) (localapi.ProfileRemoval, error) {
 	return localapi.ProfileRemoval{}, errors.New("up does not remove profiles")
 }

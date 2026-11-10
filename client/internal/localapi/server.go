@@ -37,6 +37,7 @@ type service interface {
 	CreateProfile(context.Context, profile.CreateInput) (profile.Profile, error)
 	ActivateProfile(context.Context, string) (profile.Profile, error)
 	RemoveProfile(context.Context, string, bool) (daemon.ProfileRemoval, error)
+	AddAccount(context.Context, string) (profile.Profile, profile.Profile, error)
 	ProbeControl(context.Context) (daemon.ControlProbe, error)
 	TrustControl(context.Context, string) (daemon.ControlTrust, error)
 	StartLogin(context.Context, string) (daemon.Login, error)
@@ -170,6 +171,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/status", s.handleStatus)
 	mux.HandleFunc("/v1/profiles", s.handleProfiles)
 	mux.HandleFunc(profilePathPrefix, s.handleProfileAction)
+	mux.HandleFunc("/v1/accounts", s.handleAddAccount)
 	mux.HandleFunc("/v1/doctor/control", s.handleControlProbe)
 	mux.HandleFunc("/v1/control/trust", s.handleControlTrust)
 	mux.HandleFunc("/v1/login", s.handleLogin)
@@ -946,6 +948,60 @@ func (s *Server) handleCreateProfile(writer http.ResponseWriter, request *http.R
 	s.writeJSON(writer, http.StatusCreated, mapProfile(created, snapshot.ActiveProfileID))
 }
 
+// handleAddAccount adds an account on the active profile's server (meshctl
+// login --new-account, the apps' Add account): a profile pinned with the
+// same key before it becomes active. POST /v1/accounts with a JSON body,
+// {} or {"name": "..."}; the name defaults to "<active name> N".
+func (s *Server) handleAddAccount(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+
+		return
+	}
+	input := addAccountRequest{}
+	if !s.decodeJSONRequest(writer, request, &input) {
+		return
+	}
+	created, previous, err := s.service.AddAccount(request.Context(), input.Name)
+	if err != nil {
+		s.writeAddAccountError(writer, err)
+
+		return
+	}
+	added := mapProfile(created, created.ID)
+	before := mapProfile(previous, created.ID)
+	// States are best effort here: the account was added either way.
+	if states, err := s.service.ProfileStates(request.Context(), []profile.Profile{created, previous}); err == nil {
+		added.State = states[created.ID]
+		before.State = states[previous.ID]
+	}
+	s.writeJSON(writer, http.StatusCreated, addAccountResponse{APIVersion: apiVersion, Profile: added, Previous: before})
+}
+
+// writeAddAccountError maps AddAccount's errors before the shared mapping:
+// a failed setup wraps causes (a profile gone, a key no longer offered, a
+// drop that failed) that mean something else on other routes.
+func (s *Server) writeAddAccountError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, daemon.ErrGatewayProfiles):
+		s.writeError(writer, http.StatusConflict, "gateway_profile",
+			"a Kubernetes gateway keeps its one profile and does not add accounts")
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		s.writeError(writer, http.StatusRequestTimeout, "request_cancelled", "request was cancelled")
+	case errors.Is(err, daemon.ErrAddAccount) &&
+		(errors.Is(err, controlplane.ErrFingerprintMismatch) || errors.Is(err, controlplane.ErrControlKeyChanged)):
+		s.logger.Warn("adding an account failed: control key", "error", err)
+		s.writeError(writer, http.StatusBadGateway, "add_account_failed",
+			"the server no longer offers the pinned key, so no account was added; the account in use is unchanged")
+	case errors.Is(err, daemon.ErrAddAccount):
+		s.logger.Warn("adding an account failed", "error", err)
+		s.writeError(writer, http.StatusBadGateway, "add_account_failed",
+			"the new account could not be set up; the account in use is unchanged")
+	default:
+		s.writeServiceError(writer, err)
+	}
+}
+
 func (s *Server) handleProfileAction(writer http.ResponseWriter, request *http.Request) {
 	remainder := strings.TrimPrefix(request.URL.Path, profilePathPrefix)
 	if request.Method == http.MethodDelete && isProfilePathID(remainder) {
@@ -1034,6 +1090,12 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, controlplane.ErrControlKeyChanged):
 		s.logger.Error("pinned control key changed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_key_changed", "pinned control key no longer matches the control server")
+	case errors.Is(err, daemon.ErrAddAccountUntrusted):
+		s.writeError(writer, http.StatusConflict, "add_account_untrusted",
+			"the server in use is not trusted yet: sign in to it first")
+	case errors.Is(err, daemon.ErrAddAccountNoDevice):
+		s.writeError(writer, http.StatusConflict, "add_account_no_device",
+			"the account in use has no device yet: sign in to it first")
 	case errors.Is(err, daemon.ErrProfileRemoving):
 		s.writeError(writer, http.StatusConflict, "profile_removing", "the profile is being removed; try again")
 	case errors.Is(err, daemon.ErrGatewayLogout), errors.Is(err, daemon.ErrGatewayProfiles):

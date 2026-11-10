@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -428,5 +429,51 @@ func TestClient_RemoveProfile(t *testing.T) {
 	})
 	if _, err := stale.RemoveProfile(t.Context(), id, false); err == nil {
 		t.Fatal("RemoveProfile() accepted an unknown api version")
+	}
+}
+
+func TestClient_AddAccount(t *testing.T) {
+	t.Parallel()
+
+	var seen string
+	client := newTestClient(func(request *http.Request) (*http.Response, error) {
+		seen = request.Method + " " + request.URL.Path
+		return jsonResponse(http.StatusCreated, `{"api_version":"v1","profile":{"id":"p2","name":"Cloud 2"},`+
+			`"previous":{"id":"p1","name":"Cloud"}}`), nil
+	})
+	added, err := client.AddAccount(t.Context(), "")
+	if err != nil || seen != "POST /v1/accounts" || added.Profile.ID != "p2" || added.Previous.Name != "Cloud" {
+		t.Fatalf("AddAccount() = %+v, %v (request %q)", added, err, seen)
+	}
+}
+
+// An older meshd has no such route: Go's router answers with a plain-text
+// 404, which must read as a missing endpoint, not a malformed reply.
+func TestClient_EndpointMissing(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/status", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{}`))
+	})
+	client := newTestClient(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		return recorder.Result(), nil
+	})
+	if _, err := client.AddAccount(t.Context(), ""); !errors.Is(err, ErrEndpointMissing) {
+		t.Fatalf("AddAccount() on an older meshd = %v, want ErrEndpointMissing", err)
+	}
+	if _, err := client.SignOut(t.Context()); !errors.Is(err, ErrEndpointMissing) {
+		t.Fatalf("SignOut() on an older meshd = %v, want ErrEndpointMissing", err)
+	}
+	// A plain-text reply of any other status stays a content-type error.
+	other := newTestClient(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{"Content-Type": {"text/plain"}},
+			Body: io.NopCloser(strings.NewReader("bad gateway"))}, nil
+	})
+	if _, err := other.AddAccount(t.Context(), ""); err == nil || errors.Is(err, ErrEndpointMissing) {
+		t.Fatalf("AddAccount() on a plain 502 = %v", err)
 	}
 }

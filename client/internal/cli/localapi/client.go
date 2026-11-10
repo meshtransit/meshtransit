@@ -19,6 +19,10 @@ const (
 	maxResponseBodyBytes = 1 << 20
 )
 
+// ErrEndpointMissing means meshd has no such route: it is older than this
+// meshctl. Go's router answers that with a plain-text 404, never a JSON error.
+var ErrEndpointMissing = errors.New("localapi: meshd does not offer this endpoint; update it")
+
 // APIError is a sanitized error returned by meshd.
 type APIError struct {
 	StatusCode int
@@ -133,6 +137,23 @@ func (c *Client) RemoveProfile(ctx context.Context, id string, local bool) (Prof
 	}
 	if response.APIVersion != apiVersion {
 		return ProfileRemoval{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
+// AddAccount has meshd add an account on the active profile's server: a
+// profile pinned with the same key, then made active. name may be empty.
+func (c *Client) AddAccount(ctx context.Context, name string) (AccountAdded, error) {
+	response := AccountAdded{}
+	body := struct {
+		Name string `json:"name"`
+	}{Name: name}
+	if err := c.do(ctx, http.MethodPost, "/v1/accounts", body, http.StatusCreated, &response); err != nil {
+		return AccountAdded{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return AccountAdded{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
 	}
 
 	return response, nil
@@ -369,8 +390,12 @@ func (c *Client) do(
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	if err := validateContentType(response.Header.Get("Content-Type")); err != nil {
-		return err
+	contentErr := validateContentType(response.Header.Get("Content-Type"))
+	if contentErr != nil && response.StatusCode == http.StatusNotFound && response.StatusCode != expectedStatus {
+		return fmt.Errorf("%w: %s %s", ErrEndpointMissing, method, path)
+	}
+	if contentErr != nil {
+		return contentErr
 	}
 	limited := io.LimitReader(response.Body, maxResponseBodyBytes+1)
 	encoded, err := io.ReadAll(limited)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 
 	"meshtransit.net/client/internal/cli/localapi"
 )
@@ -70,8 +69,7 @@ func runLogout(
 		call = client.Logout
 	}
 	result, err := call(ctx)
-	var apiErr *localapi.APIError
-	if !remove && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+	if !remove && errors.Is(err, localapi.ErrEndpointMissing) {
 		// An older meshd has no sign-out: it only removes.
 		_, _ = fmt.Fprintln(stderr, "meshctl: meshd is older than meshctl and cannot sign out; "+
 			"update meshd, or run meshctl logout --remove to remove this machine")
