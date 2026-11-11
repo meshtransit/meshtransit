@@ -45,8 +45,9 @@ func NewAuthorityDelta(current, next Snapshot) (AuthorityDelta, error) {
 // Snapshot returns the complete post-update projection.
 func (delta AuthorityDelta) Snapshot() Snapshot { return delta.snapshot }
 
-// SelfChanged reports whether self routing observations changed with the
-// authority revision. Self durable authority is never delta-encoded.
+// SelfChanged reports whether self routing observations, or the names of
+// its account (self.identity1), changed with the authority revision. Self
+// durable authority is never delta-encoded.
 func (delta AuthorityDelta) SelfChanged() bool { return delta.isSelfChanged }
 
 // ChangedPeers returns complete replacements for added or changed peers,
@@ -97,7 +98,8 @@ func projectAuthorityDelta(
 	if current.PacketPolicy().Equal(next.PacketPolicy()) &&
 		equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) &&
 		current.routes.Equal(next.routes) && current.kubernetes.Equal(next.kubernetes) &&
-		!current.kubernetes.TrustChanged(next.kubernetes) && equalPeerCandidates(currentPeers, nextPeers) {
+		!current.kubernetes.TrustChanged(next.kubernetes) && equalPeerCandidates(currentPeers, nextPeers) &&
+		current.selfIdentity.Equal(next.selfIdentity) {
 		return false, nil, nil, ErrInvalidAuthorityDelta
 	}
 	currentByID := make(map[node.ID]PeerCandidate, len(currentPeers))
@@ -144,9 +146,10 @@ func projectAuthorityDelta(
 		}
 	}
 
-	// The gateway's own entry carries its cluster's CAs (§7.10).
+	// The gateway's own entry carries its cluster's CAs (§7.10), and every
+	// node's its account's names (self.identity1): self is replaced whole.
 	return !equalProjectedConnectivity(current, next, current.NodeID(), true) ||
-			current.kubernetes.caChanged(next.kubernetes),
+			current.kubernetes.caChanged(next.kubernetes) || !current.selfIdentity.Equal(next.selfIdentity),
 		changedPeers,
 		removedPeerNumericIDs,
 		nil

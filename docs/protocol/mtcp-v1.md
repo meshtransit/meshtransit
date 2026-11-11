@@ -1054,10 +1054,11 @@ removal of the same ID, makes the delta invalid (the node resyncs).
 | `home_relay` | Relay region ID the peer is reachable through |
 | `online`, `last_seen` | Presence, as known to Core; `online` is absent when Core has no connectivity for the Device (unknown, not offline: nodes still probe it) |
 | `key_expiry` | When the Device stops being valid without renewal |
-| `owner` | Opaque owner reference for display (no personal data beyond a display name); in a Kubernetes gateway's map, set with `kubernetes` (7.8) |
+| `owner` | On peers only, by `ref`: an opaque owner reference (no personal data); in a Kubernetes gateway's map, set with `kubernetes` (7.8). `display_name` is not used: a node's own account names come in `identity` |
 | `capabilities` | Feature names the peer supports (section 13) |
 | `alias` | Device alias grant, when the peer is reached through a share (7.4) |
 | `kubernetes` | The Kubernetes groups the peer holds in the node's cluster; only in a Kubernetes gateway's own map (7.8) |
+| `identity` | Only on `self`, with `self.identity1`: the names of the node's account, for display (7.13) |
 
 **Names.** Core names Devices under the deployment's DNS suffix (Core
 configuration, `mesh.internal` by default). Self and every peer of the node's
@@ -1643,6 +1644,39 @@ cases of the K2 design §5.4).
   grant, with `report_allowed`. A reporting grant the gateway enforces
   carries its scope without `report_allowed`.
 
+### 7.13 Account names
+
+A node that negotiated `self.identity1` finds `identity` on its `self`: what
+its apps show for the account the Device belongs to. The names are for
+display only; a node never routes, resolves names or decides access by them.
+
+| Field | Meaning |
+|---|---|
+| `network_display_name` | The Network's display name (as in the Console) |
+| `workspace_display_name` | The Workspace's display name |
+| `ownership` | `MEMBER`, a person's Device, or `WORKSPACE`, a Device the Workspace owns (tags, servers, gateways) |
+| `owner_display_name` | The owner's account display name: for an invited account, its verified email; for a self-registered one, the name it chose. Empty unless `MEMBER`, or when the account is gone |
+
+- **Only self, only the Device's own.** Core sends it on `self` and never on a
+  peer. Core reads it for the session's own Device only, by the scope and the
+  keys the session authenticated, never by a Device ID.
+- **Never a gateway.** A Kubernetes gateway does not declare
+  `self.identity1`, and Core does not take it on a gateway's session either:
+  no person's name reaches a cluster.
+- **Absent.** The session did not negotiate it, or Core could not read the
+  names (that never fails the map). A node keeps the names it last saw for
+  display; absence is not a reason to forget them.
+- **Replaced with self.** `self` is replaced whole (7.3), so every `self` Core
+  sends on the session carries it, and a delta that changes the names
+  carries `self` again.
+- **When names change.** A renamed Workspace is not pushed: Core does not
+  resend every map in the Workspace for a name. A node sees it once its
+  map is next rebuilt with a change of its own or from a full read (a new
+  session, a new session generation).
+- **Limits.** Each name is 1 to 128 characters (the owner's may be empty),
+  UTF-8 without control characters. A node drops `identity` it cannot accept
+  and keeps the rest of the map.
+
 ## 8. Node reports
 
 ### 8.1 Endpoints and NAT
@@ -2027,6 +2061,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `gateway.audit1` | A Kubernetes gateway records type A operations before forwarding them and reports outcomes (6.10); Core offers it with Kubernetes join and its shared Network view, once it could write them at startup |
 | `gateway.groups1` | A Kubernetes gateway reports its groups' RBAC check with `GatewayGroupReport` (6.11); Core offers it once its database has the group report functions, and takes reports from gateway sessions only |
 | `gateway.ceiling1` | A Kubernetes gateway reports what each group's own RBAC lets it do with `GatewayGroupCeiling` (6.12); Core offers it once its database has the ceiling functions, and takes ceilings from gateway sessions only |
+| `self.identity1` | A node reads `identity` on its `self`: its account's names, for display (7.13); Core offers it when it could run the readers at startup, and never takes it on a Kubernetes gateway's session |
 | `kube.ca1` | Any node reads `kubernetes_clusters` in its map: the clusters it may reach and their roots (7.11); Core offers it where Kubernetes join is on, it builds maps from its shared Network view, and it could read the roots when it started |
 | `gateway.kube.v1` | A Kubernetes gateway applies its peers' `kubernetes` and `owner` (7.8), acknowledges map messages after applying them and takes `MapFresh` (7.9); Core offers it only where maps come from its shared Network view |
 | `gateway.kube.v2` | A Kubernetes gateway applies access profiles: `kubernetes_scopes` and `scoped_grants` (7.12), the audit `profile` and profile denials (6.10). Only with `gateway.kube.v1`: a gateway listing it alone gets no `kubernetes` at all. Core offers it with `gateway.kube.v1` once its database has the profile functions |

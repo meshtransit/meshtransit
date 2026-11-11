@@ -31,9 +31,9 @@ func composeMapSession(
 	exitSpread bool, // MESHTRANSIT_EXIT_SPREAD_ENABLED
 	dnsZones bool, // MESHTRANSIT_DNS_ZONES_ENABLED
 	dnsProtectedNames []string, // MESHTRANSIT_DNS_PROTECTED_NAMES and the deployment's own hosts
-) (*mapsession.Service, prometheus.Collector, kubernetesTrustProbe, error) {
+) (*mapsession.Service, prometheus.Collector, mapSessionProbes, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
-		return nil, nil, nil, errInvalidMapSessionComposition
+		return nil, nil, mapSessionProbes{}, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
 		runtimePool,
@@ -62,24 +62,33 @@ func composeMapSession(
 		},
 	)
 	if err != nil {
-		return nil, nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+		return nil, nil, mapSessionProbes{}, errors.Join(errInvalidMapSessionComposition, err)
 	}
 	service, err := newMapSessionService(mapConfig, store, endpoints, connectivity)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, mapSessionProbes{}, err
 	}
 	if hub != nil {
 		if service, err = service.WithConnectivityHub(hub); err != nil {
-			return nil, nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+			return nil, nil, mapSessionProbes{}, errors.Join(errInvalidMapSessionComposition, err)
 		}
 	}
-	return service, newMapInventoryCollector(store.InventoryStats), store.KubernetesTrustGranted, nil
+	return service, newMapInventoryCollector(store.InventoryStats),
+		mapSessionProbes{kubernetesTrust: store.KubernetesTrustGranted, selfIdentity: store.SelfIdentityGranted}, nil
 }
 
 // kubernetesTrustProbe reports whether the runtime role may run schema
 // 244's readers; serve probes it once, at startup, since the capability
 // list (kube.ca1) is fixed for the process (K1a4d design §2.1).
 type kubernetesTrustProbe func(context.Context) (bool, error)
+
+// mapSessionProbes are the schema checks serve runs once at startup to fix
+// its capability list: kubernetesTrust for kube.ca1, selfIdentity for
+// self.identity1 (schema 287, S4b §3).
+type mapSessionProbes struct {
+	kubernetesTrust kubernetesTrustProbe
+	selfIdentity    func(context.Context) (bool, error)
+}
 
 // composeConnectivityHub returns the replica's shared connectivity tables
 // and the watcher streams use: the hub, or the feed itself when the shared
@@ -148,12 +157,13 @@ func (collector *connectivityHubCollector) Collect(metrics chan<- prometheus.Met
 // mapInventoryCollector exports how map snapshots got their candidates and
 // the shadow check of the Network policy expansion (scale-out S1/S2).
 type mapInventoryCollector struct {
-	stats      func() postgresmapsession.InventoryStats
-	snapshots  *prometheus.Desc
-	reads      *prometheus.Desc
-	mismatches *prometheus.Desc
-	policies   *prometheus.Desc
-	withheld   *prometheus.Desc
+	stats            func() postgresmapsession.InventoryStats
+	snapshots        *prometheus.Desc
+	reads            *prometheus.Desc
+	mismatches       *prometheus.Desc
+	policies         *prometheus.Desc
+	withheld         *prometheus.Desc
+	identityRejected *prometheus.Desc
 }
 
 func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *mapInventoryCollector {
@@ -170,6 +180,8 @@ func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *m
 			"Packet policies of shared map reads by source: expanded from the Network policy, or read for a shadow check against that expansion.", []string{"source"}, nil),
 		withheld: prometheus.NewDesc("meshtransit_map_kubernetes_access_withheld_total",
 			"Kubernetes gateway maps built without their peers' Kubernetes access, by reason; the ca_ and trust_ reasons count inventory reads, clusters or roots.", []string{"reason"}, nil),
+		identityRejected: prometheus.NewDesc("meshtransit_map_self_identity_rejected_total",
+			"Map reads whose account names (self.identity1) the map could not carry; the map went without them.", nil, nil),
 	}
 }
 
@@ -179,6 +191,7 @@ func (collector *mapInventoryCollector) Describe(descriptions chan<- *prometheus
 	descriptions <- collector.mismatches
 	descriptions <- collector.policies
 	descriptions <- collector.withheld
+	descriptions <- collector.identityRejected
 }
 
 func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -191,6 +204,8 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 	metrics <- prometheus.MustNewConstMetric(collector.mismatches, prometheus.CounterValue, float64(stats.PolicyMismatches))
 	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PoliciesExpanded), "expanded")
 	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PolicyShadowChecks), "shadow")
+	metrics <- prometheus.MustNewConstMetric(collector.identityRejected, prometheus.CounterValue,
+		float64(stats.SelfIdentityRejected))
 	for reason, count := range map[string]uint64{"unread": stats.KubernetesWithheldUnread,
 		"evidence": stats.KubernetesWithheldEvidence, "direct": stats.KubernetesWithheldDirect,
 		"projections": stats.KubernetesWithheldProjections,

@@ -102,11 +102,18 @@ type fakeTransaction struct {
 	// kubernetesTrust is what schema 244's v2 reader returns; nil: not
 	// granted. kubernetesTrustErr fails it; kubernetesRoots answers the
 	// DER reader for its fingerprints, and kubernetesRootsErr fails it.
-	kubernetesTrust    *string
-	kubernetesTrustErr error
-	kubernetesRoots    map[[32]byte][]byte
-	kubernetesRootsErr error
-	rootReads          int
+	kubernetesTrust *string
+	// selfIdentity is the row schema 287's reader returns; nil with
+	// selfIdentityGranted: no row; neither: the role may not run it.
+	// workspaceName is what the header gives for the Workspace once the
+	// reader is granted.
+	selfIdentity        *selfIdentityRow
+	selfIdentityGranted bool
+	workspaceName       *string
+	kubernetesTrustErr  error
+	kubernetesRoots     map[[32]byte][]byte
+	kubernetesRootsErr  error
+	rootReads           int
 	// execErrs fails the statements it names, before execErr.
 	execErrs             map[string]error
 	kubernetesRuleGroups [][]any
@@ -175,7 +182,55 @@ func (transaction *fakeTransaction) QueryRow(
 	}
 	row := transaction.rows[0]
 	transaction.rows = transaction.rows[1:]
+	switch query {
+	case loadNetworkHeaderWithWorkspaceSQL:
+		return headerWithWorkspaceRow{header: row, workspace: transaction.workspaceName}
+	case loadSnapshotWithIdentitySQL:
+		return snapshotWithIdentityRow{snapshot: row, identity: transaction.selfIdentity}
+	}
 	return row
+}
+
+// selfIdentityRow is what schema 287's reader returns.
+type selfIdentityRow struct {
+	workspace, ownership string
+	owner                *string
+}
+
+// snapshotWithIdentityRow answers the snapshot read with the account names:
+// the snapshot row the test queued, then the reader's columns (all NULL
+// without a row, as the LEFT JOIN gives).
+type snapshotWithIdentityRow struct {
+	snapshot databaseRow
+	identity *selfIdentityRow
+}
+
+func (row snapshotWithIdentityRow) Scan(destinations ...any) error {
+	count := len(destinations)
+	if err := row.snapshot.Scan(destinations[:count-3]...); err != nil {
+		return err
+	}
+	if row.identity != nil {
+		*destinations[count-3].(**string) = textPointer(row.identity.workspace)
+		*destinations[count-2].(**string) = textPointer(row.identity.ownership)
+		*destinations[count-1].(**string) = row.identity.owner
+	}
+	return nil
+}
+
+// headerWithWorkspaceRow answers the header with the Workspace's name: the
+// header row the test queued, then the name.
+type headerWithWorkspaceRow struct {
+	header    databaseRow
+	workspace *string
+}
+
+func (row headerWithWorkspaceRow) Scan(destinations ...any) error {
+	if err := row.header.Scan(destinations[:len(destinations)-1]...); err != nil {
+		return err
+	}
+	*destinations[len(destinations)-1].(**string) = row.workspace
+	return nil
 }
 
 func (transaction *fakeTransaction) Query(
@@ -229,6 +284,9 @@ func (transaction *fakeTransaction) Query(
 		return &genericRows{rows: [][]any{{*transaction.kubernetesCAs}}}, nil
 	case kubernetesTrustGrantedSQL:
 		return &grantRows{granted: transaction.kubernetesTrust != nil}, nil
+	case selfIdentityGrantedSQL:
+		return &grantRows{granted: transaction.selfIdentity != nil || transaction.selfIdentityGranted ||
+			transaction.workspaceName != nil}, nil
 	case loadKubernetesCAsV2SQL:
 		if transaction.kubernetesTrustErr != nil {
 			return nil, transaction.kubernetesTrustErr

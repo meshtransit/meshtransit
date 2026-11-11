@@ -29,6 +29,7 @@ type Request struct {
 	kubernetesProfiles bool
 	kubernetesCA       bool
 	kubernetesClusters bool
+	selfIdentity       bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -155,6 +156,17 @@ func (request Request) WithKubernetesCA() Request {
 
 // KubernetesCA reports whether the session takes its cluster's CAs.
 func (request Request) KubernetesCA() bool { return request.kubernetesCA }
+
+// WithSelfIdentity records that the node takes the names of its account on
+// its own entry (MTCP self.identity1); the protocol adapter never sets it
+// for a Kubernetes gateway's session.
+func (request Request) WithSelfIdentity() Request {
+	request.selfIdentity = true
+	return request
+}
+
+// SelfIdentity reports whether the session takes its account's names.
+func (request Request) SelfIdentity() bool { return request.selfIdentity }
 
 // WithKubernetesClusters records that the node takes the clusters it may
 // reach and their roots (MTCP kube.ca1, §7.11).

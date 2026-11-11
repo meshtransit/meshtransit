@@ -139,7 +139,33 @@ func encodeSelf(snapshot mapsession.Snapshot, endpoints endpointFilter,
 	if ca, known := snapshot.Kubernetes().CA(); known {
 		device.KubernetesCa = &mtcpv1.KubernetesCA{RootFingerprint: ca.Root, SigningFingerprint: ca.Signing}
 	}
+	device.Identity = encodeSelfIdentity(snapshot)
 	return device, nil
+}
+
+// CapabilitySelfIdentity is self.identity1: a node takes its account's
+// names on its own entry (§7.13). Core never grants it to a Kubernetes
+// gateway's session.
+const CapabilitySelfIdentity = "self.identity1"
+
+// encodeSelfIdentity encodes the names of the Device's account, which the
+// snapshot carries only for a session that negotiated self.identity1. Self
+// is replaced whole, so every encoding of it carries them (§8).
+func encodeSelfIdentity(snapshot mapsession.Snapshot) *mtcpv1.SelfIdentity {
+	identity := snapshot.SelfIdentity()
+	if !identity.Known() {
+		return nil
+	}
+	ownership := mtcpv1.SelfIdentity_MEMBER
+	if identity.Ownership() == mapsession.OwnershipWorkspace {
+		ownership = mtcpv1.SelfIdentity_WORKSPACE
+	}
+	return &mtcpv1.SelfIdentity{
+		NetworkDisplayName:   snapshot.NetworkName().String(),
+		WorkspaceDisplayName: identity.WorkspaceName(),
+		Ownership:            ownership,
+		OwnerDisplayName:     identity.OwnerName(),
+	}
 }
 
 // encodePeers encodes candidates sorted by device ID.

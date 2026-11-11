@@ -120,6 +120,9 @@ type Store struct {
 	// Network (K1a4d design §3.3).
 	kubernetesTrustGranted atomic.Bool
 	kubernetesRootCache    *kubernetesRootCache
+	// selfIdentityGranted: schema 287's readers are granted (probed until
+	// they are).
+	selfIdentityGranted atomic.Bool
 }
 
 // InventoryStats counts how map snapshots got their candidates.
@@ -188,6 +191,9 @@ type InventoryStats struct {
 	// gateways' CAs because the root a gateway's map would name is not one
 	// the cluster's clients trust (review d1 L8).
 	KubernetesGatewayCAsOmitted uint64
+	// SelfIdentityRejected counts Devices whose account names the map
+	// could not carry; the map went without them (schema 287).
+	SelfIdentityRejected uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -200,7 +206,8 @@ type inventoryStats struct {
 	sharesSkipped, shareRechecks, policiesExpanded, policyShadowChecks, policyCandidates,
 	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
 	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected, kubernetesTrustUnread,
-	kubernetesRootsMissing, kubernetesGatewayCAsOmitted, kubernetesWithheldPeerGrants atomic.Uint64
+	kubernetesRootsMissing, kubernetesGatewayCAsOmitted, kubernetesWithheldPeerGrants,
+	selfIdentityRejected atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -221,7 +228,8 @@ func (store *Store) InventoryStats() InventoryStats {
 		KubernetesCAsRejected:         store.stats.kubernetesCAsRejected.Load(),
 		KubernetesTrustUnread:         store.stats.kubernetesTrustUnread.Load(),
 		KubernetesRootsMissing:        store.stats.kubernetesRootsMissing.Load(),
-		KubernetesGatewayCAsOmitted:   store.stats.kubernetesGatewayCAsOmitted.Load()}
+		KubernetesGatewayCAsOmitted:   store.stats.kubernetesGatewayCAsOmitted.Load(),
+		SelfIdentityRejected:          store.stats.selfIdentityRejected.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,
@@ -529,7 +537,12 @@ func (store *Store) loadSnapshot(
 	}
 
 	record := snapshotRecord{readLocal: beginLocal}
-	if err := transaction.QueryRow(ctx, loadSnapshotSQL, fingerprint[:], nodeKey[:]).Scan(
+	snapshotQuery, withIdentity, err := store.snapshotSQL(ctx, transaction)
+	if err != nil {
+		return snapshotRead{}, err
+	}
+	var identityWorkspace, identityOwnership, identityOwner *string
+	destinations := []any{
 		&record.numericNodeID,
 		&record.numericOwnerID,
 		&record.networkName,
@@ -547,7 +560,11 @@ func (store *Store) loadSnapshot(
 		&record.dnsLabel,
 		&record.workspaceCode,
 		&record.networkCode,
-	); err != nil {
+	}
+	if withIdentity {
+		destinations = append(destinations, &identityWorkspace, &identityOwnership, &identityOwner)
+	}
+	if err := transaction.QueryRow(ctx, snapshotQuery, fingerprint[:], nodeKey[:]).Scan(destinations...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return snapshotRead{}, appmapsession.ErrUnauthorized
 		}
@@ -556,6 +573,7 @@ func (store *Store) loadSnapshot(
 			fmt.Errorf("read scoped snapshot: %w", err),
 		)
 	}
+	record.selfIdentity = store.selfIdentity(identityWorkspace, identityOwnership, identityOwner)
 	// A shared-inventory read takes the candidates from the Network's
 	// inventory after commit; the empty list keeps direct projections
 	// decodable meanwhile (they are checked against the inventory then).

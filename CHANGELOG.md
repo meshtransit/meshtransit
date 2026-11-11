@@ -15,6 +15,17 @@ merge (2026-10-09) are kept below.
   `incomplete:<device>`), with a 70 s bound. The daemon gains `AddAccount`
   (one at a time) and pins a given profile (`trustProfile`); a Kubernetes
   gateway refuses both with its own error.
+- Core (device logout S4b B1, schema 287, MTCP `self.identity1`): a node's
+  own map can carry its account's names on `self.identity`, the Network's,
+  the Workspace's and, for a member's Device, the owner's account display
+  name, so apps can tell accounts apart (TD-SPEC-19). Core reads them for
+  the session's own Device only (readers bound to the installed scope and
+  its authenticated keys; `mesh.account` stays revoked from the runtime
+  role), offers the capability only when it could run them at startup, and
+  never takes it on a Kubernetes gateway's session. A failed read leaves the
+  map without them. A rebuild from the shared Network view keeps the
+  owner's name and takes the Workspace's from the view; a change of names
+  alone goes out as a delta that replaces `self`.
 - local API (device logout design S4): `POST /v1/accounts` (body `{}` or
   `{"name": ...}`) has meshd add an account the same way, answering 201 with
   the new profile and the previous one (with their state).

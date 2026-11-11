@@ -506,6 +506,28 @@ message Device {
   // gateway.cert1 (7.10): its cluster's root and signing intermediate.
   // Absent: Core could not read them; the gateway keeps its certificate.
   KubernetesCA kubernetes_ca = 18;
+  // Only on self, when the session negotiated self.identity1 (7.13): the
+  // names the apps show for this Device's account. Presentation only;
+  // never on a peer, never on a Kubernetes gateway's self.
+  SelfIdentity identity = 19;
+}
+
+// SelfIdentity is what a node shows for the account its Device belongs to
+// (7.13). Absent: the session did not negotiate self.identity1, or Core
+// could not read the names.
+message SelfIdentity {
+  string network_display_name = 1;
+  string workspace_display_name = 2;
+  Ownership ownership = 3;
+  // The owner's account display name; empty unless ownership is MEMBER, or
+  // when the account is gone.
+  string owner_display_name = 4;
+
+  enum Ownership {
+    OWNERSHIP_UNSPECIFIED = 0;
+    MEMBER = 1; // a person's Device
+    WORKSPACE = 2; // the Workspace's: tags, servers, gateways
+  }
 }
 
 // KubernetesCA names, by SHA-256 of their DER, the root a gateway's

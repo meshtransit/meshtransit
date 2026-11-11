@@ -36,6 +36,8 @@ type snapshotRecord struct {
 	dnsLabel      *string
 	workspaceCode *string
 	networkCode   *string
+	// Schema 287: the Device's account names (presentation only).
+	selfIdentity appmapsession.SelfIdentity
 }
 
 type peerCandidateRecord struct {
@@ -121,6 +123,7 @@ func (record snapshotRecord) snapshot(
 		PeerCandidates:    peerCandidates,
 		PacketPolicy:      packetPolicy,
 		RelayDirectory:    relayDirectory,
+		SelfIdentity:      record.selfIdentity,
 	})
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence

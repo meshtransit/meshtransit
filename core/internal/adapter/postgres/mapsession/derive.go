@@ -46,6 +46,11 @@ func (store *Store) Derive(
 		return appmapsession.Snapshot{}, false, nil
 	}
 	self, listed := cached.inventory.Device(current.NodeID())
+	// The owner's name is carried from current: a Device whose owner
+	// changed is read again, whatever its session generation says.
+	if listed && current.SelfIdentity().Known() && self.NumericOwnerID() != current.NumericOwnerID() {
+		return appmapsession.Snapshot{}, false, nil
+	}
 	if !listed || self.NumericNodeID() != current.NumericNodeID() || self.MachineKey() != current.MachineKey() ||
 		self.NodeKey() != current.NodeKey() || self.SessionGeneration() != current.SessionGeneration() ||
 		cached.recoveryEpoch != current.RecoveryEpoch() {
@@ -98,6 +103,10 @@ func (store *Store) Derive(
 		Routes:            routes,
 		Kubernetes:        kubernetes,
 		RelayDirectory:    store.relayDirectory(scope.NetworkID()),
+		// The owner's name comes from current, whose owner the view still
+		// lists (a changed owner was declined above); the Workspace's name
+		// from the view, when it carries one.
+		SelfIdentity: current.SelfIdentity().WithWorkspaceName(cached.workspaceName),
 	})
 	if err != nil {
 		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
@@ -137,7 +146,7 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 	unchanged := cached.serveable && cached.policy.IsValid() && cached.revision == current.NetworkRevision() &&
 		cached.policy.Revision() == current.PacketPolicy().Revision() && current.SharesInventory(cached.inventory) &&
 		cached.networkName == current.NetworkName() && cached.recoveryEpoch == current.RecoveryEpoch() &&
-		sameDisplayCodes(cached, current) &&
+		sameDisplayCodes(cached, current) && sameWorkspaceName(cached, current) &&
 		(changesAt.IsZero() || cached.databaseNow().Add(clockMargin).Before(changesAt)) &&
 		directory.Revision() == current.RelayDirectory().Revision() &&
 		directory.Fingerprint() == current.RelayDirectory().Fingerprint()
@@ -179,4 +188,12 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 func sameDisplayCodes(cached cachedInventory, current appmapsession.Snapshot) bool {
 	workspaceCode, networkCode, _ := current.DisplayCodes()
 	return workspaceCode == cached.workspaceCode && networkCode == cached.networkCode
+}
+
+// sameWorkspaceName reports whether current carries the Workspace name the
+// view has: a session without its account's names, or a view that cannot
+// read it, never rebuilds for it.
+func sameWorkspaceName(cached cachedInventory, current appmapsession.Snapshot) bool {
+	identity := current.SelfIdentity()
+	return !identity.Known() || cached.workspaceName == "" || identity.WorkspaceName() == cached.workspaceName
 }

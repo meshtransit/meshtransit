@@ -120,6 +120,15 @@ func kubernetesClusterCapabilities(offered bool) []string {
 	return []string{mtcpadapter.CapabilityKubeCA}
 }
 
+// selfIdentityCapabilities offers self.identity1, a node's account names on
+// its own entry (mtcp-v1 §7.13), when schema 287 was granted at startup.
+func selfIdentityCapabilities(offered bool) []string {
+	if !offered {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilitySelfIdentity}
+}
+
 // kubeAuditCapabilities offers gateway.audit1, gateways' type A
 // operations recorded before they are forwarded (mtcp-v1 §6.10), when
 // schema 245 was granted at startup.
@@ -224,7 +233,9 @@ type mtcpDependencies struct {
 	// kubernetesClusters offers kube.ca1 (Kubernetes join, shared
 	// inventory, schema 244 granted at startup).
 	kubernetesClusters bool
-	dnsSuffix          dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
+	// selfIdentity offers self.identity1 (schema 287 granted at startup).
+	selfIdentity bool
+	dnsSuffix    dnsname.Suffix // MESHTRANSIT_DNS_SUFFIX; zero: the default
 	// dnsInfrastructure are the deployment's own host names a root zone
 	// leaves to a node's network (MESHTRANSIT_DNS_PROTECTED_NAMES, the
 	// Console and identity hosts).
@@ -356,7 +367,7 @@ func composeMTCP(
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess, deps.kubernetesProfiles)...),
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
-					kubernetesClusterCapabilities(deps.kubernetesClusters)...),
+					append(kubernetesClusterCapabilities(deps.kubernetesClusters), selfIdentityCapabilities(deps.selfIdentity)...)...),
 					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),
 						append(append(gatewayGroupCapabilities(deps.gatewayGroups),
 							gatewayCeilingCapabilities(deps.gatewayCeilings)...),

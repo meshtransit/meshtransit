@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
 	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
@@ -69,6 +70,7 @@ func assertPostgreSQLMapSessionSnapshot(
 		snapshot.NodeKey() != command.Identity.NodeKey() {
 		t.Fatalf("map session snapshot = %+v, want seeded authoritative Node", snapshot)
 	}
+	assertMapSelfIdentity(ctx, t, store, service, machine, request)
 	wantAddress := netip.MustParsePrefix("100.64.1.1/32")
 	if addresses := snapshot.Addresses(); len(addresses) != 1 || addresses[0] != wantAddress {
 		t.Fatalf("map session addresses = %v, want [%v]", addresses, wantAddress)
@@ -221,4 +223,30 @@ FROM mesh_ops.resolve_map_session_scope(
     pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex')
 )`).Scan(new(string))
 	assertPostgreSQLCode(t, err, "42501")
+}
+
+// assertMapSelfIdentity checks schema 287 (S4b §3): the runtime role may run
+// the readers, a session that asks takes its own Device's account names
+// and one that does not takes none (mesh.account stays revoked from the
+// runtime role: assertRuntimeAuthorityIsolation).
+func assertMapSelfIdentity(ctx context.Context, t *testing.T, store *postgresmapsession.Store,
+	service *mapsession.Service, machine control.AuthenticatedMachine, request mapsession.Request,
+) {
+	t.Helper()
+	if granted, err := store.SelfIdentityGranted(ctx); err != nil || !granted {
+		t.Fatalf("SelfIdentityGranted() = %t, %v; want the schema 287 readers", granted, err)
+	}
+	named, err := service.Open(ctx, machine, request.WithSelfIdentity())
+	if err != nil {
+		t.Fatalf("Open(self identity) error = %v", err)
+	}
+	identity := named.SelfIdentity()
+	if !identity.Known() || identity.WorkspaceName() == "" ||
+		identity.Ownership() == mapsession.OwnershipWorkspace && identity.OwnerName() != "" {
+		t.Fatalf("SelfIdentity() = %+v, want the seeded Device's account names", identity)
+	}
+	plain, err := service.Open(ctx, machine, request)
+	if err != nil || plain.SelfIdentity().Known() {
+		t.Fatalf("Open() without the capability = %+v, %v", plain.SelfIdentity(), err)
+	}
 }

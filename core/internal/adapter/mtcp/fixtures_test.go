@@ -59,6 +59,13 @@ func snapshotFixture(t *testing.T, revision int64, peers ...mapsession.PeerCandi
 func snapshotGenerationFixture(t *testing.T, revision, generation int64,
 	peers ...mapsession.PeerCandidate) mapsession.Snapshot {
 	t.Helper()
+	return must(mapsession.NewSnapshot(snapshotParamsFixture(t, revision, generation, peers...)))
+}
+
+// snapshotParamsFixture is the parameters snapshotGenerationFixture builds.
+func snapshotParamsFixture(t *testing.T, revision, generation int64,
+	peers ...mapsession.PeerCandidate) mapsession.SnapshotParams {
+	t.Helper()
 	scope := must(network.NewScope(must(workspace.ParseID("01890f00-0000-7000-8000-000000000101")),
 		must(network.ParseID("01890f00-0000-7000-8000-000000000201"))))
 	self := must(node.ParseID("01890f00-0000-7000-8000-000000000701"))
@@ -83,7 +90,7 @@ func snapshotGenerationFixture(t *testing.T, revision, generation int64,
 		}
 	}
 	createdAt := time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC)
-	return must(mapsession.NewSnapshot(mapsession.SnapshotParams{
+	return mapsession.SnapshotParams{
 		Scope: scope, NetworkName: must(network.ParseDisplayName("Development Mesh")),
 		NetworkRevision: revision, RecoveryEpoch: 2, SessionGeneration: generation, NumericNodeID: 701, NumericOwnerID: 11,
 		NodeID: self, Hostname: must(node.ParseHostname("node-one.example")),
@@ -95,7 +102,7 @@ func snapshotGenerationFixture(t *testing.T, revision, generation int64,
 		KeyExpiry: createdAt.Add(24 * time.Hour), PeerCandidates: peers,
 		PacketPolicy:   must(policy.NewSnapshot(policy.SnapshotParams{Scope: scope, Revision: 5, Rules: rules})),
 		RelayDirectory: relayDirectoryFixture(t),
-	}))
+	}
 }
 
 // streamFixture is snapshotFixture with complete connectivity, alternating

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 286 {
-		t.Fatalf("len(Catalog()) = %d, want 286", len(catalog))
+	if len(catalog) != 287 {
+		t.Fatalf("len(Catalog()) = %d, want 287", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1145,6 +1145,10 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 		"SET search_path = pg_catalog, mesh, mesh_ops",
 		"machine.fingerprint = p_machine_key_fingerprint",
 		"node_key.public_key = p_node_key",
+		"device.state = 'active'",
+		"device.deleted_at IS NULL",
+		"device.expires_at > pg_catalog.transaction_timestamp()",
+		"network.state = 'active'",
 		"machine.epoch = device.current_machine_key_epoch",
 		"node_key.epoch = device.current_node_key_epoch",
 		"deployment.recovery_state = 'verified'",
@@ -1615,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 286 {
-		t.Fatalf("LatestVersion() = %d, want 286", LatestVersion())
+	if LatestVersion() != 287 {
+		t.Fatalf("LatestVersion() = %d, want 287", LatestVersion())
 	}
 }
 
@@ -8414,5 +8418,40 @@ func TestMigration278AuthorityIsTheProjection(t *testing.T) {
 		"'permissions', pg_catalog.to_jsonb(scopes.permissions)", 1)
 	if authority != want {
 		t.Error("the summaries' authority differs from the projection beyond the listed changes")
+	}
+}
+
+// Schema 287 (S4b §3.2): the account names come through readers bound to
+// the session's own scope and keys; mesh.account stays revoked from the
+// runtime role, and only it may run them.
+func TestMapSelfIdentityMigrationKeepsAccountsRevoked(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[286]
+	if migration.Version != 287 {
+		t.Fatalf("Catalog()[286].Version = %d, want 287", migration.Version)
+	}
+	for _, required := range []string{
+		"SECURITY DEFINER",
+		"mesh_ops.current_workspace_id()",
+		"mesh_ops.current_network_id()",
+		"machine.fingerprint = p_machine_fingerprint",
+		"node_key.public_key = p_node_key",
+		"CASE WHEN device.ownership = 'member' THEN account.display_name END",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 287 SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"ON mesh.account TO",
+		"GRANT SELECT",
+		"TO mesh_worker",
+		"TO mesh_observer",
+		"BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 287 SQL contains %q", forbidden)
+		}
 	}
 }

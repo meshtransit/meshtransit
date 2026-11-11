@@ -81,6 +81,9 @@ type SnapshotParams struct {
 	// zero DatabaseReadAt falls back to this host's clock.
 	DatabaseReadAt time.Time
 	ReadAtLocal    time.Time
+	// SelfIdentity is the names of the Device's account, presentation only;
+	// the zero value carries none.
+	SelfIdentity SelfIdentity
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -89,6 +92,7 @@ type Snapshot struct {
 	readAtLocal             time.Time
 	scope                   network.Scope
 	networkName             network.DisplayName
+	selfIdentity            SelfIdentity
 	networkRevision         int64
 	recoveryEpoch           int64
 	sessionGeneration       int64
@@ -176,6 +180,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		readAtLocal:             readAtLocal,
 		scope:                   params.Scope,
 		networkName:             params.NetworkName,
+		selfIdentity:            params.SelfIdentity,
 		networkRevision:         params.NetworkRevision,
 		recoveryEpoch:           params.RecoveryEpoch,
 		sessionGeneration:       params.SessionGeneration,
@@ -462,6 +467,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		// it is still count from that read.
 		DatabaseReadAt: snapshot.databaseReadAt,
 		ReadAtLocal:    snapshot.readAtLocal,
+		SelfIdentity:   snapshot.selfIdentity,
 	}
 }
 

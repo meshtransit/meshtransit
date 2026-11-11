@@ -689,6 +689,7 @@ func Catalog() []Migration {
 		newMigration(284, "A Device signed out for 30 days is removed", signedOutDeviceRevocationSQL),
 		newMigration(285, "The Console shows signed-out Devices", consoleSignedOutDevicesSQL),
 		newMigration(286, "A signed-out Device's page shows the addresses it keeps", consoleSignedOutAddressesSQL),
+		newMigration(287, "A Device's own map names its account", mapSelfIdentitySQL),
 	}
 }
 
@@ -1326,3 +1327,6 @@ var consoleSignedOutDevicesSQL string
 
 //go:embed 000286_console_signed_out_addresses.up.sql
 var consoleSignedOutAddressesSQL string
+
+//go:embed 000287_map_self_identity.up.sql
+var mapSelfIdentitySQL string

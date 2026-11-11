@@ -630,7 +630,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if hubMetrics != nil {
 			additionalMetrics = append(additionalMetrics, hubMetrics)
 		}
-		mapSessionService, mapInventoryMetrics, kubernetesTrust, composeErr := composeMapSession(
+		mapSessionService, mapInventoryMetrics, mapProbes, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
 			redisClient,
@@ -861,13 +861,29 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		// capability list is fixed for the process.
 		if processConfig.KubernetesJoin && processConfig.Control.Map.SharedInventory {
 			probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
-			granted, grantErr := kubernetesTrust(probeCtx)
+			granted, grantErr := mapProbes.kubernetesTrust(probeCtx)
 			cancelProbe()
 			if grantErr != nil || !granted {
 				logger.WarnContext(ctx, "Kubernetes cluster roots not offered to clients",
 					"error_code", "kubernetes_cluster_trust_unavailable", "error", grantErr)
 			}
 			deps.kubernetesClusters = granted && grantErr == nil
+		}
+		// Nodes take their account's names on their own entry
+		// (self.identity1, S4b §3) once the runtime role may read them.
+		{
+			probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+			granted, grantErr := mapProbes.selfIdentity(probeCtx)
+			cancelProbe()
+			switch {
+			case grantErr != nil:
+				logger.WarnContext(ctx, "account names not offered to clients",
+					"error_code", "self_identity_unavailable", "error", grantErr)
+			case !granted:
+				logger.WarnContext(ctx, "account names not offered to clients: schema 287 readers not granted",
+					"error_code", "self_identity_unavailable")
+			}
+			deps.selfIdentity = granted && grantErr == nil
 		}
 		// Gateways ask for their replica certificates where their maps are
 		// built from the shared inventory (gateway.cert1, a3b).

@@ -32,6 +32,9 @@ type cachedInventory struct {
 	// The Workspace and Network display codes of the Network's DNS zone
 	// (schema 169); immutable.
 	workspaceCode, networkCode identity.DisplayCode
+	// workspaceName is the Workspace's display name (schema 287), empty
+	// when this role cannot read it.
+	workspaceName string
 	// sharingDevices: numeric node identifiers of the Devices a share binds
 	// (schema 146). Their maps depend on state outside the view (aliases,
 	// peers across Networks), so they are always read per Device.

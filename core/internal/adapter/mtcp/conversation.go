@@ -457,6 +457,11 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key, g
 	if conversation.session.Supports(CapabilityKubeCA) {
 		request = request.WithKubernetesClusters()
 	}
+	// A person's name never reaches a cluster: a gateway's session never
+	// takes its account's names, whatever it declared (§7.13).
+	if !gateway && conversation.session.Supports(CapabilitySelfIdentity) {
+		request = request.WithSelfIdentity()
+	}
 	var sink mapsession.StreamSink = conversation.sink
 	if gateway {
 		sink = &gatewayStreamSink{mapSink: conversation.sink, conversation: conversation, generation: generation}

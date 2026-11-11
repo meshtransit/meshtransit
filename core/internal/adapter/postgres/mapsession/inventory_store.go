@@ -161,7 +161,7 @@ func (store *Store) readInventory(
 	if cached.revision <= 0 || policyRevision <= 0 || cached.readAt.IsZero() {
 		return cachedInventory{}, ErrSnapshotEvidence
 	}
-	if err := readNetworkHeader(ctx, transaction, &cached); err != nil {
+	if err := store.readNetworkHeader(ctx, transaction, &cached); err != nil {
 		return cachedInventory{}, err
 	}
 	if err := readSharingDevices(ctx, transaction, &cached); err != nil {
@@ -626,11 +626,20 @@ func readDirectEndpoints(ctx context.Context, transaction databaseTransaction, c
 	return nil
 }
 
-func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
+func (store *Store) readNetworkHeader(ctx context.Context, transaction databaseTransaction,
+	cached *cachedInventory,
+) error {
+	query, withWorkspace, err := store.networkHeaderSQL(ctx, transaction)
+	if err != nil {
+		return err
+	}
 	var name string
-	var workspaceCode, networkCode *string
-	err := transaction.QueryRow(ctx, loadNetworkHeaderSQL).Scan(&name, &cached.recoveryEpoch,
-		&workspaceCode, &networkCode)
+	var workspaceCode, networkCode, workspaceName *string
+	destinations := []any{&name, &cached.recoveryEpoch, &workspaceCode, &networkCode}
+	if withWorkspace {
+		destinations = append(destinations, &workspaceName)
+	}
+	err = transaction.QueryRow(ctx, query).Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -642,6 +651,9 @@ func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cac
 		return ErrSnapshotEvidence
 	}
 	cached.workspaceCode, cached.networkCode = optionalDisplayCodes(workspaceCode, networkCode)
+	if workspaceName != nil && appmapsession.ValidWorkspaceName(*workspaceName) {
+		cached.workspaceName = *workspaceName
+	}
 	cached.networkName, cached.serveable = displayName, true
 	return nil
 }
