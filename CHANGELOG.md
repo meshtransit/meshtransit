@@ -15,6 +15,22 @@ merge (2026-10-09) are kept below.
   `incomplete:<device>`), with a 70 s bound. The daemon gains `AddAccount`
   (one at a time) and pins a given profile (`trustProfile`); a Kubernetes
   gateway refuses both with its own error.
+- meshd (device logout S4b B2): meshd declares `self.identity1` (never as a
+  Kubernetes gateway) and keeps, per profile, the names its map last carried
+  in `display/<profile id>.json` beside `profiles.json` (an older meshd
+  ignores it; a map without names never erases them; a new Device starts
+  over; a removed one keeps its names with `removed_at`). The profile list
+  (local API, mobile `ProfilesJSON`) carries `identity`, `hostname`,
+  `removed` and `can_cancel`; `meshctl profile list` shows ACCOUNT and
+  NETWORK, and `meshctl status` the account. `DELETE /v1/accounts/{id}`
+  (mobile `CancelAddAccount`) undoes an Add account still waiting for its
+  first approval: only a profile Add account created, never registered and
+  not signed out, so it never removes a Device anyone used. `POST
+  /v1/login/stop {"profile_id"}` (mobile `StopSignIn(id)`) drops that
+  profile's pending browser approval and keeps the keys, so a signed-out
+  Device stays signed out; since Core may still approve the link (or the
+  keys were renewing an expired Device), removing that profile or logging
+  out asks Core before dropping its keys, and a refusal then means none.
 - Core (device logout S4b B1, schema 287, MTCP `self.identity1`): a node's
   own map can carry its account's names on `self.identity`, the Network's,
   the Workspace's and, for a member's Device, the owner's account display

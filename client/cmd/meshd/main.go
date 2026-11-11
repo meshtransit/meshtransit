@@ -129,6 +129,14 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.ExitPinsDir = cfg.StateDir
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
 	daemonOptions.KubeCADir = cfg.KubeCADir
+	// What the apps show for each account (S4b §4.1); without it they
+	// show server names only.
+	if display, err := profile.OpenDisplayStore(filepath.Join(cfg.StateDir, "display"), nil); err != nil {
+		logger.Warn("opening the accounts' display files failed", "error", err)
+	} else {
+		daemonOptions.Display = display
+		defer func() { _ = display.Close() }()
+	}
 	if cfg.EnableDataPlane {
 		// Spools of connection logs, used only while Core grants a
 		// FlowTicket for the Network (connection logs design §7).

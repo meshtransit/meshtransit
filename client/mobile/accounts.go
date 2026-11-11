@@ -46,6 +46,13 @@ const (
 	// became of the Device>" (incomplete:removed, incomplete:left, …), since
 	// a retry finds no keys and reports none.
 	RemoveIncomplete = "incomplete"
+	// CancelNotAllowed: the account is not one Add account created that
+	// never held a Device; StopSignIn is its way out (S4b §4.3).
+	CancelNotAllowed = "not_cancelable"
+	// StopSignInDone: the pending approval is dropped and the keys kept;
+	// StopSignInNone: there was none.
+	StopSignInDone = "stopped"
+	StopSignInNone = "none"
 )
 
 // SignOut signs the active profile's Device out and keeps it: its address,
@@ -73,6 +80,19 @@ type profileEntry struct {
 	// State is registered, signed_out, authorization_required,
 	// unregistered, untrusted or unreadable.
 	State string `json:"state"`
+	// The account's names its map last carried (S4b §4.2): absent until a
+	// map named them. Ownership is member or workspace; Owner is empty for
+	// a Workspace's Device.
+	Network   string `json:"network,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Ownership string `json:"ownership,omitempty"`
+	Owner     string `json:"owner,omitempty"`
+	// Hostname is the Device's name, to tell apart accounts with every
+	// other name equal; Removed is set once Core removed the Device.
+	Hostname string `json:"hostname,omitempty"`
+	Removed  bool   `json:"removed,omitempty"`
+	// CanCancel: CancelAddAccount takes this account.
+	CanCancel bool `json:"canCancel,omitempty"`
 }
 
 type profileList struct {
@@ -95,10 +115,20 @@ func (engine *Engine) ProfilesJSON() (value string, err error) {
 		}
 		list := profileList{Version: 1, Profiles: make([]profileEntry, 0, len(snapshot.Profiles))}
 		for _, item := range snapshot.Profiles {
-			list.Profiles = append(list.Profiles, profileEntry{
+			entry := profileEntry{
 				ID: item.ID, Name: item.Name, ControlURL: item.ControlURL,
 				Active: item.ID == snapshot.ActiveProfileID, State: states[item.ID],
-			})
+			}
+			if display, found := engine.service.ProfileDisplay(item.ID); found {
+				entry.Hostname, entry.Removed = display.Hostname, display.RemovedAt != nil
+				if display.Network != "" && display.Workspace != "" && display.Ownership != "" {
+					entry.Network, entry.Workspace = display.Network, display.Workspace
+					entry.Ownership, entry.Owner = display.Ownership, display.Owner
+				}
+			}
+			entry.CanCancel = entry.State == daemon.RegistrationPending &&
+				engine.service.CanCancelAddAccount(ctx, item.ID)
+			list.Profiles = append(list.Profiles, entry)
 		}
 		encoded, marshalErr := json.Marshal(list)
 		value = string(encoded)
@@ -137,6 +167,44 @@ func (engine *Engine) RemoveProfile(id string, local bool) (outcome string, err 
 		var mapErr error
 		outcome, mapErr = removalOutcome(removal, removeErr)
 		return mapErr
+	})
+	return outcome, err
+}
+
+// CancelAddAccount undoes an Add account still waiting for its first
+// approval: it goes back to the account in use before and removes the
+// added one (S4b §4.3). It returns what became of the Device (as
+// RemoveProfile), or CancelNotAllowed.
+func (engine *Engine) CancelAddAccount(id string) (outcome string, err error) {
+	defer recoverPanic(&err)
+	err = engine.actFor(removeProfileTimeout, func(ctx context.Context) error {
+		removal, _, cancelErr := engine.service.CancelAddAccount(ctx, strings.TrimSpace(id))
+		if errors.Is(cancelErr, daemon.ErrNotCancelable) {
+			outcome = CancelNotAllowed
+			return nil
+		}
+		var mapErr error
+		outcome, mapErr = removalOutcome(removal, cancelErr)
+		return mapErr
+	})
+	return outcome, err
+}
+
+// StopSignIn drops the account id's pending browser approval and keeps its
+// keys: a signed-out Device stays signed out (S4b §4.3).
+func (engine *Engine) StopSignIn(id string) (outcome string, err error) {
+	defer recoverPanic(&err)
+	err = engine.act(func(ctx context.Context) error {
+		stopErr := engine.service.StopSignIn(ctx, strings.TrimSpace(id))
+		switch {
+		case errors.Is(stopErr, daemon.ErrNoPendingAuthorization):
+			outcome = StopSignInNone
+			return nil
+		case stopErr != nil:
+			return stopErr
+		}
+		outcome = StopSignInDone
+		return nil
 	})
 	return outcome, err
 }

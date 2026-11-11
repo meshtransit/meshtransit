@@ -370,6 +370,20 @@ type Profile struct {
 	IsActive   bool      `json:"is_active"`
 	// State is the profile's registration; empty from an older meshd.
 	State string `json:"state,omitempty"`
+	// Identity is the account's names (S4b §4.2); nil until a map named
+	// them, or from an older meshd.
+	Identity  *ProfileIdentity `json:"identity,omitempty"`
+	Hostname  string           `json:"hostname,omitempty"`
+	Removed   bool             `json:"removed,omitempty"`
+	CanCancel bool             `json:"can_cancel,omitempty"`
+}
+
+// ProfileIdentity is an account's names: ownership member or workspace.
+type ProfileIdentity struct {
+	Network   string `json:"network"`
+	Workspace string `json:"workspace"`
+	Ownership string `json:"ownership"`
+	Owner     string `json:"owner,omitempty"`
 }
 
 // Profiles is the stable v1 profile-list response.

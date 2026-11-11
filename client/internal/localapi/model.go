@@ -3,6 +3,7 @@ package localapi
 import (
 	"time"
 
+	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/version"
 )
@@ -351,6 +352,63 @@ type profileResponse struct {
 	// registered, signed_out, authorization_required, unregistered,
 	// untrusted (control key not pinned) or unreadable (identity damaged).
 	State string `json:"state,omitempty"`
+	// Identity is the account's names the profile's map last carried
+	// (mtcp-v1 §7.13, S4b §4.2); absent when meshd has none.
+	Identity *profileIdentity `json:"identity,omitempty"`
+	// Hostname is the profile's Device's name, to tell apart accounts with
+	// every other name equal.
+	Hostname string `json:"hostname,omitempty"`
+	// Removed is set once meshd learned Core removed the profile's Device:
+	// signing in again adds a new one.
+	Removed bool `json:"removed,omitempty"`
+	// CanCancel is set on an added account that never held a Device and
+	// waits for its first approval: DELETE /v1/accounts/{id} takes it.
+	CanCancel bool `json:"can_cancel,omitempty"`
+}
+
+// profileIdentity is the account's names (ownership: member or workspace;
+// owner empty for a Workspace's Device).
+type profileIdentity struct {
+	Network   string `json:"network"`
+	Workspace string `json:"workspace"`
+	Ownership string `json:"ownership"`
+	Owner     string `json:"owner,omitempty"`
+}
+
+// withDisplay adds what meshd keeps for the profile's display.
+func (response profileResponse) withDisplay(display daemon.Display, found, canCancel bool) profileResponse {
+	response.CanCancel = canCancel
+	if !found {
+		return response
+	}
+	response.Hostname, response.Removed = display.Hostname, display.RemovedAt != nil
+	if display.Network != "" && display.Workspace != "" && display.Ownership != "" {
+		response.Identity = &profileIdentity{
+			Network: display.Network, Workspace: display.Workspace,
+			Ownership: display.Ownership, Owner: display.Owner,
+		}
+	}
+	return response
+}
+
+// cancelAccountResponse is DELETE /v1/accounts/{id}: the profile removed,
+// what became of its Device, and the profile now in use.
+type cancelAccountResponse struct {
+	APIVersion string          `json:"api_version"`
+	Profile    profileResponse `json:"profile"`
+	Device     string          `json:"device"`
+	Active     profileResponse `json:"active"`
+}
+
+// stopSignInRequest names the profile whose pending approval to drop.
+type stopSignInRequest struct {
+	ProfileID string `json:"profile_id"`
+}
+
+// stopSignInResponse is POST /v1/login/stop.
+type stopSignInResponse struct {
+	APIVersion string `json:"api_version"`
+	ProfileID  string `json:"profile_id"`
 }
 
 type profilesResponse struct {

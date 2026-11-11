@@ -80,10 +80,13 @@ type Engine struct {
 	serve      func(context.Context) error // service.Run; tests replace it
 	profiles   *profile.Store
 	identities *identity.Store
-	logger     *slog.Logger
-	logs       *asyncLog // nil without a log sink
-	hosts      *hostAddressList
-	network    chan struct{}
+	// display keeps what the app shows for each account (S4b §4.1); nil
+	// when its directory could not be opened.
+	display *profile.DisplayStore
+	logger  *slog.Logger
+	logs    *asyncLog // nil without a log sink
+	hosts   *hostAddressList
+	network chan struct{}
 	// routeSettings is the subnet route settings file in the state
 	// directory (SetSubnetRoutes).
 	routeSettings string
@@ -149,12 +152,14 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 	if err != nil {
 		return nil, err
 	}
+	display := openDisplay(resolved.StateDir, logger)
 	hosts := &hostAddressList{}
 	routeSettings := filepath.Join(resolved.StateDir, routeSettingsFile)
 	opener := newPlatformTUN(tun, DefaultMTU, logger.With("component", "tun"), routeSettings, hosts)
 	dns, err := newDNSController(opener, logger.With("component", "dns"))
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("mobile: create dns: %w", err), closeStores(profiles, identities))
+		return nil, errors.Join(fmt.Errorf("mobile: create dns: %w", err), closeStores(profiles, identities),
+			display.Close())
 	}
 	packets, err := dataplane.NewWireGuardWithObserver(
 		opener,
@@ -162,18 +167,22 @@ func build(resolved Config, tun TunProvider, keys KeyStore, queue *asyncLog) (*E
 		nil,
 	)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("mobile: create data plane: %w", err), closeStores(profiles, identities))
+		return nil, errors.Join(fmt.Errorf("mobile: create data plane: %w", err), closeStores(profiles, identities),
+			display.Close())
 	}
 	packets.SetLogger(logger.With("component", "data_plane"))
 	packets.SetHostAddressSource(hosts.load)
 	network := make(chan struct{}, 1)
-	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(),
-		runtimeOptions(resolved, packets, logger, network, routeSettings, dns))
+	options := runtimeOptions(resolved, packets, logger, network, routeSettings, dns)
+	options.Display = display
+	service, err := daemon.New(profiles, identities, version.Current(), mtcpclient.New(), options)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities))
+		return nil, errors.Join(fmt.Errorf("mobile: create runtime: %w", err), closeStores(profiles, identities),
+			display.Close())
 	}
 	return &Engine{
-		service: service, serve: service.Run, profiles: profiles, identities: identities, logger: logger, logs: queue,
+		service: service, serve: service.Run, profiles: profiles, identities: identities, display: display,
+		logger: logger, logs: queue,
 		network: network, stopWait: stopTimeout, hosts: hosts, routeSettings: routeSettings, dns: dns,
 		tun: opener,
 	}, nil
@@ -236,6 +245,21 @@ func openStores(stateDir string, keys KeyStore) (*profile.Store, *identity.Store
 	}
 	return profiles, identities, nil
 }
+
+// openDisplay opens the accounts' display files; without them the app only
+// shows server names, so a failure is logged, not fatal.
+func openDisplay(stateDir string, logger *slog.Logger) *profile.DisplayStore {
+	display, err := profile.OpenDisplayStore(filepath.Join(stateDir, displayDir), nil)
+	if err != nil {
+		logger.Warn("opening the accounts' display files failed", "error", err)
+		return nil
+	}
+	return display
+}
+
+// displayDir is where the accounts' display files live in the state
+// directory, beside profiles.json.
+const displayDir = "display"
 
 func closeStores(profiles *profile.Store, identities *identity.Store) error {
 	return errors.Join(identities.Close(), profiles.Close())
@@ -355,7 +379,7 @@ func (engine *Engine) Close() (err error) {
 	if engine.dns != nil {
 		err = engine.dns.shutdown()
 	}
-	err = errors.Join(err, closeStores(engine.profiles, engine.identities))
+	err = errors.Join(err, closeStores(engine.profiles, engine.identities), engine.display.Close())
 	if engine.logs != nil {
 		engine.logs.close()
 	}

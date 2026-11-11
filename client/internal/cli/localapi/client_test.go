@@ -470,8 +470,10 @@ func TestClient_EndpointMissing(t *testing.T) {
 	}
 	// A plain-text reply of any other status stays a content-type error.
 	other := newTestClient(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{"Content-Type": {"text/plain"}},
-			Body: io.NopCloser(strings.NewReader("bad gateway"))}, nil
+		return &http.Response{
+			StatusCode: http.StatusBadGateway, Header: http.Header{"Content-Type": {"text/plain"}},
+			Body: io.NopCloser(strings.NewReader("bad gateway")),
+		}, nil
 	})
 	if _, err := other.AddAccount(t.Context(), ""); err == nil || errors.Is(err, ErrEndpointMissing) {
 		t.Fatalf("AddAccount() on a plain 502 = %v", err)

@@ -165,8 +165,10 @@ func TestRun_LoginNewAccountFailures(t *testing.T) {
 		{fmt.Errorf("%w: POST /v1/accounts", localapi.ErrEndpointMissing), "update it first"},
 		// A new meshd's own 404 (the new profile went away) is its answer,
 		// not a sign of an older meshd.
-		{&localapi.APIError{StatusCode: http.StatusNotFound, Code: "profile_not_found", Message: "profile not found"},
-			"profile not found"},
+		{
+			&localapi.APIError{StatusCode: http.StatusNotFound, Code: "profile_not_found", Message: "profile not found"},
+			"profile not found",
+		},
 	} {
 		var stdout, stderr bytes.Buffer
 		client := &fakeClient{addErr: test.err, login: localapi.Login{APIVersion: "v1", State: "registered"}}

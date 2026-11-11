@@ -685,9 +685,10 @@ func runStatus(
 	if controlFingerprint == "" {
 		controlFingerprint = "none"
 	}
-	// The map names the Network only when Core sends a name (TD-SPEC-19).
-	networkLine := ""
-	if status.NetworkName != "" {
+	// The account and its Network, as the active profile's map last named
+	// them (self.identity1, S4b §4.2); nothing from an older meshd or Core.
+	networkLine := activeAccountLines(ctx, client, status.ActiveProfileID)
+	if networkLine == "" && status.NetworkName != "" {
 		networkLine = "Network: " + status.NetworkName + "\n"
 	}
 	selfAddresses := "none"
@@ -1208,7 +1209,7 @@ func runProfileList(
 	}
 
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tSTATE\tID\tCONTROL URL")
+	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tACCOUNT\tNETWORK\tSTATE\tID\tCONTROL URL")
 	for _, item := range response.Profiles {
 		marker := ""
 		if item.IsActive {
@@ -1218,13 +1219,55 @@ func runProfileList(
 		if state == "" {
 			state = "-"
 		}
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", marker, item.Name, state, item.ID, item.ControlURL)
+		if item.Removed && state == "unregistered" {
+			state = "removed"
+		}
+		account, network := profileAccountColumns(item.Identity)
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", marker, item.Name, account, network, state, item.ID,
+			item.ControlURL)
 	}
 	if err := table.Flush(); err != nil {
 		return writeRuntimeError(stderr, fmt.Errorf("writing profile table: %w", err))
 	}
 
 	return 0
+}
+
+// activeAccountLines are the status lines naming the active profile's
+// account and Network; empty when unknown. Best effort: a failed list only
+// leaves them out.
+func activeAccountLines(ctx context.Context, client DaemonClient, activeID string) string {
+	if activeID == "" {
+		return ""
+	}
+	profiles, err := client.ListProfiles(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, item := range profiles.Profiles {
+		if item.ID != activeID || item.Identity == nil {
+			continue
+		}
+		account, network := profileAccountColumns(item.Identity)
+		return "Account: " + account + "\nNetwork: " + network + "\n"
+	}
+	return ""
+}
+
+// profileAccountColumns is who an account is and its Network, as its map
+// last named them: the owner's name, or Workspace for a Workspace's Device;
+// "-" until a map named them.
+func profileAccountColumns(identity *localapi.ProfileIdentity) (string, string) {
+	if identity == nil {
+		return "-", "-"
+	}
+	account := identity.Owner
+	if identity.Ownership == "workspace" {
+		account = "Workspace " + identity.Workspace
+	} else if account == "" {
+		account = "-"
+	}
+	return account, identity.Network
 }
 
 func runProfileCreate(

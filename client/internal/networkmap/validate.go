@@ -588,6 +588,12 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		route := *snapshot.ExitRoute
 		cloned.ExitRoute = &route
 	}
+	if snapshot.Identity != nil && CheckIdentity(snapshot.Identity) == nil {
+		identity := *snapshot.Identity
+		cloned.Identity = &identity
+	} else {
+		cloned.Identity = nil
+	}
 	if snapshot.KubernetesCA != nil {
 		cloned.KubernetesCA = &KubernetesCA{
 			Root:    append([]byte(nil), snapshot.KubernetesCA.Root...),

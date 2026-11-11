@@ -100,6 +100,7 @@ func (s *Service) RemoveProfile(ctx context.Context, id string, local bool) (Pro
 		return ProfileRemoval{}, fmt.Errorf("%w: its keys were not deleted (run it again): %w", ErrProfileRemoval,
 			err)
 	}
+	s.displayProfileRemoved(target.ID)
 	if _, err := s.profiles.Remove(persistCtx, target.ID); err != nil {
 		// What became of the Device stays known: a retry finds no keys.
 		return ProfileRemoval{Profile: target, Device: device}, s.profileRemovalFailed(target.ID, device, err)
@@ -175,6 +176,19 @@ func (s *Service) removeProfileDevice(ctx context.Context, target profile.Profil
 		device, err := s.logoutProfileDevice(ctx, target, record)
 		if errors.Is(err, controlplane.ErrDeviceNotAuthorized) {
 			return ProfileDevicePending, nil
+		}
+		return device, err
+	case s.mayHoldDevice(target.ID):
+		// Keys left neither registered nor pending after a stopped sign-in
+		// or an expiry may still hold a Device Core knows: only Core says.
+		device, err := s.logoutProfileDevice(ctx, target, record)
+		if errors.Is(err, controlplane.ErrDeviceNotAuthorized) {
+			// A stopped sign-in's link is still valid: approving it now
+			// would make a Device nothing holds.
+			if display, _ := s.ProfileDisplay(target.ID); display.SignInStopped {
+				return ProfileDevicePending, nil
+			}
+			return ProfileDeviceNone, nil
 		}
 		return device, err
 	}

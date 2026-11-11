@@ -66,6 +66,7 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 	if err != nil {
 		return profile.Profile{}, profile.Profile{}, err
 	}
+	s.displayAccountAdded(created.ID, active.ID)
 	// Pinned before it is active: the profile in use is untouched if the
 	// server does not prove the key, and no other switch is pinned instead.
 	if _, err := s.trustProfile(ctx, created, status.ControlFingerprint); err != nil {

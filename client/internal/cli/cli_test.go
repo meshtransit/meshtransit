@@ -1089,3 +1089,25 @@ func TestDNSQueryShowsThePathAndTheAnswer(t *testing.T) {
 		t.Fatalf("bad usage exit %d", code)
 	}
 }
+
+// S4b §4.2: profile list names who each account is and its Network.
+func TestProfileAccountColumns(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		identity         *localapi.ProfileIdentity
+		account, network string
+	}{
+		{nil, "-", "-"},
+		{&localapi.ProfileIdentity{Network: "Lab", Workspace: "Acme", Ownership: "member", Owner: "Alice"}, "Alice", "Lab"},
+		{&localapi.ProfileIdentity{Network: "Lab", Workspace: "Acme", Ownership: "member"}, "-", "Lab"},
+		{
+			&localapi.ProfileIdentity{Network: "Servers", Workspace: "Acme", Ownership: "workspace"}, "Workspace Acme",
+			"Servers",
+		},
+	} {
+		if account, network := profileAccountColumns(test.identity); account != test.account || network != test.network {
+			t.Errorf("profileAccountColumns(%+v) = %q, %q; want %q, %q", test.identity, account, network,
+				test.account, test.network)
+		}
+	}
+}

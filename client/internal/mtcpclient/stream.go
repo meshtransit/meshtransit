@@ -1459,8 +1459,9 @@ func streamCapabilities(options controlplane.NetmapOptions, gateway bool) []stri
 	}
 	if !gateway {
 		// Any other node takes the clusters it may reach and their roots
-		// (§7.11), for kubectl over the mesh (K1e).
-		capabilities = append(capabilities, kubeClusterCapability)
+		// (§7.11), for kubectl over the mesh (K1e), and its account's names
+		// for the apps (§7.13); a gateway never asks for a person's name.
+		capabilities = append(capabilities, kubeClusterCapability, selfIdentityCapability)
 	}
 	if gateway {
 		// A Kubernetes gateway takes its peers' Kubernetes access (§7.8).

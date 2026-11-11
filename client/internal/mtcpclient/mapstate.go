@@ -373,6 +373,7 @@ func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
 	if state.takesKubernetesCA {
 		snapshot.KubernetesCA = state.kubernetesCA()
 	}
+	snapshot.Identity = state.identity()
 	if state.takesClusters && state.kubeClusters != nil {
 		snapshot.KubernetesClusters = state.kubeClusters.clusters(input.now)
 		snapshot.KubernetesClustersAuthoritative = state.kubeClusters.authoritativeAt(input.now)

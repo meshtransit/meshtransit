@@ -38,6 +38,10 @@ type service interface {
 	ActivateProfile(context.Context, string) (profile.Profile, error)
 	RemoveProfile(context.Context, string, bool) (daemon.ProfileRemoval, error)
 	AddAccount(context.Context, string) (profile.Profile, profile.Profile, error)
+	ProfileDisplay(string) (daemon.Display, bool)
+	CanCancelAddAccount(context.Context, string) bool
+	CancelAddAccount(context.Context, string) (daemon.ProfileRemoval, profile.Profile, error)
+	StopSignIn(context.Context, string) error
 	ProbeControl(context.Context) (daemon.ControlProbe, error)
 	TrustControl(context.Context, string) (daemon.ControlTrust, error)
 	StartLogin(context.Context, string) (daemon.Login, error)
@@ -172,6 +176,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/profiles", s.handleProfiles)
 	mux.HandleFunc(profilePathPrefix, s.handleProfileAction)
 	mux.HandleFunc("/v1/accounts", s.handleAddAccount)
+	mux.HandleFunc("/v1/accounts/{id}", s.handleCancelAccount)
+	mux.HandleFunc("/v1/login/stop", s.handleStopSignIn)
 	mux.HandleFunc("/v1/doctor/control", s.handleControlProbe)
 	mux.HandleFunc("/v1/control/trust", s.handleControlTrust)
 	mux.HandleFunc("/v1/login", s.handleLogin)
@@ -913,7 +919,9 @@ func (s *Server) handleListProfiles(writer http.ResponseWriter, request *http.Re
 	for _, item := range snapshot.Profiles {
 		mapped := mapProfile(item, snapshot.ActiveProfileID)
 		mapped.State = states[item.ID]
-		profiles = append(profiles, mapped)
+		display, found := s.service.ProfileDisplay(item.ID)
+		canCancel := mapped.State == daemon.RegistrationPending && s.service.CanCancelAddAccount(request.Context(), item.ID)
+		profiles = append(profiles, mapped.withDisplay(display, found, canCancel))
 	}
 
 	s.writeJSON(writer, http.StatusOK, profilesResponse{
@@ -976,6 +984,65 @@ func (s *Server) handleAddAccount(writer http.ResponseWriter, request *http.Requ
 		before.State = states[previous.ID]
 	}
 	s.writeJSON(writer, http.StatusCreated, addAccountResponse{APIVersion: apiVersion, Profile: added, Previous: before})
+}
+
+// handleCancelAccount undoes an Add account still waiting for its first
+// approval (S4b §4.3): DELETE /v1/accounts/{id}.
+func (s *Server) handleCancelAccount(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodDelete {
+		s.writeMethodNotAllowed(writer, http.MethodDelete)
+
+		return
+	}
+	id := request.PathValue("id")
+	if !isProfilePathID(id) {
+		s.writeError(writer, http.StatusBadRequest, "invalid_profile_id", "profile id is invalid")
+
+		return
+	}
+	removal, active, err := s.service.CancelAddAccount(request.Context(), id)
+	if errors.Is(err, daemon.ErrNotCancelable) {
+		s.writeError(writer, http.StatusConflict, "account_not_cancelable",
+			"only an added account that never held a device can be cancelled; stop signing in instead")
+
+		return
+	}
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, cancelAccountResponse{
+		APIVersion: apiVersion, Profile: mapProfile(removal.Profile, active.ID), Device: removal.Device,
+		Active: mapProfile(active, active.ID),
+	})
+}
+
+// handleStopSignIn drops a profile's pending browser approval and keeps
+// its keys (S4b §4.3): POST /v1/login/stop {"profile_id": "..."}, the
+// profile the person saw waiting, so a switch in between never stops
+// another one's.
+func (s *Server) handleStopSignIn(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+
+		return
+	}
+	input := stopSignInRequest{}
+	if !s.decodeJSONRequest(writer, request, &input) {
+		return
+	}
+	if !isProfilePathID(input.ProfileID) {
+		s.writeError(writer, http.StatusBadRequest, "invalid_profile_id", "profile id is invalid")
+
+		return
+	}
+	if err := s.service.StopSignIn(request.Context(), input.ProfileID); err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, stopSignInResponse{APIVersion: apiVersion, ProfileID: input.ProfileID})
 }
 
 // writeAddAccountError maps AddAccount's errors before the shared mapping:
@@ -1124,6 +1191,9 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.writeError(writer, http.StatusConflict, "control_not_trusted", "pin the active profile control key before login")
 	case errors.Is(err, daemon.ErrAuthorizationPending):
 		s.writeError(writer, http.StatusConflict, "authorization_pending", "browser authorization is still pending")
+	case errors.Is(err, daemon.ErrStopSignInUnavailable):
+		s.writeError(writer, http.StatusServiceUnavailable, "stop_sign_in_unavailable",
+			"the stopped sign-in could not be recorded, so it is still pending; try again")
 	case errors.Is(err, daemon.ErrNoPendingAuthorization):
 		s.writeError(writer, http.StatusConflict, "no_pending_authorization", "no browser authorization is pending")
 	case errors.Is(err, controlplane.ErrNodeKeyExpired):

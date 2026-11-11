@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -592,6 +593,14 @@ func newTestServer(t *testing.T) *Server {
 
 func newTestServerWithOptions(t *testing.T, options Options) *Server {
 	t.Helper()
+	server, _ := newTestServerWithDisplay(t, options)
+	return server
+}
+
+// newTestServerWithDisplay is newTestServerWithOptions with the accounts'
+// display files, returned for the test to write.
+func newTestServerWithDisplay(t *testing.T, options Options) (*Server, *profile.DisplayStore) {
+	t.Helper()
 
 	stateDir := t.TempDir()
 	store, err := profile.Open(stateDir)
@@ -609,6 +618,11 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 		t.Fatalf("identity.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = identities.Close() })
+	display, err := profile.OpenDisplayStore(filepath.Join(stateDir, "display"), nil)
+	if err != nil {
+		t.Fatalf("profile.OpenDisplayStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = display.Close() })
 	service, err := daemon.New(
 		store,
 		identities,
@@ -618,7 +632,7 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 			Date:    "2026-09-09T00:00:00Z",
 		},
 		fakeProber{},
-		daemon.Options{Hostname: "node-a"},
+		daemon.Options{Hostname: "node-a", Display: display},
 	)
 	if err != nil {
 		t.Fatalf("daemon.New() error = %v", err)
@@ -629,7 +643,7 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	return server
+	return server, display
 }
 
 type fakeProber struct{}
@@ -1075,8 +1089,10 @@ func TestServer_AddAccount(t *testing.T) {
 		// A failed setup wraps causes that mean something else elsewhere.
 		{fmt.Errorf("%w: switching to it: %w", daemon.ErrAddAccount, profile.ErrNotFound), "add_account_failed"},
 		{errors.Join(fmt.Errorf("%w: switching: x", daemon.ErrAddAccount), profile.ErrActive), "add_account_failed"},
-		{fmt.Errorf("%w: pinning: %w", daemon.ErrAddAccount, controlplane.ErrFingerprintMismatch),
-			"no longer offers the pinned key"},
+		{
+			fmt.Errorf("%w: pinning: %w", daemon.ErrAddAccount, controlplane.ErrFingerprintMismatch),
+			"no longer offers the pinned key",
+		},
 		{fmt.Errorf("%w: pinning: %w", daemon.ErrAddAccount, context.Canceled), "request_cancelled"},
 	} {
 		recorder := httptest.NewRecorder()
@@ -1084,5 +1100,60 @@ func TestServer_AddAccount(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), test.code) {
 			t.Fatalf("%v = %d %s", test.err, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+// S4b §4.2-§4.3: the list names each account as its map last did; Cancel
+// takes only an added account waiting for its first approval, and Stop
+// signing in needs a pending one.
+func TestServer_AccountNamesCancelAndStop(t *testing.T) {
+	t.Parallel()
+
+	server, display := newTestServerWithDisplay(t, Options{AllowedUIDs: []uint32{testUID}})
+	created := createProfile(t, server, "work", "https://control.example.com")
+	id := created.ID
+	if err := display.Update(id, func(item *profile.Display) {
+		item.Network, item.Workspace, item.Ownership, item.Owner = "Lab", "Acme", "member", "alice@acme.example"
+		item.Hostname = "mac.example."
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := performRequest(t, server, http.MethodGet, "/v1/profiles", "", nil)
+	var listed profilesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &listed); err != nil || len(listed.Profiles) != 1 {
+		t.Fatalf("GET /v1/profiles = %d %s", recorder.Code, recorder.Body.String())
+	}
+	got := listed.Profiles[0]
+	if got.Identity == nil || got.Identity.Network != "Lab" || got.Identity.Owner != "alice@acme.example" ||
+		got.Hostname != "mac.example." || got.CanCancel || got.Removed {
+		t.Fatalf("listed profile = %+v (identity %+v)", got, got.Identity)
+	}
+	recorder = performRequest(t, server, http.MethodDelete, "/v1/accounts/"+id, "", nil)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "account_not_cancelable") {
+		t.Fatalf("DELETE /v1/accounts/{id} = %d %s, want 409 account_not_cancelable", recorder.Code,
+			recorder.Body.String())
+	}
+	// Never served: refused, or redirected to a cleaned path by the mux.
+	if recorder := performRequest(t, server, http.MethodDelete, "/v1/accounts/..", "", nil); recorder.Code ==
+		http.StatusOK {
+		t.Fatalf("DELETE /v1/accounts/.. = %d", recorder.Code)
+	}
+	if recorder := performRequest(t, server, http.MethodDelete, "/v1/accounts/0123456789abcdef0123456789abcdef", "",
+		nil); recorder.Code != http.StatusNotFound {
+		t.Fatalf("DELETE /v1/accounts/{unknown} = %d %s, want 404", recorder.Code, recorder.Body.String())
+	}
+	if recorder := performRequest(t, server, http.MethodPost, "/v1/login/stop", "", nil); recorder.Code !=
+		http.StatusUnsupportedMediaType {
+		t.Fatalf("POST /v1/login/stop without a body = %d", recorder.Code)
+	}
+	recorder = performRequest(t, server, http.MethodPost, "/v1/login/stop", "application/json",
+		[]byte(`{"profile_id":"`+id+`"}`))
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "no_pending_authorization") {
+		t.Fatalf("POST /v1/login/stop = %d %s, want 409 no_pending_authorization", recorder.Code,
+			recorder.Body.String())
+	}
+	if recorder := performRequest(t, server, http.MethodGet, "/v1/login/stop", "", nil); recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/login/stop = %d", recorder.Code)
 	}
 }

@@ -454,6 +454,10 @@ type Service struct {
 	// kubeCA keeps the Kubernetes CA files kubectl reads (K1e); nil
 	// without KubeCADir.
 	kubeCA *kubeCAFiles
+	// display keeps what the apps show for each profile (S4b §4.1); nil
+	// without Options.Display.
+	display  *profile.DisplayStore
+	displays displayCache
 	// flowLogs counts and sends connection logs while Core grants a
 	// FlowTicket; nil without FlowLogDir or a counting data plane.
 	flowLogs *flowLogs
@@ -569,6 +573,10 @@ type Options struct {
 	// approved are kept; empty keeps them in memory.
 	ExitPinsDir       string
 	RouteSettingsPath string
+	// Display keeps what the apps show for each profile (S4b §4.1): its
+	// account's names and Add account's flags; nil keeps none. The caller
+	// owns and closes it.
+	Display *profile.DisplayStore
 	// KubeCADir holds the Kubernetes CA files kubectl reads (K1e design
 	// §3); empty writes none.
 	KubeCADir string
@@ -761,6 +769,9 @@ func New(
 		service.certificates = certificates
 	}
 	service.flowLogs = newFlowLogs(options.FlowLogDir, options.DataPlane, service.logger)
+	if !options.Gateway {
+		service.display = options.Display
+	}
 	if !options.Gateway && options.KubeCADir != "" {
 		logger := service.logger
 		if logger == nil {
@@ -1377,6 +1388,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						return nil
 					}
 					s.gatewayMapApplied(snapshot)
+					s.displayMapApplied(active.ID, snapshot)
 					s.flowLogs.mapApplied(snapshot.Revision)
 					if pathSampler != nil {
 						pathSampler.observe(snapshot)
@@ -3016,6 +3028,7 @@ func (s *Service) registerWithRecord(
 	switch result.State {
 	case controlplane.RegistrationStateAuthorized:
 		login.State = RegistrationRegistered
+		s.displayRegistered(active.ID)
 		if _, err := s.identities.SetRegistration(stateCtx, active.ID, "", true); err != nil {
 			return Login{}, fmt.Errorf("persisting authorized registration: %w", err)
 		}

@@ -132,7 +132,7 @@ func (s *Service) logout(ctx context.Context, keep bool) (LogoutResult, error) {
 		return LogoutResult{}, err
 	} else if signedOut && keep {
 		return LogoutResult{ProfileID: profileID, State: LogoutSignedOut}, nil
-	} else if !registered && !signedOut {
+	} else if !registered && !signedOut && !s.mayHoldDevice(profileID) {
 		return LogoutResult{ProfileID: profileID, State: LogoutNotRegistered}, nil
 	}
 	s.loggingOut.Store(true)
@@ -166,7 +166,11 @@ func (s *Service) logout(ctx context.Context, keep bool) (LogoutResult, error) {
 	if record.SignedOut() && keep {
 		return LogoutResult{ProfileID: active.ID, State: LogoutSignedOut}, nil
 	}
-	if !record.IsRegistered() && !record.SignedOut() {
+	// Keys neither registered nor signed out may still hold a Device after
+	// a stopped sign-in or an expiry: Core is asked then, and its refusal
+	// means none (S4b §4.3).
+	unconfirmed := !record.IsRegistered() && !record.SignedOut()
+	if unconfirmed && !s.mayHoldDevice(active.ID) {
 		return LogoutResult{ProfileID: active.ID, State: LogoutNotRegistered}, nil
 	}
 
@@ -197,6 +201,9 @@ func (s *Service) logout(ctx context.Context, keep bool) (LogoutResult, error) {
 		return LogoutResult{}, fmt.Errorf("%w: %w", ErrSignOutUnsupported, logoutErr)
 	case errors.Is(logoutErr, controlplane.ErrSignOutNotPermitted):
 		return LogoutResult{}, fmt.Errorf("%w: %w", ErrSignOutNotPermitted, logoutErr)
+	case errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized) && unconfirmed:
+		// Keys that were never confirmed hold no Device Core accepts.
+		return LogoutResult{ProfileID: active.ID, State: LogoutNotRegistered}, nil
 	case errors.Is(logoutErr, controlplane.ErrDeviceNotAuthorized):
 		// A refusal is ambiguous (the Device may still hold its address), so
 		// the keys stay and the user is told (TD-CLI-100).
@@ -258,6 +265,7 @@ func (s *Service) replaceCredentials(ctx context.Context, profileID string) erro
 	if _, err := s.identities.ReplaceCredentials(persistCtx, profileID, machine, node); err != nil {
 		return fmt.Errorf("replacing the profile keys: %w", err)
 	}
+	s.displayDeviceRemoved(profileID)
 
 	return nil
 }

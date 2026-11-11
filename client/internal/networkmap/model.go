@@ -36,6 +36,10 @@ type Snapshot struct {
 	// a local choice among Exits (exit node design §9), never part of
 	// Core's map; nil when it uses none.
 	ExitRoute *ExitRoute
+	// Identity is the names of the node's account (mtcp-v1 §7.13); nil when
+	// the map does not carry them. Display only; an invalid one is dropped,
+	// never the map.
+	Identity *Identity
 	// KubernetesCA is a Kubernetes gateway's cluster's CAs (mtcp-v1 §7.10);
 	// nil when the map does not name them (absent).
 	KubernetesCA *KubernetesCA
