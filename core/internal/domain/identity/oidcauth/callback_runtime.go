@@ -42,24 +42,32 @@ type CallbackDependencies struct {
 	// Signups gives a first sign-in without an invitation its own Account and
 	// Workspace; nil leaves self sign-up off.
 	Signups AccountSignupStore
+	// Emails records the Account's verified email at every sign-in; nil
+	// records none. EmailObserver counts those steps and may be nil.
+	Emails        AccountEmailStore
+	EmailObserver AccountEmailObserver
 }
 
 // CallbackService owns bounded synchronous composition, not public admission.
 // Its capacity channel is never closed; each admitted caller owns one slot until
 // all work/cleanup joins. No goroutines, retries or database units span provider I/O.
 type CallbackService struct {
-	options      CallbackOptions
-	clock        StartClock
-	observer     CallbackObserver
-	active       chan struct{}
-	verification *BrowserVerificationService
-	claim        *ClaimService
-	exchange     *ExchangeService
-	subject      *SubjectResolutionService
-	issue        *IssueService
-	failure      *FailureService
-	invitations  InvitationAcceptor
-	signups      AccountSignupStore
+	options       CallbackOptions
+	clock         StartClock
+	observer      CallbackObserver
+	active        chan struct{}
+	verification  *BrowserVerificationService
+	claim         *ClaimService
+	exchange      *ExchangeService
+	subject       *SubjectResolutionService
+	issue         *IssueService
+	failure       *FailureService
+	invitations   InvitationAcceptor
+	signups       AccountSignupStore
+	emails        AccountEmailStore
+	emailObserver AccountEmailObserver
+	// emailTimeout bounds the email step; zero means accountEmailTimeout.
+	emailTimeout time.Duration
 	subjectKeys  *SubjectKeyring
 }
 
@@ -136,6 +144,7 @@ func NewCallbackService(options CallbackOptions, deps CallbackDependencies) (*Ca
 		options: options, clock: deps.Clock, observer: deps.Observer, active: make(chan struct{}, options.MaxConcurrent),
 		verification: verification, claim: claim, exchange: exchange, subject: subject, issue: issue, failure: failure,
 		invitations: deps.Invitations, signups: deps.Signups, subjectKeys: deps.SubjectKeys,
+		emails: nilAccountEmailStore(deps.Emails), emailObserver: nilAccountEmailObserver(deps.EmailObserver),
 	}, nil
 }
 
@@ -151,4 +160,18 @@ func nilCallbackDependency(value any) bool {
 	default:
 		return false
 	}
+}
+
+func nilAccountEmailStore(store AccountEmailStore) AccountEmailStore {
+	if nilCallbackDependency(store) {
+		return nil
+	}
+	return store
+}
+
+func nilAccountEmailObserver(observer AccountEmailObserver) AccountEmailObserver {
+	if nilCallbackDependency(observer) {
+		return nil
+	}
+	return observer
 }

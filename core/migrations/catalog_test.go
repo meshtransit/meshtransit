@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 287 {
-		t.Fatalf("len(Catalog()) = %d, want 287", len(catalog))
+	if len(catalog) != 288 {
+		t.Fatalf("len(Catalog()) = %d, want 288", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 287 {
-		t.Fatalf("LatestVersion() = %d, want 287", LatestVersion())
+	if LatestVersion() != 288 {
+		t.Fatalf("LatestVersion() = %d, want 288", LatestVersion())
 	}
 }
 
@@ -8452,6 +8452,56 @@ func TestMapSelfIdentityMigrationKeepsAccountsRevoked(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 287 SQL contains %q", forbidden)
+		}
+	}
+}
+
+func TestAccountVerifiedEmailMigrationKeepsEmailsPrivate(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[287]
+	if migration.Version != 288 {
+		t.Fatalf("Catalog()[287].Version = %d, want 288", migration.Version)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.account_email",
+		"FORCE ROW LEVEL SECURITY",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		"capture_authority_mutation('account_email', 'public_id')",
+		"auth.state = 'consuming' AND auth.version = p_transaction_version",
+		"auth.binding_semantic_hash = p_binding_hash",
+		"auth.consumed_at = p_consumed_at",
+		"membership.workspace_id = v_auth.workspace_id",
+		"ON CONFLICT (account_id) DO NOTHING",
+		"IF v_row.email = p_email THEN",
+		"deployment.recovery_state = 'verified'",
+		"provider.state = 'active' AND provider.recovery_state = 'verified'",
+		"workspace_provider.identity_provider_client_id = v_auth.identity_provider_client_id",
+		"CASE WHEN device.ownership = 'member' THEN account_email.email END",
+		"machine.fingerprint = p_machine_fingerprint",
+		"node_key.public_key = p_node_key",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 288 SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"ON mesh.account TO",
+		"ON mesh.account_email TO",
+		"GRANT SELECT",
+		"TO mesh_worker",
+		"TO mesh_observer",
+		"BYPASSRLS",
+		"UPDATE mesh.account AS",
+		"DROP FUNCTION mesh_ops.read_map_self_identity_v1",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 288 SQL contains %q", forbidden)
+		}
+	}
+	// The function's email rule and the table CHECK are the same rule.
+	for _, rule := range []string{"'^[!#-;=?-~]+$'", "'^[^@]+@[^@]+$'"} {
+		if strings.Count(migration.SQL, rule) != 2 {
+			t.Errorf("email rule %s must appear in the CHECK and the function", rule)
 		}
 	}
 }

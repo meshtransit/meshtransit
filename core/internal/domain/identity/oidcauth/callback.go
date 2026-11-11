@@ -75,6 +75,7 @@ func (service *CallbackService) CompleteBrowser(
 	} else if err := service.signUp(ctx, exchange, params.SignupSource); err != nil {
 		return result, service.failBeforeIssue(ctx, receipt, err)
 	}
+	service.recordEmail(ctx, exchange)
 	subject, err := service.subject.ResolveBrowser(ctx, exchange)
 	if err != nil {
 		return result, service.failBeforeIssue(ctx, receipt, err)

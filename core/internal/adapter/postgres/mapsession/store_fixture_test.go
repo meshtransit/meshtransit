@@ -109,11 +109,13 @@ type fakeTransaction struct {
 	// reader is granted.
 	selfIdentity        *selfIdentityRow
 	selfIdentityGranted bool
-	workspaceName       *string
-	kubernetesTrustErr  error
-	kubernetesRoots     map[[32]byte][]byte
-	kubernetesRootsErr  error
-	rootReads           int
+	// selfIdentityEmailGranted: schema 288's reader is granted too.
+	selfIdentityEmailGranted bool
+	workspaceName            *string
+	kubernetesTrustErr       error
+	kubernetesRoots          map[[32]byte][]byte
+	kubernetesRootsErr       error
+	rootReads                int
 	// execErrs fails the statements it names, before execErr.
 	execErrs             map[string]error
 	kubernetesRuleGroups [][]any
@@ -187,14 +189,18 @@ func (transaction *fakeTransaction) QueryRow(
 		return headerWithWorkspaceRow{header: row, workspace: transaction.workspaceName}
 	case loadSnapshotWithIdentitySQL:
 		return snapshotWithIdentityRow{snapshot: row, identity: transaction.selfIdentity}
+	case loadSnapshotWithIdentityEmailSQL:
+		return snapshotWithIdentityRow{snapshot: row, identity: transaction.selfIdentity, email: true}
 	}
 	return row
 }
 
-// selfIdentityRow is what schema 287's reader returns.
+// selfIdentityRow is what schema 287's reader returns; email is what 288's
+// adds.
 type selfIdentityRow struct {
 	workspace, ownership string
 	owner                *string
+	email                *string
 }
 
 // snapshotWithIdentityRow answers the snapshot read with the account names:
@@ -203,10 +209,14 @@ type selfIdentityRow struct {
 type snapshotWithIdentityRow struct {
 	snapshot databaseRow
 	identity *selfIdentityRow
+	email    bool
 }
 
 func (row snapshotWithIdentityRow) Scan(destinations ...any) error {
 	count := len(destinations)
+	if row.email {
+		count--
+	}
 	if err := row.snapshot.Scan(destinations[:count-3]...); err != nil {
 		return err
 	}
@@ -214,6 +224,9 @@ func (row snapshotWithIdentityRow) Scan(destinations ...any) error {
 		*destinations[count-3].(**string) = textPointer(row.identity.workspace)
 		*destinations[count-2].(**string) = textPointer(row.identity.ownership)
 		*destinations[count-1].(**string) = row.identity.owner
+		if row.email {
+			*destinations[count].(**string) = row.identity.email
+		}
 	}
 	return nil
 }
@@ -287,6 +300,8 @@ func (transaction *fakeTransaction) Query(
 	case selfIdentityGrantedSQL:
 		return &grantRows{granted: transaction.selfIdentity != nil || transaction.selfIdentityGranted ||
 			transaction.workspaceName != nil}, nil
+	case selfIdentityEmailGrantedSQL:
+		return &grantRows{granted: transaction.selfIdentityEmailGranted}, nil
 	case loadKubernetesCAsV2SQL:
 		if transaction.kubernetesTrustErr != nil {
 			return nil, transaction.kubernetesTrustErr

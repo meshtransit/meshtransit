@@ -1656,6 +1656,7 @@ display only; a node never routes, resolves names or decides access by them.
 | `workspace_display_name` | The Workspace's display name |
 | `ownership` | `MEMBER`, a person's Device, or `WORKSPACE`, a Device the Workspace owns (tags, servers, gateways) |
 | `owner_display_name` | The owner's account display name: for an invited account, its verified email; for a self-registered one, the name it chose. Empty unless `MEMBER`, or when the account is gone |
+| `owner_email` | Optional. The owner's verified email, as the identity provider last gave it at a sign-in. Present when Core read it (schema 288): empty when the account has none, always empty unless `MEMBER`. Absent when Core did not read it (an older Core) |
 
 - **Only self, only the Device's own.** Core sends it on `self` and never on a
   peer. Core reads it for the session's own Device only, by the scope and the
@@ -1672,10 +1673,20 @@ display only; a node never routes, resolves names or decides access by them.
 - **When names change.** A renamed Workspace is not pushed: Core does not
   resend every map in the Workspace for a name. A node sees it once its
   map is next rebuilt with a change of its own or from a full read (a new
-  session, a new session generation).
+  session, a new session generation). A new `owner_email` (recorded at the
+  owner's next browser sign-in) arrives the same way: at the node's next
+  full read.
 - **Limits.** Each name is 1 to 128 characters (the owner's may be empty),
   UTF-8 without control characters. A node drops `identity` it cannot accept
-  and keeps the rest of the map.
+  and keeps the rest of the map. `owner_email` is 3 to 254 printable ASCII
+  characters other than `"`, `<` and `>`, with exactly one `@` and text on
+  both sides; an IDN or UTF-8 address is never sent (the Device shows the
+  name alone). A node drops an `owner_email` it cannot accept and keeps the
+  names.
+- **Email absent or empty.** A node treats an absent `owner_email` as "not
+  read": it may keep the email it last saw only while the Device ID,
+  ownership and owner name are unchanged. An empty one means the account
+  has none, and replaces what it had.
 
 ## 8. Node reports
 

@@ -154,3 +154,99 @@ func TestDeriveRereadsADeviceWhoseOwnerChanged(t *testing.T) {
 		t.Fatalf("Derive() = %t, %v; want a reread", found, err)
 	}
 }
+
+// S4c §3.2: schema 288's reader is joined the same way as v1's and adds only
+// the owner's email.
+func TestSnapshotWithIdentityEmailSQLJoinsTheV2Reader(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(loadSnapshotWithIdentityEmailSQL,
+		"LEFT JOIN LATERAL mesh_ops.read_map_self_identity_v2($1::BYTEA, $2::BYTEA) AS identity ON TRUE") ||
+		!strings.Contains(loadSnapshotWithIdentityEmailSQL,
+			"identity.owner_display_name,\n    identity.owner_email\nFROM mesh.device AS device") ||
+		strings.Contains(loadSnapshotWithIdentityEmailSQL, "read_map_self_identity_v1") ||
+		strings.Replace(loadSnapshotWithIdentityEmailSQL, "read_map_self_identity_v2", "read_map_self_identity_v1", 1) ==
+			loadSnapshotWithIdentitySQL ||
+		!strings.HasSuffix(loadSnapshotWithIdentityEmailSQL, "AND device.expires_at > pg_catalog.transaction_timestamp()") {
+		t.Fatalf("loadSnapshotWithIdentityEmailSQL = %s", loadSnapshotWithIdentityEmailSQL)
+	}
+}
+
+func TestStoreLoadsTheOwnersEmail(t *testing.T) {
+	for name, test := range map[string]struct {
+		row       selfIdentityRow
+		email     string
+		rejected  uint64
+		ownerName string
+	}{
+		"member": {
+			row:   selfIdentityRow{workspace: "Acme", ownership: "member", owner: textPointer("Alice"), email: textPointer("alice@example.test")},
+			email: "alice@example.test", ownerName: "Alice",
+		},
+		"no email yet": {
+			row: selfIdentityRow{workspace: "Acme", ownership: "member", owner: textPointer("Alice")}, ownerName: "Alice",
+		},
+		"workspace device": {
+			row: selfIdentityRow{workspace: "Acme", ownership: "workspace", email: textPointer("alice@example.test")},
+		},
+		"email a Device may not show": {
+			row:      selfIdentityRow{workspace: "Acme", ownership: "member", owner: textPointer("Alice"), email: textPointer("al\u202eice@example.test")},
+			rejected: 1, ownerName: "Alice",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _, transaction, _, identity := validStoreFixture(t)
+			transaction.selfIdentityEmailGranted = true
+			row := test.row
+			transaction.selfIdentity = &row
+			snapshot, err := store.Load(t.Context(), identity)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			got := snapshot.SelfIdentity()
+			email, read := got.OwnerEmail()
+			if !got.Known() || got.OwnerName() != test.ownerName || !read || email != test.email {
+				t.Fatalf("SelfIdentity() = %+v", got)
+			}
+			if stats := store.InventoryStats(); stats.SelfIdentityEmailRejected != test.rejected ||
+				stats.SelfIdentityRejected != 0 {
+				t.Fatalf("rejected = %+v, want %d emails and no names", stats, test.rejected)
+			}
+			if !slices.Contains(transaction.queries, loadSnapshotWithIdentityEmailSQL) ||
+				slices.Contains(transaction.queries, loadSnapshotWithIdentitySQL) {
+				t.Fatalf("queries = %v, want the v2 read", transaction.queries)
+			}
+		})
+	}
+}
+
+// A Core on schema 287 keeps the names and sends no email field.
+func TestStoreWithoutTheV2ReaderKeepsTheNames(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	transaction.selfIdentity = &selfIdentityRow{workspace: "Acme", ownership: "member", owner: textPointer("Alice")}
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	got := snapshot.SelfIdentity()
+	if _, read := got.OwnerEmail(); !got.Known() || got.OwnerName() != "Alice" || read {
+		t.Fatalf("SelfIdentity() = %+v, want the names without an email", got)
+	}
+}
+
+func TestDeriveCarriesTheOwnersEmail(t *testing.T) {
+	store, transaction, record := liveStoreFixture(t)
+	transaction.selfIdentityEmailGranted = true
+	transaction.selfIdentity = &selfIdentityRow{
+		workspace: "Acme", ownership: "member", owner: textPointer("Alice"), email: textPointer("alice@example.test"),
+	}
+	transaction.workspaceName = textPointer("Acme")
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	derived, found, err := store.Derive(t.Context(), loaded, record.networkRevision)
+	if email, read := derived.SelfIdentity().OwnerEmail(); err != nil || !found || !read ||
+		email != "alice@example.test" {
+		t.Fatalf("Derive() = %+v %t, %v", derived.SelfIdentity(), found, err)
+	}
+}

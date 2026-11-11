@@ -522,6 +522,11 @@ message SelfIdentity {
   // The owner's account display name; empty unless ownership is MEMBER, or
   // when the account is gone.
   string owner_display_name = 4;
+  // The owner's verified email (schema 288, S4c). Absent: the sender did
+  // not read it (an older Core). Empty: the account has none, and always
+  // empty unless ownership is MEMBER. 3-254 printable ASCII characters
+  // without '"', '<' or '>', with exactly one '@'.
+  optional string owner_email = 5;
 
   enum Ownership {
     OWNERSHIP_UNSPECIFIED = 0;

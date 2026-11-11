@@ -137,3 +137,71 @@ func completeConnectivity(t *testing.T, snapshot mapsession.Snapshot) []mapsessi
 	}
 	return connectivity
 }
+
+// S4c §3.3: owner_email is present only when Core read it, empty when the
+// account has none, and never on a peer.
+func TestEncodeSelfIdentityOwnerEmail(t *testing.T) {
+	t.Parallel()
+	member := must(mapsession.NewSelfIdentity("Acme", mapsession.OwnershipMember, "Alice"))
+	workspace := must(mapsession.NewSelfIdentity("Acme", mapsession.OwnershipWorkspace, ""))
+	for name, test := range map[string]struct {
+		identity mapsession.SelfIdentity
+		present  bool
+		email    string
+	}{
+		"not read (schema 287)": {identity: member},
+		"read":                  {identity: member.WithOwnerEmail("alice@example.test"), present: true, email: "alice@example.test"},
+		"none":                  {identity: member.WithOwnerEmail(""), present: true},
+		"invalid":               {identity: member.WithOwnerEmail("al<ice@example.test"), present: true},
+		"workspace":             {identity: workspace.WithOwnerEmail("alice@example.test"), present: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			message, err := encodeSnapshot(identitySnapshot(t, test.identity), &mtcpv1.View{Epoch: 9, Seq: 1}, false,
+				nil, dnsname.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := message.GetSelf().GetIdentity()
+			if (got.OwnerEmail != nil) != test.present || got.GetOwnerEmail() != test.email ||
+				got.GetOwnerDisplayName() != test.identity.OwnerName() {
+				t.Fatalf("self identity = %v", got)
+			}
+			for _, peer := range message.GetPeers() {
+				if peer.GetIdentity() != nil {
+					t.Fatalf("peer %s carries an identity", peer.GetDeviceId())
+				}
+			}
+		})
+	}
+}
+
+// An email change alone replaces self in a delta.
+func TestDeltaSelfCarriesANewOwnerEmail(t *testing.T) {
+	session, node, control := testSession(t)
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	names := must(mapsession.NewSelfIdentity("Acme", mapsession.OwnershipMember, "Alice"))
+	withIdentity := func(identity mapsession.SelfIdentity, revision int64) mapsession.Snapshot {
+		params := snapshotParamsFixture(t, revision, 3)
+		params.SelfIdentity = identity
+		snapshot := must(mapsession.NewSnapshot(params))
+		return must(snapshot.WithConnectivity(completeConnectivity(t, snapshot)))
+	}
+	current := withIdentity(names.WithOwnerEmail("old@example.test"), 7)
+	if err := sink.SendSnapshot(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	node.messages()
+	delta := must(mapsession.NewAuthorityDelta(current, withIdentity(names.WithOwnerEmail("new@example.test"), 8)))
+	if err := sink.SendAuthorityDelta(t.Context(), delta); err != nil {
+		t.Fatal(err)
+	}
+	_, message, _ := node.read()
+	sent, ok := message.(*mtcpv1.MapDelta)
+	if !ok {
+		t.Fatalf("sent %T", message)
+	}
+	if got := sent.GetSelf().GetIdentity(); got.GetOwnerEmail() != "new@example.test" {
+		t.Fatalf("delta self identity = %v", got)
+	}
+}

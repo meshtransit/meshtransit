@@ -120,9 +120,9 @@ type Store struct {
 	// Network (K1a4d design §3.3).
 	kubernetesTrustGranted atomic.Bool
 	kubernetesRootCache    *kubernetesRootCache
-	// selfIdentityGranted: schema 287's readers are granted (probed until
-	// they are).
-	selfIdentityGranted atomic.Bool
+	// selfIdentityReaders: the identityReaders granted, kept once any is
+	// (probed until then).
+	selfIdentityReaders atomic.Int32
 }
 
 // InventoryStats counts how map snapshots got their candidates.
@@ -194,6 +194,9 @@ type InventoryStats struct {
 	// SelfIdentityRejected counts Devices whose account names the map
 	// could not carry; the map went without them (schema 287).
 	SelfIdentityRejected uint64
+	// SelfIdentityEmailRejected counts owner emails (schema 288) a Device
+	// may not show; the map kept the names without them.
+	SelfIdentityEmailRejected uint64
 }
 
 // policyShadowInterval: one in this many reads that could expand the
@@ -207,7 +210,7 @@ type inventoryStats struct {
 	guardrailCuts, kubernetesWithheldUnread, kubernetesWithheldEvidence, kubernetesWithheldDirect,
 	kubernetesWithheldProjections, kubernetesCAsWithheld, kubernetesCAsRejected, kubernetesTrustUnread,
 	kubernetesRootsMissing, kubernetesGatewayCAsOmitted, kubernetesWithheldPeerGrants,
-	selfIdentityRejected atomic.Uint64
+	selfIdentityRejected, selfIdentityEmailRejected atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -229,7 +232,8 @@ func (store *Store) InventoryStats() InventoryStats {
 		KubernetesTrustUnread:         store.stats.kubernetesTrustUnread.Load(),
 		KubernetesRootsMissing:        store.stats.kubernetesRootsMissing.Load(),
 		KubernetesGatewayCAsOmitted:   store.stats.kubernetesGatewayCAsOmitted.Load(),
-		SelfIdentityRejected:          store.stats.selfIdentityRejected.Load()}
+		SelfIdentityRejected:          store.stats.selfIdentityRejected.Load(),
+		SelfIdentityEmailRejected:     store.stats.selfIdentityEmailRejected.Load()}
 }
 
 // policyMatches checks, for a read that read the Device's own packet policy,
@@ -537,11 +541,11 @@ func (store *Store) loadSnapshot(
 	}
 
 	record := snapshotRecord{readLocal: beginLocal}
-	snapshotQuery, withIdentity, err := store.snapshotSQL(ctx, transaction)
+	snapshotQuery, readers, err := store.snapshotSQL(ctx, transaction)
 	if err != nil {
 		return snapshotRead{}, err
 	}
-	var identityWorkspace, identityOwnership, identityOwner *string
+	var identityWorkspace, identityOwnership, identityOwner, identityEmail *string
 	destinations := []any{
 		&record.numericNodeID,
 		&record.numericOwnerID,
@@ -561,8 +565,11 @@ func (store *Store) loadSnapshot(
 		&record.workspaceCode,
 		&record.networkCode,
 	}
-	if withIdentity {
+	if readers != identityReadersNone {
 		destinations = append(destinations, &identityWorkspace, &identityOwnership, &identityOwner)
+	}
+	if readers == identityReadersEmail {
+		destinations = append(destinations, &identityEmail)
 	}
 	if err := transaction.QueryRow(ctx, snapshotQuery, fingerprint[:], nodeKey[:]).Scan(destinations...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -573,7 +580,8 @@ func (store *Store) loadSnapshot(
 			fmt.Errorf("read scoped snapshot: %w", err),
 		)
 	}
-	record.selfIdentity = store.selfIdentity(identityWorkspace, identityOwnership, identityOwner)
+	record.selfIdentity = store.selfIdentity(identityWorkspace, identityOwnership, identityOwner, readers,
+		identityEmail)
 	// A shared-inventory read takes the candidates from the Network's
 	// inventory after commit; the empty list keeps direct projections
 	// decodable meanwhile (they are checked against the inventory then).

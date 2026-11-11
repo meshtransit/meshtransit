@@ -236,6 +236,9 @@ func assertMapSelfIdentity(ctx context.Context, t *testing.T, store *postgresmap
 	if granted, err := store.SelfIdentityGranted(ctx); err != nil || !granted {
 		t.Fatalf("SelfIdentityGranted() = %t, %v; want the schema 287 readers", granted, err)
 	}
+	if granted, err := store.SelfIdentityEmailGranted(ctx); err != nil || !granted {
+		t.Fatalf("SelfIdentityEmailGranted() = %t, %v; want the schema 288 reader", granted, err)
+	}
 	named, err := service.Open(ctx, machine, request.WithSelfIdentity())
 	if err != nil {
 		t.Fatalf("Open(self identity) error = %v", err)
@@ -244,6 +247,10 @@ func assertMapSelfIdentity(ctx context.Context, t *testing.T, store *postgresmap
 	if !identity.Known() || identity.WorkspaceName() == "" ||
 		identity.Ownership() == mapsession.OwnershipWorkspace && identity.OwnerName() != "" {
 		t.Fatalf("SelfIdentity() = %+v, want the seeded Device's account names", identity)
+	}
+	// Schema 288 is read: the email is known even when the account has none.
+	if _, read := identity.OwnerEmail(); !read {
+		t.Fatalf("SelfIdentity() = %+v, want the owner's email read", identity)
 	}
 	plain, err := service.Open(ctx, machine, request)
 	if err != nil || plain.SelfIdentity().Known() {

@@ -884,6 +884,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 					"error_code", "self_identity_unavailable")
 			}
 			deps.selfIdentity = granted && grantErr == nil
+			// The owner's email (schema 288, S4c) only adds to the names:
+			// without its reader the names still go out (S4c §3.2).
+			if deps.selfIdentity && mapProbes.selfIdentityEmail != nil {
+				probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+				email, emailErr := mapProbes.selfIdentityEmail(probeCtx)
+				cancelProbe()
+				if emailErr != nil || !email {
+					logger.WarnContext(ctx, "account emails not offered to clients: schema 288 reader not granted",
+						"error_code", "self_identity_email_unavailable", "error", emailErr)
+				}
+			}
 		}
 		// Gateways ask for their replica certificates where their maps are
 		// built from the shared inventory (gateway.cert1, a3b).

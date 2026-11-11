@@ -4667,6 +4667,7 @@ type SelfIdentity struct {
 	WorkspaceDisplayName string                 `protobuf:"bytes,2,opt,name=workspace_display_name,json=workspaceDisplayName,proto3" json:"workspace_display_name,omitempty"`
 	Ownership            SelfIdentity_Ownership `protobuf:"varint,3,opt,name=ownership,proto3,enum=meshtransit.mtcp.v1.SelfIdentity_Ownership" json:"ownership,omitempty"`
 	OwnerDisplayName     string                 `protobuf:"bytes,4,opt,name=owner_display_name,json=ownerDisplayName,proto3" json:"owner_display_name,omitempty"`
+	OwnerEmail           *string                `protobuf:"bytes,5,opt,name=owner_email,json=ownerEmail,proto3,oneof" json:"owner_email,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -4725,6 +4726,13 @@ func (x *SelfIdentity) GetOwnership() SelfIdentity_Ownership {
 func (x *SelfIdentity) GetOwnerDisplayName() string {
 	if x != nil {
 		return x.OwnerDisplayName
+	}
+	return ""
+}
+
+func (x *SelfIdentity) GetOwnerEmail() string {
+	if x != nil && x.OwnerEmail != nil {
+		return *x.OwnerEmail
 	}
 	return ""
 }
@@ -9873,17 +9881,20 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"kubernetes\x12F\n" +
 	"\rkubernetes_ca\x18\x12 \x01(\v2!.meshtransit.mtcp.v1.KubernetesCAR\fkubernetesCa\x12=\n" +
 	"\bidentity\x18\x13 \x01(\v2!.meshtransit.mtcp.v1.SelfIdentityR\bidentityB\t\n" +
-	"\a_online\"\xb2\x02\n" +
+	"\a_online\"\xe8\x02\n" +
 	"\fSelfIdentity\x120\n" +
 	"\x14network_display_name\x18\x01 \x01(\tR\x12networkDisplayName\x124\n" +
 	"\x16workspace_display_name\x18\x02 \x01(\tR\x14workspaceDisplayName\x12I\n" +
 	"\townership\x18\x03 \x01(\x0e2+.meshtransit.mtcp.v1.SelfIdentity.OwnershipR\townership\x12,\n" +
-	"\x12owner_display_name\x18\x04 \x01(\tR\x10ownerDisplayName\"A\n" +
+	"\x12owner_display_name\x18\x04 \x01(\tR\x10ownerDisplayName\x12$\n" +
+	"\vowner_email\x18\x05 \x01(\tH\x00R\n" +
+	"ownerEmail\x88\x01\x01\"A\n" +
 	"\tOwnership\x12\x19\n" +
 	"\x15OWNERSHIP_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +
 	"\x06MEMBER\x10\x01\x12\r\n" +
-	"\tWORKSPACE\x10\x02\"j\n" +
+	"\tWORKSPACE\x10\x02B\x0e\n" +
+	"\f_owner_email\"j\n" +
 	"\fKubernetesCA\x12)\n" +
 	"\x10root_fingerprint\x18\x01 \x01(\fR\x0frootFingerprint\x12/\n" +
 	"\x13signing_fingerprint\x18\x02 \x01(\fR\x12signingFingerprint\"\x9e\x02\n" +
@@ -10708,6 +10719,7 @@ func file_mtcp_v1_mtcp_proto_init() {
 		(*RegisterResponse_Rejected_)(nil),
 	}
 	file_mtcp_v1_mtcp_proto_msgTypes[39].OneofWrappers = []any{}
+	file_mtcp_v1_mtcp_proto_msgTypes[40].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[51].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[99].OneofWrappers = []any{
 		(*RegisterRequest_Auth_EnrollmentKey)(nil),

@@ -74,7 +74,10 @@ func composeMapSession(
 		}
 	}
 	return service, newMapInventoryCollector(store.InventoryStats),
-		mapSessionProbes{kubernetesTrust: store.KubernetesTrustGranted, selfIdentity: store.SelfIdentityGranted}, nil
+		mapSessionProbes{
+			kubernetesTrust: store.KubernetesTrustGranted, selfIdentity: store.SelfIdentityGranted,
+			selfIdentityEmail: store.SelfIdentityEmailGranted,
+		}, nil
 }
 
 // kubernetesTrustProbe reports whether the runtime role may run schema
@@ -84,10 +87,12 @@ type kubernetesTrustProbe func(context.Context) (bool, error)
 
 // mapSessionProbes are the schema checks serve runs once at startup to fix
 // its capability list: kubernetesTrust for kube.ca1, selfIdentity for
-// self.identity1 (schema 287, S4b §3).
+// self.identity1 (schema 287, S4b §3), selfIdentityEmail only to say when the
+// owner's email (schema 288, S4c) is not read.
 type mapSessionProbes struct {
-	kubernetesTrust kubernetesTrustProbe
-	selfIdentity    func(context.Context) (bool, error)
+	kubernetesTrust   kubernetesTrustProbe
+	selfIdentity      func(context.Context) (bool, error)
+	selfIdentityEmail func(context.Context) (bool, error)
 }
 
 // composeConnectivityHub returns the replica's shared connectivity tables
@@ -164,6 +169,7 @@ type mapInventoryCollector struct {
 	policies         *prometheus.Desc
 	withheld         *prometheus.Desc
 	identityRejected *prometheus.Desc
+	emailRejected    *prometheus.Desc
 }
 
 func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *mapInventoryCollector {
@@ -182,6 +188,8 @@ func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *m
 			"Kubernetes gateway maps built without their peers' Kubernetes access, by reason; the ca_ and trust_ reasons count inventory reads, clusters or roots.", []string{"reason"}, nil),
 		identityRejected: prometheus.NewDesc("meshtransit_map_self_identity_rejected_total",
 			"Map reads whose account names (self.identity1) the map could not carry; the map went without them.", nil, nil),
+		emailRejected: prometheus.NewDesc("meshtransit_map_self_identity_email_rejected_total",
+			"Map reads whose owner email (schema 288) a Device may not show; the map kept the names without it.", nil, nil),
 	}
 }
 
@@ -192,6 +200,7 @@ func (collector *mapInventoryCollector) Describe(descriptions chan<- *prometheus
 	descriptions <- collector.policies
 	descriptions <- collector.withheld
 	descriptions <- collector.identityRejected
+	descriptions <- collector.emailRejected
 }
 
 func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -206,6 +215,8 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 	metrics <- prometheus.MustNewConstMetric(collector.policies, prometheus.CounterValue, float64(stats.PolicyShadowChecks), "shadow")
 	metrics <- prometheus.MustNewConstMetric(collector.identityRejected, prometheus.CounterValue,
 		float64(stats.SelfIdentityRejected))
+	metrics <- prometheus.MustNewConstMetric(collector.emailRejected, prometheus.CounterValue,
+		float64(stats.SelfIdentityEmailRejected))
 	for reason, count := range map[string]uint64{"unread": stats.KubernetesWithheldUnread,
 		"evidence": stats.KubernetesWithheldEvidence, "direct": stats.KubernetesWithheldDirect,
 		"projections": stats.KubernetesWithheldProjections,

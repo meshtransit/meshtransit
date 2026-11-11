@@ -160,12 +160,18 @@ func encodeSelfIdentity(snapshot mapsession.Snapshot) *mtcpv1.SelfIdentity {
 	if identity.Ownership() == mapsession.OwnershipWorkspace {
 		ownership = mtcpv1.SelfIdentity_WORKSPACE
 	}
-	return &mtcpv1.SelfIdentity{
+	encoded := &mtcpv1.SelfIdentity{
 		NetworkDisplayName:   snapshot.NetworkName().String(),
 		WorkspaceDisplayName: identity.WorkspaceName(),
 		Ownership:            ownership,
 		OwnerDisplayName:     identity.OwnerName(),
 	}
+	// Absent when Core did not read it (schema 287); empty when the account
+	// has none (S4c §3.3).
+	if email, read := identity.OwnerEmail(); read {
+		encoded.OwnerEmail = &email
+	}
+	return encoded
 }
 
 // encodePeers encodes candidates sorted by device ID.

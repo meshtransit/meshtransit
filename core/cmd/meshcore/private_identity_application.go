@@ -144,7 +144,9 @@ type privateIdentityPorts struct {
 	InvitationAcceptor oidcauth.InvitationAcceptor
 	// AccountSignups creates an Account at a first sign-in; nil leaves self
 	// sign-up off.
-	AccountSignups        oidcauth.AccountSignupStore
+	AccountSignups oidcauth.AccountSignupStore
+	// AccountEmails records the verified email at each sign-in (schema 288).
+	AccountEmails         oidcauth.AccountEmailStore
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -211,6 +213,7 @@ func composePrivateIdentity(
 		SessionKeys: keys.sessions, ProviderSessions: keys.providerSessions, Clock: ports.Clock,
 		Observer: callbackMetrics, SubjectObserver: subjectMetrics, IssueObserver: issueMetrics,
 		Invitations: ports.InvitationAcceptor, Signups: ports.AccountSignups,
+		Emails: ports.AccountEmails, EmailObserver: callbackMetrics,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

@@ -125,3 +125,43 @@ func TestNewAuthorityDeltaCarriesSelfIdentityChange(t *testing.T) {
 		t.Fatalf("an unchanged map must still not be a delta: %v", err)
 	}
 }
+
+// S4c §3.2: the email is checked on its own; a bad one never costs the names,
+// and a Workspace's Device never carries one.
+func TestSelfIdentityWithOwnerEmail(t *testing.T) {
+	t.Parallel()
+	member, err := NewSelfIdentity("Acme", OwnershipMember, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, read := member.OwnerEmail(); read {
+		t.Fatal("an identity without a read email must say so")
+	}
+	for email, want := range map[string]string{
+		"alice@example.test":  "alice@example.test",
+		"":                    "",
+		"al\u202eice@ex.test": "",
+		"al<ice@example.test": "",
+		"üser@example.test":   "",
+		"no-at.example.test":  "",
+	} {
+		got := member.WithOwnerEmail(email)
+		shown, read := got.OwnerEmail()
+		if !read || shown != want || got.OwnerName() != "Alice" || got.WorkspaceName() != "Acme" {
+			t.Errorf("WithOwnerEmail(%q) = %+v", email, got)
+		}
+	}
+	workspace, err := NewSelfIdentity("Acme", OwnershipWorkspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shown, read := workspace.WithOwnerEmail("alice@example.test").OwnerEmail(); !read || shown != "" {
+		t.Fatalf("a Workspace's Device carries %q", shown)
+	}
+	if got := (SelfIdentity{}).WithOwnerEmail("alice@example.test"); got.Known() {
+		t.Fatal("an identity the session does not carry must stay absent")
+	}
+	if member.WithOwnerEmail("a@example.test").Equal(member.WithOwnerEmail("b@example.test")) {
+		t.Fatal("a new email must change the identity")
+	}
+}

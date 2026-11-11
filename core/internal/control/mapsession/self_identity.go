@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"meshtransit.net/core/internal/domain/displayemail"
 )
 
 // Ownership is whose a Device is, as its own map tells it (MTCP
@@ -35,6 +37,10 @@ type SelfIdentity struct {
 	ownership     Ownership
 	ownerName     string
 	known         bool
+	// ownerEmail is the owner's verified email (schema 288, S4c); emailRead
+	// says the store read it, so an empty email means the account has none.
+	ownerEmail string
+	emailRead  bool
 }
 
 // NewSelfIdentity validates the names a store read. A member's Device
@@ -104,6 +110,28 @@ func (identity SelfIdentity) WithWorkspaceName(name string) SelfIdentity {
 	}
 	identity.workspaceName = name
 	return identity
+}
+
+// WithOwnerEmail returns the identity with the owner's email as schema 288
+// reads it. An email Devices may not show, or one on a Workspace's Device,
+// reads as none: it never costs the names. An identity the session does not
+// carry stays absent.
+func (identity SelfIdentity) WithOwnerEmail(email string) SelfIdentity {
+	if !identity.known {
+		return identity
+	}
+	identity.emailRead = true
+	identity.ownerEmail = ""
+	if identity.ownership == OwnershipMember && displayemail.Valid(email) {
+		identity.ownerEmail = email
+	}
+	return identity
+}
+
+// OwnerEmail returns the owner's verified email and whether it was read;
+// read with an empty email means the account has none.
+func (identity SelfIdentity) OwnerEmail() (string, bool) {
+	return identity.ownerEmail, identity.emailRead
 }
 
 // Equal reports whether two identities carry the same names. SelfIdentity

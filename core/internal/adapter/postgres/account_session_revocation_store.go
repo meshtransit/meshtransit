@@ -24,7 +24,7 @@ FROM mesh_audit.lock_deployment_stream_head($1::UUID)`
 
 const appendAccountEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
- 'account',$7::UUID,$8::BIGINT,NULL::BIGINT,$9::UUID,$10::TEXT,$11::TEXT,
+ $16::TEXT,$7::UUID,$8::BIGINT,NULL::BIGINT,$9::UUID,$10::TEXT,$11::TEXT,
  $12::UUID,NULL::BYTEA,$13::BYTEA,$14::JSONB,$15::TEXT,$14::JSONB)`
 
 // ErrAccountSessionRevocation reports malformed sign-out results or evidence.
@@ -140,6 +140,8 @@ func (result accountRecoveryResult) valid() bool {
 }
 
 type accountEvidence struct {
+	// aggregateKind is "account" when empty; result names the aggregate.
+	aggregateKind      string
 	deploymentID       string
 	ids                accountEvidenceIDs
 	result             accountRecoveryResult
@@ -170,6 +172,10 @@ func appendAccountEvidence[R interface{ Scan(...any) error }](ctx context.Contex
 	var previousHash [sha256.Size]byte
 	copy(previousHash[:], previous)
 	after := sha256.Sum256(payload)
+	kind := evidence.aggregateKind
+	if kind == "" {
+		kind = "account"
+	}
 	var actor publicid.ID
 	var actorArgument any
 	if evidence.actor != nil {
@@ -177,7 +183,7 @@ func appendAccountEvidence[R interface{ Scan(...any) error }](ctx context.Contex
 	}
 	eventHash, err := audit.HashEvent(audit.EventHashMaterial{
 		PreviousHash: previousHash, EventID: evidence.ids.event, ChangeID: evidence.ids.change,
-		AggregateKind: "account", AggregateID: evidence.result.account, AggregateVersion: evidence.result.version,
+		AggregateKind: kind, AggregateID: evidence.result.account, AggregateVersion: evidence.result.version,
 		ActorPrincipalID: actor, Action: evidence.action, Permission: evidence.permission,
 		CorrelationID: evidence.correlationID, AfterSemanticHash: after, AuditPayloadHash: after,
 		OutboxEventClass: evidence.outboxClass, OutboxPayloadHash: after,
@@ -189,7 +195,7 @@ func appendAccountEvidence[R interface{ Scan(...any) error }](ctx context.Contex
 	if err := queryRow(ctx, appendAccountEvidenceSQL, streamID, evidence.ids.event.String(),
 		evidence.ids.outbox.String(), sequence, previousHash[:], eventHash[:], evidence.result.account.String(),
 		evidence.result.version, actorArgument, evidence.action, evidence.permission,
-		evidence.correlationID.String(), after[:], payload, evidence.outboxClass).Scan(&appended); err != nil {
+		evidence.correlationID.String(), after[:], payload, evidence.outboxClass, kind).Scan(&appended); err != nil {
 		return err
 	}
 	if appended != sequence {

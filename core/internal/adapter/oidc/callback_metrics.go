@@ -12,6 +12,7 @@ type CallbackTelemetry struct {
 	active   prometheus.Gauge
 	results  *prometheus.CounterVec
 	duration *prometheus.HistogramVec
+	emails   *prometheus.CounterVec
 }
 
 // NewCallbackTelemetry constructs no-data metrics without I/O or global effects.
@@ -37,7 +38,13 @@ func NewCallbackTelemetry() *CallbackTelemetry {
 		Help:    "Complete callback application lifetime including separately bounded joined cleanup.",
 		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 45},
 	}, []string{"result"})
-	return &CallbackTelemetry{active: active, results: results, duration: duration}
+	// Dashboard: sum by (result) (rate(meshtransit_account_email_record_total[1h]))
+	// Alert (for: 30m): sum(rate(meshtransit_account_email_record_total{result="failed"}[30m])) > 0
+	emails := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meshtransit_account_email_record_total",
+		Help: "Verified-email steps at browser sign-in by closed result, without the email or identity.",
+	}, []string{"result"})
+	return &CallbackTelemetry{active: active, results: results, duration: duration, emails: emails}
 }
 
 // CallbackOpened observes owned lifetime without any request data.
@@ -51,11 +58,17 @@ func (telemetry *CallbackTelemetry) CallbackClosed(outcome oidcauth.CallbackOutc
 	telemetry.duration.WithLabelValues(label).Observe(max(elapsed.Seconds(), 0))
 }
 
+// AccountEmailStep counts one email step by its closed result.
+func (telemetry *CallbackTelemetry) AccountEmailStep(outcome oidcauth.AccountEmailOutcome) {
+	telemetry.emails.WithLabelValues(outcome.String()).Inc()
+}
+
 // Describe implements the explicit private collector contract.
 func (telemetry *CallbackTelemetry) Describe(descriptions chan<- *prometheus.Desc) {
 	telemetry.active.Describe(descriptions)
 	telemetry.results.Describe(descriptions)
 	telemetry.duration.Describe(descriptions)
+	telemetry.emails.Describe(descriptions)
 }
 
 // Collect emits only fixed names and bounded closed-result labels.
@@ -63,9 +76,11 @@ func (telemetry *CallbackTelemetry) Collect(metrics chan<- prometheus.Metric) {
 	telemetry.active.Collect(metrics)
 	telemetry.results.Collect(metrics)
 	telemetry.duration.Collect(metrics)
+	telemetry.emails.Collect(metrics)
 }
 
 var (
-	_ oidcauth.CallbackObserver = (*CallbackTelemetry)(nil)
-	_ prometheus.Collector      = (*CallbackTelemetry)(nil)
+	_ oidcauth.CallbackObserver     = (*CallbackTelemetry)(nil)
+	_ oidcauth.AccountEmailObserver = (*CallbackTelemetry)(nil)
+	_ prometheus.Collector          = (*CallbackTelemetry)(nil)
 )

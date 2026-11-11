@@ -444,6 +444,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLInvitationAcceptance(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLAccountSignup(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLAccountEmail(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLAbandonedExpiry(ctx, t, adminConnection,
