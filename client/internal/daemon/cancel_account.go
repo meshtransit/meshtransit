@@ -99,10 +99,12 @@ func (s *Service) cancelTarget(ctx context.Context, id string) (profile.Profile,
 }
 
 // StopSignIn drops a profile's pending browser approval and keeps its keys:
-// a signed-out Device stays signed out. Core is not asked; its approval link
-// stays valid, and approving it later takes effect at the next sign-in, so
-// the profile is recorded as one that may hold a Device: removing it or
-// logging out asks Core first (S4b §4.3).
+// a signed-out Device stays signed out. Core is not asked. Approving the
+// dropped link later does nothing: Core registers a Device only when meshd
+// follows that link up, which Stop gave up, so the approval just expires
+// (TD-CLI-106). The profile is still recorded as one that may hold a Device,
+// so removing it or logging out asks Core first: the keys may hold one from
+// before (S4b §4.3).
 func (s *Service) StopSignIn(ctx context.Context, id string) error {
 	if s.gateway {
 		return ErrGatewayProfiles

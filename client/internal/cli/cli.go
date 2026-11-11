@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"meshtransit.net/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/version"
 )
 
@@ -1209,7 +1210,7 @@ func runProfileList(
 	}
 
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tACCOUNT\tNETWORK\tSTATE\tID\tCONTROL URL")
+	_, _ = fmt.Fprintln(table, "ACTIVE\tNAME\tACCOUNT\tEMAIL\tNETWORK\tSTATE\tID\tCONTROL URL")
 	for _, item := range response.Profiles {
 		marker := ""
 		if item.IsActive {
@@ -1223,8 +1224,9 @@ func runProfileList(
 			state = "removed"
 		}
 		account, network := profileAccountColumns(item.Identity)
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", marker, item.Name, account, network, state, item.ID,
-			item.ControlURL)
+		email := profileEmailColumn(item.Identity)
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", marker, item.Name, account, email, network,
+			state, item.ID, item.ControlURL)
 	}
 	if err := table.Flush(); err != nil {
 		return writeRuntimeError(stderr, fmt.Errorf("writing profile table: %w", err))
@@ -1249,9 +1251,22 @@ func activeAccountLines(ctx context.Context, client DaemonClient, activeID strin
 			continue
 		}
 		account, network := profileAccountColumns(item.Identity)
+		if email := profileEmailColumn(item.Identity); email != "-" && !strings.EqualFold(email, account) {
+			account += " <" + email + ">"
+		}
 		return "Account: " + account + "\nNetwork: " + network + "\n"
 	}
 	return ""
+}
+
+// profileEmailColumn is the owner's email, "-" until a map carried one.
+// It is checked again by Core's rule, so an older or damaged answer never
+// prints '<', '>' or control characters.
+func profileEmailColumn(identity *localapi.ProfileIdentity) string {
+	if identity == nil || identity.Ownership != "member" || !networkmap.CheckEmail(identity.OwnerEmail) {
+		return "-"
+	}
+	return identity.OwnerEmail
 }
 
 // profileAccountColumns is who an account is and its Network, as its map

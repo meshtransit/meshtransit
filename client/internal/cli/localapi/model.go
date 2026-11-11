@@ -384,6 +384,9 @@ type ProfileIdentity struct {
 	Workspace string `json:"workspace"`
 	Ownership string `json:"ownership"`
 	Owner     string `json:"owner,omitempty"`
+	// OwnerEmail is the owner's verified email (S4c); empty until a map
+	// carried one, or from an older meshd.
+	OwnerEmail string `json:"owner_email,omitempty"`
 }
 
 // Profiles is the stable v1 profile-list response.

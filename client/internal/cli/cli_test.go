@@ -1090,6 +1090,48 @@ func TestDNSQueryShowsThePathAndTheAnswer(t *testing.T) {
 	}
 }
 
+// S4c §4: status names the account with its email, once when the name is
+// the email (an invited account), and without one from an older meshd.
+func TestActiveAccountLinesWithEmail(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		owner, email, want string
+	}{
+		{"Alice", "alice@example.test", "Account: Alice <alice@example.test>\nNetwork: Lab\n"},
+		{"Alice@Example.test", "alice@example.test", "Account: Alice@Example.test\nNetwork: Lab\n"},
+		{"Alice", "", "Account: Alice\nNetwork: Lab\n"},
+	} {
+		client := &fakeClient{profiles: localapi.Profiles{Profiles: []localapi.Profile{{
+			ID: "p1", IsActive: true, Identity: &localapi.ProfileIdentity{
+				Network: "Lab", Workspace: "Acme", Ownership: "member", Owner: test.owner, OwnerEmail: test.email,
+			},
+		}}}}
+		if got := activeAccountLines(t.Context(), client, "p1"); got != test.want {
+			t.Errorf("activeAccountLines(%q, %q) = %q, want %q", test.owner, test.email, got, test.want)
+		}
+	}
+}
+
+// S4c §4: the email column shows only an email Core's rule takes, and only
+// for a person's Device.
+func TestProfileEmailColumn(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		identity *localapi.ProfileIdentity
+		want     string
+	}{
+		{nil, "-"},
+		{&localapi.ProfileIdentity{Ownership: "member", OwnerEmail: "alice@example.test"}, "alice@example.test"},
+		{&localapi.ProfileIdentity{Ownership: "member"}, "-"},
+		{&localapi.ProfileIdentity{Ownership: "workspace", OwnerEmail: "alice@example.test"}, "-"},
+		{&localapi.ProfileIdentity{Ownership: "member", OwnerEmail: "a\x1b[2Jb@example.test"}, "-"},
+	} {
+		if got := profileEmailColumn(test.identity); got != test.want {
+			t.Errorf("profileEmailColumn(%+v) = %q, want %q", test.identity, got, test.want)
+		}
+	}
+}
+
 // S4b §4.2: profile list names who each account is and its Network.
 func TestProfileAccountColumns(t *testing.T) {
 	t.Parallel()

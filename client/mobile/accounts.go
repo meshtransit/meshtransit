@@ -87,6 +87,9 @@ type profileEntry struct {
 	Workspace string `json:"workspace,omitempty"`
 	Ownership string `json:"ownership,omitempty"`
 	Owner     string `json:"owner,omitempty"`
+	// OwnerEmail is the owner's verified email (S4c §4), by the same rule
+	// as the local API: empty until a map carried one.
+	OwnerEmail string `json:"ownerEmail,omitempty"`
 	// Hostname is the Device's name, to tell apart accounts with every
 	// other name equal; Removed is set once Core removed the Device.
 	Hostname string `json:"hostname,omitempty"`
@@ -124,6 +127,7 @@ func (engine *Engine) ProfilesJSON() (value string, err error) {
 				if display.Network != "" && display.Workspace != "" && display.Ownership != "" {
 					entry.Network, entry.Workspace = display.Network, display.Workspace
 					entry.Ownership, entry.Owner = display.Ownership, display.Owner
+					entry.OwnerEmail = display.OwnerEmail
 				}
 			}
 			entry.CanCancel = entry.State == daemon.RegistrationPending &&

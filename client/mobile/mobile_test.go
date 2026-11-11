@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/profile"
+
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/underlay"
@@ -648,5 +650,47 @@ func TestEngineAccounts(t *testing.T) {
 	}
 	if encoded, err = engine.ProfilesJSON(); err != nil || strings.Contains(encoded, home) {
 		t.Fatalf("ProfilesJSON() after removal = %s, %v", encoded, err)
+	}
+}
+
+// S4c §4: the app's account list carries the owner's email meshd kept, by
+// the same rule as the local API: only a member's, only one Core's rule
+// takes.
+func TestEngineAccountsCarryTheOwnersEmail(t *testing.T) {
+	t.Parallel()
+	engine := newTestEngine(t, t.TempDir(), fakeKeys{key: validKey()}, nil)
+	t.Cleanup(func() { _ = engine.Close() })
+	work, err := engine.CreateProfile("Work", "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerEmail := func(display profile.Display) string {
+		if err := engine.display.Update(work, func(stored *profile.Display) { *stored = display }); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := engine.ProfilesJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list profileList
+		if err := json.Unmarshal([]byte(encoded), &list); err != nil || len(list.Profiles) != 1 {
+			t.Fatalf("ProfilesJSON() = %s, %v", encoded, err)
+		}
+		return list.Profiles[0].OwnerEmail
+	}
+	member := profile.Display{Network: "Lab", Workspace: "Acme", Ownership: "member", Owner: "Alice"}
+	member.OwnerEmail = "alice@example.test"
+	if got := ownerEmail(member); got != "alice@example.test" {
+		t.Fatalf("ownerEmail = %q", got)
+	}
+	member.OwnerEmail = "al<ice@example.test"
+	if got := ownerEmail(member); got != "" {
+		t.Fatalf("a damaged email shows: %q", got)
+	}
+	workspace := profile.Display{
+		Network: "Lab", Workspace: "Acme", Ownership: "workspace", OwnerEmail: "alice@example.test",
+	}
+	if got := ownerEmail(workspace); got != "" {
+		t.Fatalf("a Workspace's Device shows an email: %q", got)
 	}
 }

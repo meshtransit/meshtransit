@@ -283,3 +283,109 @@ func TestService_DisplayFollowsMaps(t *testing.T) {
 		t.Fatal("a gateway keeps no display")
 	}
 }
+
+// S4c §4: the display keeps the owner's email by the map's field; without
+// it (an older Core) only while the same person owns the same Device.
+func TestService_DisplayKeepsTheOwnersEmail(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, first, _ := newTestService(t)
+	withDisplay(t, service)
+	snapshot := func(owner, email string, known bool) networkmap.Snapshot {
+		return networkmap.Snapshot{
+			Self: networkmap.Node{StableID: "dev-1", Name: "mac.example."},
+			Identity: &networkmap.Identity{
+				Network: "Lab", Workspace: "Acme", Ownership: networkmap.OwnershipMember, Owner: owner,
+				Email: email, EmailKnown: known,
+			},
+		}
+	}
+	emailOf := func() string {
+		display, _ := service.ProfileDisplay(first)
+		return display.OwnerEmail
+	}
+	service.displayMapApplied(first, snapshot("Alice", "alice@example.test", true))
+	if emailOf() != "alice@example.test" {
+		t.Fatalf("email = %q", emailOf())
+	}
+	service.displayMapApplied(first, snapshot("Alice", "", false))
+	if emailOf() != "alice@example.test" {
+		t.Fatal("a map from an older Core must keep the email of the same owner")
+	}
+	service.displayMapApplied(first, snapshot("Bob", "", false))
+	if emailOf() != "" {
+		t.Fatal("a new owner without an email must not show the last owner's")
+	}
+	service.displayMapApplied(first, snapshot("Bob", "bob@example.test", true))
+	service.displayMapApplied(first, snapshot("Bob", "", true))
+	if emailOf() != "" {
+		t.Fatal("an empty email field means the account has none")
+	}
+	service.displayMapApplied(first, snapshot("Bob", "bob@example.test", true))
+	renewed := snapshot("Bob", "", false)
+	renewed.Self.StableID = "dev-2"
+	service.displayMapApplied(first, renewed)
+	if emailOf() != "" {
+		t.Fatal("a new Device must start without an email")
+	}
+	// A damaged file never shows an email a map could not carry.
+	if err := service.display.Update(first, func(display *Display) {
+		display.OwnerEmail = "bob<x@example.test"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if emailOf() != "" {
+		t.Fatal("an email Core's rule refuses must not show")
+	}
+}
+
+// S4c §4, the rest of the keep/clear rule: a map without names keeps the
+// email; ownership changing without the field clears it; sign-out and
+// removal keep it in the file; a map changing only the email is written;
+// a gateway never keeps one.
+func TestService_DisplayOwnerEmailEdges(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, first, _ := newTestService(t)
+	withDisplay(t, service)
+	snapshot := func(ownership, owner, email string, known bool) networkmap.Snapshot {
+		return networkmap.Snapshot{
+			Self: networkmap.Node{StableID: "dev-1", Name: "mac.example."},
+			Identity: &networkmap.Identity{
+				Network: "Lab", Workspace: "Acme", Ownership: ownership, Owner: owner, Email: email, EmailKnown: known,
+			},
+		}
+	}
+	emailOf := func() string {
+		display, _ := service.ProfileDisplay(first)
+		return display.OwnerEmail
+	}
+	service.displayMapApplied(first, snapshot(networkmap.OwnershipMember, "Alice", "", true))
+	service.displayMapApplied(first, snapshot(networkmap.OwnershipMember, "Alice", "alice@example.test", true))
+	if emailOf() != "alice@example.test" {
+		t.Fatal("a map that changes only the email must be written")
+	}
+	unnamed := snapshot(networkmap.OwnershipMember, "Alice", "", false)
+	unnamed.Identity = nil
+	service.displayMapApplied(first, unnamed)
+	if emailOf() != "alice@example.test" {
+		t.Fatal("a map without names must keep the email")
+	}
+	service.displayDeviceRemoved(first)
+	if display, _ := service.ProfileDisplay(first); display.OwnerEmail != "alice@example.test" ||
+		display.RemovedAt == nil {
+		t.Fatalf("a removed Device keeps its names and email: %+v", display)
+	}
+	service.displayMapApplied(first, snapshot(networkmap.OwnershipWorkspace, "", "", false))
+	if stored, _ := service.display.Get(first); stored.OwnerEmail != "" {
+		t.Fatal("a Device becoming the Workspace's must clear the stored email")
+	}
+
+	gateway, _, _, profileID, _ := newTestService(t)
+	withDisplay(t, gateway)
+	gateway.gateway = true
+	gateway.displayMapApplied(profileID, snapshot(networkmap.OwnershipMember, "Alice", "alice@example.test", true))
+	if _, found := gateway.display.Get(profileID); found {
+		t.Fatal("a gateway keeps no display file")
+	}
+}

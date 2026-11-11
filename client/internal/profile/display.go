@@ -39,6 +39,9 @@ type Display struct {
 	Workspace string `json:"workspace,omitempty"`
 	Ownership string `json:"ownership,omitempty"`
 	Owner     string `json:"owner,omitempty"`
+	// OwnerEmail is the owner's verified email (S4c §4); empty when the
+	// account has none or no map carried it yet.
+	OwnerEmail string `json:"owner_email,omitempty"`
 	// PreviousProfileID is the profile in use when this one was added as
 	// another account: where cancelling it goes back to.
 	PreviousProfileID string `json:"previous_profile_id,omitempty"`
@@ -47,8 +50,9 @@ type Display struct {
 	// nothing anyone used.
 	CreatedByAddAccount bool `json:"created_by_add_account,omitempty"`
 	RegisteredOnce      bool `json:"registered_once,omitempty"`
-	// SignInStopped marks a browser approval dropped with StopSignIn: Core
-	// may still approve it, so the profile's keys may hold a Device.
+	// SignInStopped marks a browser approval dropped with StopSignIn. The
+	// dropped approval registers nothing, but the keys may hold a Device from
+	// before, so Core is asked before they are dropped.
 	SignInStopped bool `json:"sign_in_stopped,omitempty"`
 	// RemovedAt is when meshd learned Core removed the Device; the names
 	// stay so the apps can say which one.

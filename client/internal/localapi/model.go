@@ -373,6 +373,9 @@ type profileIdentity struct {
 	Workspace string `json:"workspace"`
 	Ownership string `json:"ownership"`
 	Owner     string `json:"owner,omitempty"`
+	// OwnerEmail is the owner's verified email (S4c §4); absent until a map
+	// carried one, and never for a Workspace's Device.
+	OwnerEmail string `json:"owner_email,omitempty"`
 }
 
 // withDisplay adds what meshd keeps for the profile's display.
@@ -385,7 +388,7 @@ func (response profileResponse) withDisplay(display daemon.Display, found, canCa
 	if display.Network != "" && display.Workspace != "" && display.Ownership != "" {
 		response.Identity = &profileIdentity{
 			Network: display.Network, Workspace: display.Workspace,
-			Ownership: display.Ownership, Owner: display.Owner,
+			Ownership: display.Ownership, Owner: display.Owner, OwnerEmail: display.OwnerEmail,
 		}
 	}
 	return response

@@ -5,6 +5,17 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- core + meshd (account email S4c C1/C2): Core records the identity
+  provider's verified email at each browser sign-in (schema 288,
+  `mesh.account_email`; evidence `account.email_verified` without the email)
+  and sends it on the node's own map as `SelfIdentity.owner_email` (absent
+  from an older Core, empty when the account has none). meshd checks it on its
+  own (a bad one never costs the names), keeps it in the profile's display file
+  (without the field, only while the same owner keeps the same Device), and
+  the profile list (local API `identity.owner_email`, mobile `ownerEmail`)
+  carries it; `meshctl status` shows `Account: Name <email>` and
+  `meshctl profile list` gains an EMAIL column. The `StopSignIn` notes now
+  say a dropped approval registers nothing (TD-CLI-106).
 - mobile core (device logout design S4): the Android bindings gain accounts.
   `SignOut` keeps the Device (outcomes `signed_out`, `removed`,
   `unsupported`, `not_permitted`, `none`); `ProfilesJSON` lists profiles with

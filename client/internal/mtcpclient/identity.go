@@ -33,5 +33,15 @@ func (state *mapState) identity() *networkmap.Identity {
 	if networkmap.CheckIdentity(identity) != nil {
 		return nil
 	}
+	// The owner's email (S4c §4): absent from an older Core. A bad one, or
+	// one on a Workspace's Device, is dropped: it reads as "the account has
+	// none" (clearing what meshd kept) and keeps the names.
+	if named.OwnerEmail != nil {
+		identity.EmailKnown = true
+		if email := named.GetOwnerEmail(); identity.Ownership == networkmap.OwnershipMember &&
+			networkmap.CheckEmail(email) {
+			identity.Email = email
+		}
+	}
 	return identity
 }

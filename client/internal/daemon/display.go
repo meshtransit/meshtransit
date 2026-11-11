@@ -46,6 +46,11 @@ func (s *Service) ProfileDisplay(id string) (Display, bool) {
 			display.Network, display.Workspace, display.Ownership, display.Owner = "", "", "", ""
 		}
 	}
+	// Only a member's Device shows an email, and only one Core's rule takes.
+	if display.OwnerEmail != "" &&
+		(display.Ownership != networkmap.OwnershipMember || !networkmap.CheckEmail(display.OwnerEmail)) {
+		display.OwnerEmail = ""
+	}
 	if display.Hostname != "" && !networkmap.CheckDisplayName(display.Hostname) {
 		display.Hostname = ""
 	}
@@ -54,8 +59,8 @@ func (s *Service) ProfileDisplay(id string) (Display, bool) {
 
 // mayHoldDevice reports whether a profile whose keys are neither registered
 // nor pending may still hold a Device Core knows: it held one before (an
-// expiry), or its sign-in was stopped and Core may approve it later. Core
-// is then asked before its keys are dropped (S4b §4.3).
+// expiry), or its sign-in was stopped (the keys may be a signed-out
+// Device's). Core is then asked before its keys are dropped (S4b §4.3).
 func (s *Service) mayHoldDevice(profileID string) bool {
 	display, found := s.ProfileDisplay(profileID)
 	return found && (display.SignInStopped || display.RegisteredOnce && display.RemovedAt == nil)
@@ -86,6 +91,7 @@ func (s *Service) displayMapApplied(profileID string, snapshot networkmap.Snapsh
 		display.DeviceID, display.Hostname, display.RegisteredOnce = applied.deviceID, applied.hostname, true
 		display.RemovedAt, display.SignInStopped = nil, false
 		if applied.named {
+			display.OwnerEmail = nextOwnerEmail(*display, applied.identity)
 			display.Network, display.Workspace = applied.identity.Network, applied.identity.Workspace
 			display.Ownership, display.Owner = applied.identity.Ownership, applied.identity.Owner
 		}
@@ -93,6 +99,25 @@ func (s *Service) displayMapApplied(profileID string, snapshot networkmap.Snapsh
 	if ok {
 		s.rememberDisplay(profileID, applied)
 	}
+}
+
+// nextOwnerEmail is the email to keep once a map named the account (S4c §4):
+// the map's own when it carried the field (empty: the account has none).
+// Without the field (an older Core) the last one stays only while the same
+// person owns the same Device: the map names no owner ID, so a new owner
+// name or ownership clears it. A new Device has already reset the display.
+// Accepted risk: a Device handed to someone with the same display name
+// while Core runs without schema 288 keeps the last owner's email until
+// Core sends the field again.
+func nextOwnerEmail(current Display, identity networkmap.Identity) string {
+	if identity.EmailKnown {
+		return identity.Email
+	}
+	if current.Ownership == identity.Ownership && current.Owner == identity.Owner &&
+		identity.Ownership == networkmap.OwnershipMember {
+		return current.OwnerEmail
+	}
+	return ""
 }
 
 func (s *Service) displayUnchanged(profileID string, applied displayApplied) bool {
@@ -140,9 +165,9 @@ func (s *Service) displayRegistered(profileID string) {
 	}
 }
 
-// displaySignInStopped records that a pending approval was dropped: Core
-// may still approve it. Without that record the keys would read as holding
-// no Device, so a failure is returned and the approval is kept.
+// displaySignInStopped records that a pending approval was dropped. Without
+// that record keys that may hold a Device from before would read as holding
+// none, so a failure is returned and the approval is kept.
 func (s *Service) displaySignInStopped(profileID string) error {
 	if s.display == nil {
 		return ErrStopSignInUnavailable
