@@ -691,6 +691,7 @@ func Catalog() []Migration {
 		newMigration(286, "A signed-out Device's page shows the addresses it keeps", consoleSignedOutAddressesSQL),
 		newMigration(287, "A Device's own map names its account", mapSelfIdentitySQL),
 		newMigration(288, "A Device's own map shows its account's verified email", accountVerifiedEmailSQL),
+		newMigration(289, "A new browser sign-in ends an approval its keys can never complete", browserIntentHeldElsewhereSQL),
 	}
 }
 
@@ -1334,3 +1335,6 @@ var mapSelfIdentitySQL string
 
 //go:embed 000288_account_verified_email.up.sql
 var accountVerifiedEmailSQL string
+
+//go:embed 000289_browser_intent_held_elsewhere.up.sql
+var browserIntentHeldElsewhereSQL string

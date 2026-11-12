@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 288 {
-		t.Fatalf("len(Catalog()) = %d, want 288", len(catalog))
+	if len(catalog) != 289 {
+		t.Fatalf("len(Catalog()) = %d, want 289", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 288 {
-		t.Fatalf("LatestVersion() = %d, want 288", LatestVersion())
+	if LatestVersion() != 289 {
+		t.Fatalf("LatestVersion() = %d, want 289", LatestVersion())
 	}
 }
 
@@ -8502,6 +8502,48 @@ func TestAccountVerifiedEmailMigrationKeepsEmailsPrivate(t *testing.T) {
 	for _, rule := range []string{"'^[!#-;=?-~]+$'", "'^[^@]+@[^@]+$'"} {
 		if strings.Count(migration.SQL, rule) != 2 {
 			t.Errorf("email rule %s must appear in the CHECK and the function", rule)
+		}
+	}
+}
+
+// Schema 289 (TD-CORE-150): a new sign-in ends an approval for another Network
+// than the one where the machine key holds an active Device, with its
+// authorized registration, under the new intent's change; nothing else moves.
+func TestBrowserIntentIssueEndsApprovalHeldElsewhere(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[288]
+	if migration.Version != 289 {
+		t.Fatalf("Catalog()[288].Version = %d, want 289", migration.Version)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.issue_browser_registration_intent_v1(",
+		"SECURITY DEFINER",
+		"intent_found := FOUND;",
+		"current_intent.state = 'approved'",
+		"ON machine.public_key = current_intent.machine_key",
+		"AND machine.state = 'active'",
+		"IS DISTINCT FROM (registration.workspace_id, registration.network_id)",
+		"OR held_elsewhere",
+		"AND registration.state = 'authorized'",
+		"AND registration.device_id IS NULL;",
+		"PERFORM pg_catalog.set_config('mesh.change_public_id', p_intent_public_id::TEXT, TRUE);",
+		"current_intent.machine_key <> p_machine_key",
+		"FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 289 SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"mesh.network AS",
+		"DROP FUNCTION",
+		"TO mesh_worker",
+		"BYPASSRLS",
+		"state = 'completed'",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 289 SQL contains %q", forbidden)
 		}
 	}
 }
