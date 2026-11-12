@@ -70,11 +70,13 @@ const (
 // approval is a pending browser approval the session waits for. A zero
 // approval cancels the wait.
 type approval struct {
-	machine  control.AuthenticatedMachine
-	keys     provenKeys
-	hostname node.Hostname
-	url      string
-	expires  time.Time
+	// failureLogged: a completion error of this approval was logged once.
+	failureLogged bool
+	machine       control.AuthenticatedMachine
+	keys          provenKeys
+	hostname      node.Hostname
+	url           string
+	expires       time.Time
 	// join, when set, is a Kubernetes cluster join's request, which an
 	// administrator approves instead of a browser (mtcp-v1 §6.6).
 	join *clusterJoinWait
@@ -257,14 +259,25 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		result, found, err := options.BrowserApproval.CompleteBrowser(ctx, machine, nodeKey, hostname, followup)
 		switch {
 		case errors.Is(err, control.ErrInvalidBrowserRegistration):
+			options.Metrics.browserCompletion(completionRefused)
 			return conversation.reject(expiredApproval)
 		case errors.Is(err, ipam.ErrAddressExhausted):
+			options.Metrics.browserCompletion(completionRefused)
 			return conversation.reject(networkFull)
 		case errors.Is(err, registration.ErrNewDeviceLimit):
+			options.Metrics.browserCompletion(completionRefused)
 			return conversation.reject(newDeviceLimit)
+		case errors.Is(err, registration.ErrKeysHeldElsewhere):
+			conversation.keysHeldElsewhere(ctx)
+			return conversation.reject(keysHeldElsewhere)
 		case err != nil:
+			if ctx.Err() == nil {
+				options.Metrics.browserCompletion(completionFailed)
+				options.Logger.WarnContext(ctx, "browser registration completion failed", "error", err)
+			}
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 		case found:
+			options.Metrics.browserCompletion(completionCompleted)
 			conversation.prove(nodeKey, false)
 			conversation.authorize(nodeKey, keys.disco, result.Hostname(), true)
 			return nil
@@ -308,6 +321,21 @@ var newDeviceLimit = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMIT
 
 var expiredApproval = rejection{code: mtcpv1.RegisterResponse_Rejected_EXPIRED,
 	message: "the approval is unknown or has expired; start a new one"}
+
+// keysHeldElsewhere answers an approval for another Network (or account) than
+// the Device this node's keys already hold: retrying would wait forever.
+var keysHeldElsewhere = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+	message: "this device's keys already belong to another Device (in another Network, or of another account): " +
+		"sign in again choosing that Device's Network, or remove this account in the app and add it again " +
+		"to get new keys"}
+
+// keysHeldElsewhere records an approval refused because the node's keys hold
+// another Device: an operator sees it, and no key or name is logged.
+func (conversation *conversation) keysHeldElsewhere(ctx context.Context) {
+	conversation.application.options.Metrics.browserCompletion(completionKeysHeldElsewhere)
+	conversation.application.options.Logger.WarnContext(ctx,
+		"browser registration refused: the machine key holds another Device")
+}
 
 // wait replaces the pending approval the session watches.
 func (conversation *conversation) wait(next approval) {
@@ -390,14 +418,14 @@ func (conversation *conversation) awaitApprovals(ctx context.Context) {
 				current = approval{}
 				continue
 			}
-			if conversation.checkApproval(ctx, current) {
+			if conversation.checkApproval(ctx, &current) {
 				current = approval{}
 			}
 		}
 	}
 }
 
-func (conversation *conversation) checkApproval(ctx context.Context, pending approval) bool {
+func (conversation *conversation) checkApproval(ctx context.Context, pending *approval) bool {
 	if pending.join != nil {
 		return conversation.checkClusterJoin(ctx, pending.keys, *pending.join)
 	}
@@ -408,22 +436,41 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending app
 	if err != nil {
 		switch {
 		case errors.Is(err, control.ErrInvalidBrowserRegistration):
+			conversation.application.options.Metrics.browserCompletion(completionRefused)
 			_ = conversation.reject(expiredApproval)
 			return true
 		// Neither ends by itself within an approval: answer instead of
 		// retrying on every tick.
 		case errors.Is(err, ipam.ErrAddressExhausted):
+			conversation.application.options.Metrics.browserCompletion(completionRefused)
 			_ = conversation.reject(networkFull)
 			return true
 		case errors.Is(err, registration.ErrNewDeviceLimit):
+			conversation.application.options.Metrics.browserCompletion(completionRefused)
 			_ = conversation.reject(newDeviceLimit)
 			return true
+		case errors.Is(err, registration.ErrKeysHeldElsewhere):
+			conversation.keysHeldElsewhere(ctx)
+			_ = conversation.reject(keysHeldElsewhere)
+			return true
 		}
-		return false // transient; checked again on the next tick
+		// Transient; checked again on the next tick. Counted on each try and
+		// logged once per approval, so a failure that never ends (as one once
+		// did, TD-CORE-150) does not hide, nor floods the log.
+		if ctx.Err() == nil {
+			conversation.application.options.Metrics.browserCompletion(completionFailed)
+			if !pending.failureLogged {
+				pending.failureLogged = true
+				conversation.application.options.Logger.WarnContext(ctx, "browser registration completion failed",
+					"error", err)
+			}
+		}
+		return false
 	}
 	if !found {
 		return false
 	}
+	conversation.application.options.Metrics.browserCompletion(completionCompleted)
 	conversation.prove(pending.keys.node, false)
 	conversation.authorize(pending.keys.node, pending.keys.disco, result.Hostname(), true)
 	return true

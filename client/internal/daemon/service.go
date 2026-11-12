@@ -2945,6 +2945,24 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 		if ctx.Err() != nil {
 			return Login{}, ctx.Err()
 		}
+		if _, refused := errors.AsType[*controlplane.RejectedError](err); refused {
+			// Core refused this approval for good (expired, or keys that hold
+			// another Device: TD-CORE-150). Asking again would be refused
+			// again: the pending sign-in ends, the keys stay. First recorded as
+			// stopped, as Stop Signing In does: the keys may hold a Device (a
+			// conflict proves one), so removing the profile asks Core first.
+			// When that record cannot be written the sign-in is kept, never ended
+			// silently; a meshd without a display store keeps no such record.
+			if s.display != nil {
+				if stopErr := s.displaySignInStopped(active.ID); stopErr != nil {
+					return Login{}, errors.Join(err, stopErr)
+				}
+			}
+			if _, clearErr := s.identities.SetRegistration(ctx, active.ID, "", false); clearErr != nil {
+				return Login{}, errors.Join(err, fmt.Errorf("ending the refused sign-in: %w", clearErr))
+			}
+			return Login{}, err
+		}
 		if errors.Is(err, controlplane.ErrRegistrationTemporary) {
 			if err := waitForCompletionPoll(ctx, pollCtx); err != nil {
 				return Login{}, err

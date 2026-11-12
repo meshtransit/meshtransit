@@ -339,7 +339,14 @@ MUST reject a request whose proofs do not verify (`INVALID`).
   is never enough to obtain the authorization. The handle is opaque to the
   node; Core MAY use the URL token itself, since completing the approval also
   requires the session's machine key and node key. A pending approval that
-  expires is answered with `rejected{EXPIRED}`. The approval page shows the hostname and the
+  expires is answered with `rejected{EXPIRED}`. An approval Core cannot complete
+  because the node's keys already hold a Device it cannot resume (in another
+  Network or Workspace, which the approval's Network scope does not see and the
+  global key indexes refuse; or in the same Network on another enrollment
+  profile, of another owner, or with another node key) is answered with
+  `rejected{CONFLICT}` at once, on the session or the resume: asking again would
+  never change it. The node ends that sign-in; signing in again and choosing
+  that Device's Network resumes it, and an account added again gets new keys. The approval page shows the hostname and the
   machine key fingerprint so the approver can recognise the device.
 - `rejected`: a code (`INVALID`, `CREDENTIAL_INVALID`, `CREDENTIAL_EXHAUSTED`,
   `NOT_PERMITTED`, `CONFLICT`, `EXPIRED`) and a human-readable message that

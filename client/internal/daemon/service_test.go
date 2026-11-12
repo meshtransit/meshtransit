@@ -654,6 +654,53 @@ func TestService_CompleteLoginKeepsPendingStateOnTemporaryFailure(t *testing.T) 
 	}
 }
 
+// TD-CORE-150: Core refusing an approval for good (keys holding a Device in
+// another Network) ends the pending sign-in instead of polling for ever.
+func TestService_CompleteLoginEndsSignInCoreRefused(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	withDisplay(t, service)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
+		AuthURL: "https://control.example.com/register/opaque",
+	}}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.mu.Lock()
+	control.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, &controlplane.RejectedError{
+			Code: "conflict", Message: "this device's keys already belong to a Device in another Network",
+		}
+	}
+	control.mu.Unlock()
+
+	_, err := service.CompleteLogin(t.Context())
+	rejected, ok := errors.AsType[*controlplane.RejectedError](err)
+	if !ok || rejected.Code != "conflict" || !errors.Is(err, ErrRegistration) {
+		t.Fatalf("CompleteLogin() error = %v, want Core's conflict", err)
+	}
+	record, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	if record.HasPendingAuth() || record.IsRegistered() {
+		t.Fatalf("registration after a refusal = %s, want neither pending nor registered", record)
+	}
+	if _, err := service.CompleteLogin(t.Context()); !errors.Is(err, ErrNoPendingAuthorization) {
+		t.Fatalf("CompleteLogin() after the refusal = %v, want nothing pending", err)
+	}
+	// The keys may hold a Device (a conflict proves one): removing the profile
+	// asks Core first, as after Stop Signing In.
+	if !service.mayHoldDevice(profileID) {
+		t.Fatal("a refused sign-in no longer reads as maybe holding a Device")
+	}
+}
+
 func TestService_CompleteLoginThrottlesPendingResponse(t *testing.T) {
 	t.Parallel()
 

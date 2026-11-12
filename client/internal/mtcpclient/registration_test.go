@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 
@@ -484,5 +485,19 @@ func TestLogoutTakesAnEarlyRevoked(t *testing.T) {
 			controlplane.ErrDeviceRemoved) {
 			t.Fatalf("keep %t: error = %v, want ErrDeviceRemoved", keep, err)
 		}
+	}
+}
+
+// Core's message reaches the apps' screens: no control or bidi characters, and
+// a cut never splits a character.
+func TestBoundedTextIsSafeToShow(t *testing.T) {
+	t.Parallel()
+	if got := boundedText("sign in‮ again\x07\n"); got != "sign in again" {
+		t.Fatalf("boundedText = %q, want controls and bidi overrides gone", got)
+	}
+	long := strings.Repeat("é", 200) // 400 bytes
+	got := boundedText(long)
+	if len(got) > 300 || !utf8.ValidString(got) || got != strings.Repeat("é", 150) {
+		t.Fatalf("boundedText cut to %d bytes, valid %t", len(got), utf8.ValidString(got))
 	}
 }

@@ -5,6 +5,22 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- core + meshd (TD-CORE-150): a browser approval Core cannot complete because
+  the node's keys already hold another Device (one in another Network or
+  Workspace hit the global key indexes, a duplicate-key error retried every 2 s
+  until the approval expired) is now refused with `rejected{CONFLICT}` and a
+  message saying what to do. Control logs a warning and counts outcomes in
+  `meshtransit_mtcp_browser_completions_total{outcome}` (completed,
+  keys_held_elsewhere, refused, failed); a completion error still retried is
+  logged once per approval. A database error reading a Device's node key is
+  retried, no longer taken for a conflict. meshd ends a sign-in Core refused
+  (the keys stay; recorded as stopped, so removing the profile asks Core
+  first), and the local API answers Core's refusals as HTTP 409
+  `registration_<code>` with Core's message instead of 502
+  `registration_failed`: `registration_conflict`, `registration_expired`, and
+  for enrollment keys `registration_credential_invalid` and the like. Core's
+  message reaches the apps without control or bidi characters, cut on a
+  character boundary at 300 bytes.
 - core + meshd (account email S4c C1/C2): Core records the identity
   provider's verified email at each browser sign-in (schema 288,
   `mesh.account_email`; evidence `account.email_verified` without the email)

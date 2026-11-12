@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 
@@ -515,16 +517,23 @@ func temporary(err error) error {
 }
 
 // boundedText keeps server text short and printable for logs.
+// boundedText is Core's message as the apps may show it: without control or
+// format characters (bidi overrides could disguise it), at most 300 bytes, cut
+// on a character boundary.
 func boundedText(text string) string {
-	const limit = 200
+	const limit = 300
 	cleaned := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
 			return -1
 		}
 		return r
 	}, text)
-	if len(cleaned) > limit {
-		cleaned = cleaned[:limit]
+	if len(cleaned) <= limit {
+		return cleaned
 	}
-	return cleaned
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(cleaned[cut]) {
+		cut--
+	}
+	return cleaned[:cut]
 }

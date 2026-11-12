@@ -1157,3 +1157,61 @@ func TestServer_AccountNamesCancelAndStop(t *testing.T) {
 		t.Fatalf("GET /v1/login/stop = %d", recorder.Code)
 	}
 }
+
+// TD-CORE-150: Core's refusal of a registration reaches the apps with its
+// code and reason, not as a generic failure a person can do nothing about.
+func TestServer_RegistrationRefusalCarriesCoresReason(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	for _, test := range []struct {
+		name    string
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{
+			name: "conflict",
+			err: fmt.Errorf("%w: %w", daemon.ErrRegistration, &controlplane.RejectedError{
+				Code: "conflict", Message: "this device's keys already belong to a Device in another Network",
+			}),
+			status: http.StatusConflict, code: "registration_conflict",
+			message: "this device's keys already belong to a Device in another Network",
+		},
+		{
+			name:   "expired",
+			err:    fmt.Errorf("%w: %w", daemon.ErrRegistration, &controlplane.RejectedError{Code: "expired", Message: "start again"}),
+			status: http.StatusConflict, code: "registration_expired", message: "start again",
+		},
+		{
+			name: "enrollment key refused",
+			err: fmt.Errorf("%w: %w", daemon.ErrRegistration, &controlplane.RejectedError{
+				Code: "credential_invalid", Message: "the enrollment key is not valid",
+			}),
+			status: http.StatusConflict, code: "registration_credential_invalid", message: "the enrollment key is not valid",
+		},
+		{
+			name: "odd code",
+			err: fmt.Errorf("%w: %w", daemon.ErrRegistration, &controlplane.RejectedError{
+				Code: "Not A Code", Message: "x",
+			}),
+			status: http.StatusBadGateway, code: "registration_failed", message: "node registration failed",
+		},
+		{
+			name:   "transport",
+			err:    fmt.Errorf("%w: %w", daemon.ErrRegistration, errors.New("dial tcp: refused")),
+			status: http.StatusBadGateway, code: "registration_failed", message: "node registration failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			recorder := httptest.NewRecorder()
+			server.writeServiceError(recorder, test.err)
+			got := decodeResponse[errorResponse](t, recorder)
+			if recorder.Code != test.status || got.Code != test.code || got.Message != test.message {
+				t.Fatalf("answer = %d %#v, want %d %s %q", recorder.Code, got, test.status, test.code, test.message)
+			}
+		})
+	}
+}

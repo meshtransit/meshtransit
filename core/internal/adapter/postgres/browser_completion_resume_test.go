@@ -5,7 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/node"
 )
 
@@ -94,7 +97,9 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 			tx.enqueueRow(lockBrowserResumeNodeSQL, nodeRow)
 			resumed, record, err := lockBrowserResumeDevice(t.Context(), tx, identity, browserCompletionAuthority{principalInternalID: 11, profileInternalID: 601, ephemeralMode: "persistent"})
 			if !scenario.allow {
-				if !errors.Is(err, ErrBrowserCompletionConflict) || resumed || record.internalID != 0 {
+				// The domain error lets the MTCP layer refuse at once instead of retrying (TD-CORE-150).
+				if !errors.Is(err, ErrBrowserCompletionConflict) || !errors.Is(err, registration.ErrKeysHeldElsewhere) ||
+					resumed || record.internalID != 0 {
 					t.Fatalf("unsafe resume = %v/%v", resumed, err)
 				}
 				return
@@ -114,5 +119,49 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A database error reading the Device's node key (a lock timeout) is retried,
+// never refused as a conflict (TD-CORE-150 review).
+func TestBrowserResumeNodeKeyErrorStaysTransient(t *testing.T) {
+	t.Parallel()
+	machine, err := node.NewMachineKey([32]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := node.NewKey([32]byte{2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := node.NewRegistrationIdentity(machine, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := newFakeRegistrationDatabaseTransaction()
+	tx.enqueueRow(lockBrowserResumeDeviceSQL, registrationTestRow{scan: func(d ...any) error {
+		*d[0].(*int64) = 501
+		*d[1].(*string) = testRegistrationNodePublicID
+		*d[2].(*int64) = 601
+		*d[3].(*string) = "stable-device"
+		*d[4].(*int64) = 4
+		material := machine.Bytes()
+		*d[5].(*[]byte) = append([]byte(nil), material[:]...)
+		*d[6].(*int64) = 11
+		*d[7].(*string) = "active"
+		*d[8].(*string) = "active"
+		*d[9].(*bool) = true
+		*d[10].(*string) = ""
+		*d[11].(*int64) = 0
+		return nil
+	}})
+	timeout := &pgconn.PgError{Code: "55P03"}
+	tx.enqueueRow(lockBrowserResumeNodeSQL, registrationTestRow{err: timeout})
+
+	_, _, err = lockBrowserResumeDevice(t.Context(), tx, identity,
+		browserCompletionAuthority{principalInternalID: 11, profileInternalID: 601, ephemeralMode: "persistent"})
+
+	if !errors.Is(err, timeout) || errors.Is(err, registration.ErrKeysHeldElsewhere) {
+		t.Fatalf("node key error = %v, want the timeout itself, not a conflict", err)
 	}
 }

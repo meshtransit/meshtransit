@@ -52,6 +52,9 @@ type Metrics struct {
 	// gatewayKeyAudit counts reports of Kubernetes gateways' stale or
 	// contested keys by what became of them (schema 229).
 	gatewayKeyAudit *prometheus.CounterVec
+	// browserCompletions counts approved browser registrations Core tried to
+	// finish, by outcome (TD-CORE-150).
+	browserCompletions *prometheus.CounterVec
 	// kubeCerts and kubeCertWait count gateway.cert1 answers (mtcp-v1 §6.9).
 	kubeCerts    *prometheus.CounterVec
 	kubeCertWait prometheus.Histogram
@@ -358,6 +361,15 @@ func NewMetrics() *Metrics {
 			Help:    "How long each valid gateway pod token had left when Core checked it.",
 			Buckets: []float64{-120, 0, 30, 60, 120, 240, 480, 600, 900},
 		}),
+		// Watch: keys_held_elsewhere is a person approving another Network than
+		// the one their device's keys are in, refused the other lasting
+		// refusals (expired, Network full, Device limit): both answered, not
+		// retried. failed counts attempts of a completion error retried every
+		// 2 s, which should not last.
+		browserCompletions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_browser_completions_total",
+			Help: "Browser registration completions by outcome: completed and refused per approval, failed per attempt.",
+		}, []string{"outcome"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -365,6 +377,9 @@ func NewMetrics() *Metrics {
 	}
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
+	}
+	for _, outcome := range []string{completionCompleted, completionKeysHeldElsewhere, completionRefused, completionFailed} {
+		metrics.browserCompletions.WithLabelValues(outcome)
 	}
 	for _, limit := range sessionLimits {
 		metrics.limits.WithLabelValues(limit)
@@ -405,6 +420,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
+		metrics.browserCompletions,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
 		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, metrics.gatewayTokenOffset,
 		metrics.gatewayTokenRemaining, metrics.gatewayTokenMode, routedFilterOmitted,
@@ -455,6 +471,21 @@ func (metrics *Metrics) sessionOpened()  { metrics.sessions.Inc() }
 func (metrics *Metrics) sessionClosed()  { metrics.sessions.Dec() }
 func (metrics *Metrics) shed(count int)  { metrics.sheds.Add(float64(count)) }
 func (metrics *Metrics) unprovenClosed() { metrics.unproven.Inc() }
+
+// Outcomes of meshtransit_mtcp_browser_completions_total.
+const (
+	completionCompleted         = "completed"
+	completionKeysHeldElsewhere = "keys_held_elsewhere"
+	completionRefused           = "refused"
+	completionFailed            = "failed"
+)
+
+func (metrics *Metrics) browserCompletion(outcome string) {
+	if metrics == nil {
+		return
+	}
+	metrics.browserCompletions.WithLabelValues(outcome).Inc()
+}
 
 func (metrics *Metrics) limited(limit string) {
 	if metrics == nil {

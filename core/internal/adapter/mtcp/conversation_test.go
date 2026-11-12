@@ -784,6 +784,8 @@ func TestInteractiveRegistrationAnswersLastingRefusals(t *testing.T) {
 	}{
 		{errors.Join(control.ErrBrowserRegistrationUnavailable, registration.ErrNewDeviceLimit), newDeviceLimit.message},
 		{errors.Join(control.ErrBrowserRegistrationUnavailable, ipam.ErrAddressExhausted), networkFull.message},
+		// TD-CORE-150: keys holding a Device in another Network once left the node waiting for ever.
+		{errors.Join(control.ErrBrowserRegistrationUnavailable, registration.ErrKeysHeldElsewhere), keysHeldElsewhere.message},
 	} {
 		// While the approval is awaited: answered once, not retried each tick.
 		f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
@@ -794,7 +796,7 @@ func TestInteractiveRegistrationAnswersLastingRefusals(t *testing.T) {
 		f.expect(sharedmtcp.MessageRegisterResponse)
 		f.browser.fail(test.err)
 		rejected := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected()
-		if rejected.GetCode() != mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED || rejected.GetMessage() != test.message {
+		if rejected.GetCode() != wantCode(test.err) || rejected.GetMessage() != test.message {
 			t.Fatalf("awaited approval answered %v", rejected)
 		}
 		// On a resume after a reconnect.
@@ -806,10 +808,18 @@ func TestInteractiveRegistrationAnswersLastingRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 		rejected = resumed.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected()
-		if rejected.GetCode() != mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED || rejected.GetMessage() != test.message {
+		if rejected.GetCode() != wantCode(test.err) || rejected.GetMessage() != test.message {
 			t.Fatalf("resumed approval answered %v", rejected)
 		}
 	}
+}
+
+// wantCode is the rejection code a lasting completion refusal answers with.
+func wantCode(err error) mtcpv1.RegisterResponse_Rejected_Code {
+	if errors.Is(err, registration.ErrKeysHeldElsewhere) {
+		return mtcpv1.RegisterResponse_Rejected_CONFLICT
+	}
+	return mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED
 }
 
 func TestInteractiveRegistrationExpires(t *testing.T) {

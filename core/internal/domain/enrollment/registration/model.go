@@ -33,6 +33,11 @@ var (
 	// loop that would fill the Network's address range, since a revoked
 	// Device's address is held for a day; a person never reaches it otherwise.
 	ErrNewDeviceLimit = errors.New("registration: too many new Devices")
+	// ErrKeysHeldElsewhere reports a machine key that already holds a Device
+	// the approval cannot resume: in another Network or enrollment profile, of
+	// another owner, or with another node key. Asking again never changes it:
+	// the node signs in to that Device's Network, or that Device is removed.
+	ErrKeysHeldElsewhere = errors.New("registration: the machine key holds another Device")
 )
 
 // Command is an authenticated, server-scoped credential registration request.

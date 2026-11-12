@@ -88,7 +88,12 @@ func lockBrowserResumeDevice(ctx context.Context, tx registrationDatabaseTransac
 		return false, registrationDeviceRecord{}, ErrBrowserCompletionConflict
 	}
 	if err := tx.QueryRow(ctx, lockBrowserResumeNodeSQL, record.internalID).Scan(&record.nodeKey); err != nil {
-		return false, registrationDeviceRecord{}, errors.Join(ErrBrowserCompletionConflict, err)
+		// No active node key: a Device this approval cannot resume. Any other
+		// error (a lock or statement timeout) is retried, never refused.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, registrationDeviceRecord{}, ErrBrowserCompletionConflict
+		}
+		return false, registrationDeviceRecord{}, err
 	}
 	key := identity.NodeKey().Bytes()
 	if !bytes.Equal(record.nodeKey, key[:]) {

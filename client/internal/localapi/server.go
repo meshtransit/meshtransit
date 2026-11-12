@@ -1242,6 +1242,13 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.logger.Warn("control trust operation failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_trust_failed", "control trust operation failed")
 	case errors.Is(err, daemon.ErrRegistration):
+		// Core refused: its reason, in its own words, tells the person what to
+		// do (sign in to another Network, start again); a retry would not help.
+		if rejected, ok := errors.AsType[*controlplane.RejectedError](err); ok && isRejectionCode(rejected.Code) {
+			s.logger.Warn("node registration refused", "code", rejected.Code)
+			s.writeError(writer, http.StatusConflict, "registration_"+rejected.Code, rejected.Message)
+			return
+		}
 		s.logger.Warn("node registration failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "registration_failed", "node registration failed")
 	default:
@@ -1391,4 +1398,18 @@ func mapKubernetesClusters(clusters []daemon.KubernetesClusterView) []kubernetes
 		})
 	}
 	return mapped
+}
+
+// isRejectionCode reports a Core rejection code fit for an API error code:
+// short lowercase words with underscores, as mtcp-v1 names them.
+func isRejectionCode(code string) bool {
+	if code == "" || len(code) > 32 {
+		return false
+	}
+	for _, character := range code {
+		if (character < 'a' || character > 'z') && character != '_' {
+			return false
+		}
+	}
+	return true
 }

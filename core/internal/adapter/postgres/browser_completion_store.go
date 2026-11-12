@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -82,9 +84,31 @@ var (
 	ErrInvalidBrowserCompletion = errors.New("invalid browser registration completion")
 	// ErrBrowserCompletionUnavailable reports a closed completion dependency or transaction.
 	ErrBrowserCompletionUnavailable = errors.New("browser registration completion unavailable")
-	// ErrBrowserCompletionConflict reports incompatible existing Device authority.
-	ErrBrowserCompletionConflict = errors.New("browser registration Device already exists")
+	// ErrBrowserCompletionConflict reports incompatible existing Device authority: the
+	// keys hold a Device this approval cannot resume, in its Network or elsewhere
+	// (registration.ErrKeysHeldElsewhere).
+	ErrBrowserCompletionConflict = fmt.Errorf("browser registration Device already exists: %w",
+		registration.ErrKeysHeldElsewhere)
 )
+
+// keyHeldIndexes are the global unique indexes a key that already belongs to
+// another Device runs into: one in another Network or Workspace, which the
+// resume lookup cannot see under the approval's Network scope.
+var keyHeldIndexes = map[string]bool{
+	"device_machine_key_epoch_key_active_uidx": true,
+	"device_node_key_epoch_key_active_uidx":    true,
+	"device_node_key_epoch_key_history_uidx":   true,
+}
+
+// keysHeldElsewhere names a key insert refused because the key holds another
+// Device (TD-CORE-150): retrying the same approval would fail the same way.
+func keysHeldElsewhere(err error) error {
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) && postgresError.Code == "23505" && keyHeldIndexes[postgresError.ConstraintName] {
+		return ErrBrowserCompletionConflict
+	}
+	return err
+}
 
 // BrowserCompletionStore owns one Noise-bound, audited Device transaction.
 // A false found result means the intent is not currently approved.
@@ -412,7 +436,7 @@ func completeApprovedBrowserRegistration(
 				authority.workspaceInternalID, authority.networkInternalID,
 				deviceInternalID, key.material[:], key.fingerprint[:], occurredAt,
 			); err != nil {
-				return registration.Result{}, err
+				return registration.Result{}, keysHeldElsewhere(err)
 			}
 		}
 	}
