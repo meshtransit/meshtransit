@@ -497,6 +497,12 @@ func TestBrowserRegistrationPageMovesOnlyWithConfirmation(t *testing.T) {
 				"network": {selected.String()}}
 			unconfirmed := httptest.NewRecorder()
 			page.ServeHTTP(unconfirmed, browserRegistrationPostRequest(path, boundToken.Encoded(), form))
+			if !strings.Contains(body, `id="registration-move" class="move" hidden>`) {
+				t.Fatal("the move confirmation shows before another Network is chosen")
+			}
+			if !strings.Contains(unconfirmed.Body.String(), `id="registration-move" class="move move--missing">`) {
+				t.Fatal("the page asking again hides the move confirmation")
+			}
 			if unconfirmed.Code != http.StatusConflict || mover.calls != 0 || mover.moveCalls != 0 {
 				t.Fatalf("unconfirmed move = (%d, approve=%d, move=%d)", unconfirmed.Code, mover.calls, mover.moveCalls)
 			}

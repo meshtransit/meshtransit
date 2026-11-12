@@ -171,6 +171,23 @@
       form.setAttribute("aria-busy", "false");
     }
   };
+  // The move confirmation shows only once another Network than the
+  // computer's own is chosen; choosing its own again clears it.
+  const moveLabel = document.getElementById("registration-move");
+  const ownNetwork = form.getAttribute("data-move-network") || "";
+  if (moveLabel && ownNetwork) {
+    const showMove = () => {
+      const chosen = form.querySelector('input[name="network"]:checked');
+      const elsewhere = Boolean(chosen && chosen.value !== ownNetwork);
+      moveLabel.hidden = !elsewhere;
+      if (!elsewhere) {
+        const box = moveLabel.querySelector('input[name="move"]');
+        if (box) box.checked = false;
+      }
+    };
+    form.addEventListener("change", showMove);
+    showMove();
+  }
   form.addEventListener("submit", approve);
   button.addEventListener("click", approve);
 })();
