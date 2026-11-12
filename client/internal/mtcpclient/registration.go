@@ -53,11 +53,7 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 	if err := c.checkPinned(ctx, origin, keys.control, options.PinnedFingerprint); err != nil {
 		return controlplane.RegistrationResult{}, err
 	}
-	nodePublic := keys.node.Public()
-	s, err := c.open(ctx, origin, sessionOptions{
-		machine: keys.machine, control: keys.control,
-		nodeKey: nodePublic[:], version: options.Version,
-	})
+	s, keys, signInUsed, err := c.openRegistration(ctx, origin, keys, options)
 	if err != nil {
 		return controlplane.RegistrationResult{}, err
 	}
@@ -77,7 +73,52 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 		// Core answers on this session once an administrator approves.
 		wait = min(max(options.JoinWait, 0), maxJoinWait)
 	}
-	return awaitRegistration(ctx, s, wait, options.ClusterJoin != nil, c.sessionError, c.coreNow)
+	result, err := awaitRegistration(ctx, s, wait, options.ClusterJoin != nil, c.sessionError, c.coreNow)
+	result.SignInKeyUsed = signInUsed && err == nil
+	return result, err
+}
+
+// freshNodeKeyCapability is register.freshnodekey1 (sign-in-moves-machine §4.1).
+const freshNodeKeyCapability = "register.freshnodekey1"
+
+// openRegistration opens the registration session. A browser sign-in with
+// its own node key uses it when Core offers register.freshnodekey1; a Core
+// without it keeps the profile's key, so signing back in to the same Device
+// still works there.
+func (c *Client) openRegistration(ctx context.Context, origin *url.URL, keys profileKeys,
+	options controlplane.RegisterOptions,
+) (*session, profileKeys, bool, error) {
+	if len(options.SignInNodePrivateKey) != 0 && options.AuthKey == "" && options.ClusterJoin == nil {
+		raw, err := controlplane.ParsePrivateKey(options.SignInNodePrivateKey)
+		if err != nil {
+			return nil, profileKeys{}, false, err
+		}
+		signIn, err := key.NodePrivateFromBytes(raw[:])
+		clear(raw[:])
+		if err != nil {
+			return nil, profileKeys{}, false, controlplane.ErrInvalidMaterial
+		}
+		signInKeys := keys
+		signInKeys.node = signIn
+		public := signIn.Public()
+		s, err := c.open(ctx, origin, sessionOptions{
+			machine: keys.machine, control: keys.control,
+			nodeKey: public[:], version: options.Version, capabilities: []string{freshNodeKeyCapability},
+		})
+		if err != nil {
+			return nil, profileKeys{}, false, err
+		}
+		if slices.Contains(s.reply.GetCapabilities(), freshNodeKeyCapability) {
+			return s, signInKeys, true, nil
+		}
+		s.close()
+	}
+	nodePublic := keys.node.Public()
+	s, err := c.open(ctx, origin, sessionOptions{
+		machine: keys.machine, control: keys.control,
+		nodeKey: nodePublic[:], version: options.Version,
+	})
+	return s, keys, false, err
 }
 
 // registrationAuth chooses the method: an enrollment key, a resumed

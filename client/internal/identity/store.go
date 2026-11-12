@@ -40,6 +40,9 @@ type persistedRecord struct {
 	MachinePrivateKey     string `json:"machine_private_key"`
 	NodePrivateKey        string `json:"node_private_key"`
 	PendingNodePrivateKey string `json:"pending_node_private_key,omitempty"`
+	// Written only during a browser sign-in with its own key: older builds
+	// refuse the unknown field, so a downgrade then needs the sign-in ended.
+	SignInNodePrivateKey  string `json:"sign_in_node_private_key,omitempty"`
 	ControlPublicKey      string `json:"control_public_key"`
 	ControlKeyFingerprint string `json:"control_key_fingerprint"`
 	// Written only once Core announces a next key: older builds refuse the
@@ -505,6 +508,63 @@ func (s *Store) BeginNodeKeyRotation(
 		return Record{}, err
 	}
 
+	return record, nil
+}
+
+// SetSignInNodeKey keeps key as the browser sign-in's own node key, or drops
+// it when key is empty.
+func (s *Store) SetSignInNodeKey(ctx context.Context, profileID string, key []byte) (Record, error) {
+	return s.updateSignIn(ctx, profileID, func(record *Record) error {
+		record.signInNodePrivateKey = string(key)
+		return nil
+	})
+}
+
+// AuthorizeSignIn records, in one write, that Core authorized the browser
+// sign-in that carried key: it becomes the node key, the pending URL ends,
+// the profile is registered and no longer signed out, and a staged rotation
+// key is dropped (the sign-in replaced the key).
+func (s *Store) AuthorizeSignIn(ctx context.Context, profileID string, key []byte) (Record, error) {
+	return s.updateSignIn(ctx, profileID, func(record *Record) error {
+		if len(key) == 0 || record.signInNodePrivateKey != string(key) {
+			return fmt.Errorf("%w: the sign-in node key changed", ErrInvalid)
+		}
+		record.nodePrivateKey = record.signInNodePrivateKey
+		record.signInNodePrivateKey = ""
+		record.pendingNodePrivateKey = ""
+		record.pendingAuthURL = ""
+		record.isRegistered = true
+		record.signedOut = false
+		return nil
+	})
+}
+
+func (s *Store) updateSignIn(ctx context.Context, profileID string, change func(*Record) error) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("updating sign-in node key: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := change(&record); err != nil {
+		return Record{}, err
+	}
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
 	return record, nil
 }
 
@@ -1008,6 +1068,7 @@ func sameRecord(left, right Record) bool {
 		left.machinePrivateKey == right.machinePrivateKey &&
 		left.nodePrivateKey == right.nodePrivateKey &&
 		left.pendingNodePrivateKey == right.pendingNodePrivateKey &&
+		left.signInNodePrivateKey == right.signInNodePrivateKey &&
 		left.controlPublicKey == right.controlPublicKey &&
 		left.controlKeyFingerprint == right.controlKeyFingerprint &&
 		left.nextControlPublicKey == right.nextControlPublicKey &&
@@ -1029,6 +1090,7 @@ func toPersisted(record Record) persistedRecord {
 		MachinePrivateKey:         record.machinePrivateKey,
 		NodePrivateKey:            record.nodePrivateKey,
 		PendingNodePrivateKey:     record.pendingNodePrivateKey,
+		SignInNodePrivateKey:      record.signInNodePrivateKey,
 		ControlPublicKey:          record.controlPublicKey,
 		ControlKeyFingerprint:     record.controlKeyFingerprint,
 		NextControlPublicKey:      record.nextControlPublicKey,
@@ -1050,6 +1112,7 @@ func fromPersisted(record persistedRecord) Record {
 		machinePrivateKey:         record.MachinePrivateKey,
 		nodePrivateKey:            record.NodePrivateKey,
 		pendingNodePrivateKey:     record.PendingNodePrivateKey,
+		signInNodePrivateKey:      record.SignInNodePrivateKey,
 		controlPublicKey:          record.ControlPublicKey,
 		controlKeyFingerprint:     record.ControlKeyFingerprint,
 		nextControlPublicKey:      record.NextControlPublicKey,

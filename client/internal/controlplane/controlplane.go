@@ -222,6 +222,10 @@ type RegisterOptions struct {
 	// GatewayToken is a Kubernetes gateway's pod token for its node key
 	// rotation (K1.1); never logged.
 	GatewayToken PodToken
+	// SignInNodePrivateKey is a browser sign-in's own node key
+	// (sign-in-moves-machine §4): used instead of the profile's when Core
+	// offers register.freshnodekey1, never otherwise.
+	SignInNodePrivateKey []byte
 }
 
 // RegistrationResult excludes account data and private material.
@@ -231,6 +235,8 @@ type RegistrationResult struct {
 	MachineAuthorized bool
 	// Approval is set while a cluster join waits for an administrator.
 	Approval *AdminApproval
+	// SignInKeyUsed reports that the request carried SignInNodePrivateKey.
+	SignInKeyUsed bool
 }
 
 // HostOffer is what the host's local settings offer Core (mtcp-v1 §8.2).

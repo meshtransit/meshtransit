@@ -2961,6 +2961,10 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 			if _, clearErr := s.identities.SetRegistration(ctx, active.ID, "", false); clearErr != nil {
 				return Login{}, errors.Join(err, fmt.Errorf("ending the refused sign-in: %w", clearErr))
 			}
+			// Core gave its final answer to this sign-in: its key is not kept.
+			if _, clearErr := s.identities.SetSignInNodeKey(ctx, active.ID, nil); clearErr != nil {
+				return Login{}, errors.Join(err, fmt.Errorf("dropping the refused sign-in key: %w", clearErr))
+			}
 			return Login{}, err
 		}
 		if errors.Is(err, controlplane.ErrRegistrationTemporary) {
@@ -3022,6 +3026,11 @@ func (s *Service) registerWithRecord(
 	authKey string,
 	followupURL string,
 ) (Login, error) {
+	signInKey, err := s.signInNodeKey(stateCtx, active.ID, record, authKey, followupURL)
+	if err != nil {
+		return Login{}, err
+	}
+	defer clear(signInKey)
 	identityMaterial := record.Material()
 	protocolMaterial := toProtocolMaterial(identityMaterial)
 	clearIdentityMaterial(identityMaterial)
@@ -3031,11 +3040,12 @@ func (s *Service) registerWithRecord(
 		active.ControlURL,
 		protocolMaterial,
 		controlplane.RegisterOptions{
-			Hostname:          s.hostname,
-			Version:           "meshd/" + s.build.Version,
-			PinnedFingerprint: record.ControlKeyFingerprint(),
-			AuthKey:           authKey,
-			FollowupURL:       followupURL,
+			Hostname:             s.hostname,
+			Version:              "meshd/" + s.build.Version,
+			PinnedFingerprint:    record.ControlKeyFingerprint(),
+			AuthKey:              authKey,
+			FollowupURL:          followupURL,
+			SignInNodePrivateKey: signInKey,
 		},
 	)
 	if err != nil {
@@ -3047,8 +3057,22 @@ func (s *Service) registerWithRecord(
 	case controlplane.RegistrationStateAuthorized:
 		login.State = RegistrationRegistered
 		s.displayRegistered(active.ID)
-		if _, err := s.identities.SetRegistration(stateCtx, active.ID, "", true); err != nil {
-			return Login{}, fmt.Errorf("persisting authorized registration: %w", err)
+		if result.SignInKeyUsed {
+			// One write: the sign-in's key becomes the node key as the
+			// profile becomes registered (sign-in-moves-machine §4.2).
+			if _, err := s.identities.AuthorizeSignIn(stateCtx, active.ID, signInKey); err != nil {
+				return Login{}, fmt.Errorf("persisting authorized sign-in: %w", err)
+			}
+		} else {
+			if _, err := s.identities.SetRegistration(stateCtx, active.ID, "", true); err != nil {
+				return Login{}, fmt.Errorf("persisting authorized registration: %w", err)
+			}
+			// A Core without register.freshnodekey1 kept the profile's key.
+			if len(signInKey) != 0 {
+				if _, err := s.identities.SetSignInNodeKey(stateCtx, active.ID, nil); err != nil {
+					return Login{}, fmt.Errorf("dropping the unused sign-in key: %w", err)
+				}
+			}
 		}
 		s.signalControlSync()
 	case controlplane.RegistrationStateAuthorizationRequired:
@@ -3057,11 +3081,44 @@ func (s *Service) registerWithRecord(
 		if _, err := s.identities.SetRegistration(stateCtx, active.ID, result.AuthURL, false); err != nil {
 			return Login{}, fmt.Errorf("persisting pending registration: %w", err)
 		}
+		// A Core without register.freshnodekey1 keeps the profile's key: the
+		// unused sign-in key is not kept (an older meshd cannot read it).
+		if len(signInKey) != 0 && !result.SignInKeyUsed {
+			if _, err := s.identities.SetSignInNodeKey(stateCtx, active.ID, nil); err != nil {
+				return Login{}, fmt.Errorf("dropping the unused sign-in key: %w", err)
+			}
+		}
 	default:
 		return Login{}, fmt.Errorf("%w: unsupported registration state", ErrRegistration)
 	}
 
 	return login, nil
+}
+
+// signInNodeKey returns the node key a browser sign-in carries
+// (sign-in-moves-machine §4.3): the one kept while its approval is open, or
+// a new one for a sign-in that starts with none open. A follow-up, an
+// enrollment key or a gateway carries none. The caller clears it.
+func (s *Service) signInNodeKey(ctx context.Context, profileID string, record identity.Record,
+	authKey, followupURL string,
+) ([]byte, error) {
+	if authKey != "" || s.gateway {
+		return nil, nil
+	}
+	kept := record.SignInNodePrivateKey()
+	if followupURL != "" || (len(kept) != 0 && record.HasPendingAuth()) {
+		return kept, nil
+	}
+	clear(kept)
+	fresh, err := controlplane.GenerateNodePrivateKey()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRegistration, err)
+	}
+	if _, err := s.identities.SetSignInNodeKey(ctx, profileID, fresh); err != nil {
+		clear(fresh)
+		return nil, fmt.Errorf("keeping the sign-in node key: %w", err)
+	}
+	return fresh, nil
 }
 
 // stageNextControlKey stores the next control key an authenticated KeyUpdate

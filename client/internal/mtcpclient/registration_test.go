@@ -501,3 +501,54 @@ func TestBoundedTextIsSafeToShow(t *testing.T) {
 		t.Fatalf("boundedText cut to %d bytes, valid %t", len(got), utf8.ValidString(got))
 	}
 }
+
+// A browser sign-in's own node key is used only when Core offers
+// register.freshnodekey1; an older Core gets the profile's key, so signing
+// back in to the same Device still works there (sign-in-moves-machine §4.1).
+func TestRegisterWithSignInNodeKey(t *testing.T) {
+	t.Parallel()
+	for _, offered := range []bool{true, false} {
+		core := newRegistrationCore(t)
+		trust := core.trust(t)
+		if offered {
+			core.set(func(fake *fakeCore) { fake.extra = []string{freshNodeKeyCapability} })
+		}
+		signIn, err := controlplane.GenerateNodePrivateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := controlplane.ParsePrivateKey(signIn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signInKey, err := key.NodePrivateFromBytes(raw[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		profileRaw, err := controlplane.ParsePrivateKey(trust.Material.NodePrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		profileKey, err := key.NodePrivateFromBytes(profileRaw[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint,
+			SignInNodePrivateKey: signIn}
+		result, err := core.client().Register(t.Context(), core.origin(), trust.Material, options)
+		if err != nil || result.State != controlplane.RegistrationStateAuthorizationRequired ||
+			result.SignInKeyUsed != offered {
+			t.Fatalf("offered=%t: Register = %+v, %v", offered, result, err)
+		}
+		core.mu.Lock()
+		last := core.hello[len(core.hello)-1].GetNodeKey()
+		core.mu.Unlock()
+		want := profileKey.Public()
+		if offered {
+			want = signInKey.Public()
+		}
+		if string(last) != string(want[:]) {
+			t.Fatalf("offered=%t: the registration session carried the wrong node key", offered)
+		}
+	}
+}

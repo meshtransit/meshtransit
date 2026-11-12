@@ -2843,6 +2843,8 @@ func (f *fakeControl) Register(
 ) (controlplane.RegistrationResult, error) {
 	f.mu.Lock()
 	f.registerMaterial = material
+	// The caller clears the sign-in key after the call: keep a copy.
+	options.SignInNodePrivateKey = bytes.Clone(options.SignInNodePrivateKey)
 	f.registerOptions = append(f.registerOptions, options)
 	registerFunc := f.registerFunc
 	if registerFunc != nil {
@@ -3446,4 +3448,87 @@ func TestEndpointRefreshSpacesRoundsOfFlappingNetwork(t *testing.T) {
 			t.Fatalf("network changes observed %d, refreshes %d; want 6 and 3", observed, refreshes)
 		}
 	})
+}
+
+// A browser sign-in carries its own node key (sign-in-moves-machine §4): a
+// new one at the start, the same one while its approval is open, and it
+// becomes the node key in the same write that registers the profile.
+func TestService_BrowserSignInCarriesItsOwnNodeKey(t *testing.T) {
+	t.Parallel()
+	const approvalURL = "https://control.example.com/register/v1/abc"
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	pending := controlplane.RegistrationResult{State: controlplane.RegistrationStateAuthorizationRequired,
+		AuthURL: approvalURL, SignInKeyUsed: true}
+	control.registrationResults = []controlplane.RegistrationResult{pending, pending,
+		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true, SignInKeyUsed: true}}
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := before.Material()
+	defer clearIdentityMaterial(original)
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CompleteLogin(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	control.mu.Lock()
+	options := slices.Clone(control.registerOptions)
+	control.mu.Unlock()
+	if len(options) != 3 || len(options[0].SignInNodePrivateKey) == 0 ||
+		bytes.Equal(options[0].SignInNodePrivateKey, original.NodePrivateKey) ||
+		!bytes.Equal(options[1].SignInNodePrivateKey, options[0].SignInNodePrivateKey) ||
+		!bytes.Equal(options[2].SignInNodePrivateKey, options[0].SignInNodePrivateKey) ||
+		options[2].FollowupURL != approvalURL {
+		t.Fatal("the sign-in did not carry one new node key for its open approval")
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := after.Material()
+	defer clearIdentityMaterial(material)
+	if !after.IsRegistered() || after.HasPendingAuth() || len(after.SignInNodePrivateKey()) != 0 ||
+		!bytes.Equal(material.NodePrivateKey, options[0].SignInNodePrivateKey) ||
+		!bytes.Equal(material.MachinePrivateKey, original.MachinePrivateKey) {
+		t.Fatal("the authorized sign-in did not make its key the node key in one registered write")
+	}
+}
+
+// A Core without register.freshnodekey1 keeps the profile's key: the unused
+// sign-in key is dropped and the node key does not change.
+func TestService_BrowserSignInKeepsTheKeyWithOlderCore(t *testing.T) {
+	t.Parallel()
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	control.registrationResults = []controlplane.RegistrationResult{
+		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true}}
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := before.Material()
+	defer clearIdentityMaterial(original)
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := after.Material()
+	defer clearIdentityMaterial(material)
+	if !after.IsRegistered() || len(after.SignInNodePrivateKey()) != 0 ||
+		!bytes.Equal(material.NodePrivateKey, original.NodePrivateKey) {
+		t.Fatal("an older Core changed the node key or kept the unused sign-in key")
+	}
 }

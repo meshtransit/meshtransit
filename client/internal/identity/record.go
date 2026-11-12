@@ -55,6 +55,10 @@ type Record struct {
 	machinePrivateKey     string
 	nodePrivateKey        string
 	pendingNodePrivateKey string
+	// signInNodePrivateKey is a browser sign-in's own node key
+	// (sign-in-moves-machine §4.2), kept apart from a rotation's; it becomes
+	// the node key only when Core authorizes the sign-in that carried it.
+	signInNodePrivateKey  string
 	controlPublicKey      string
 	controlKeyFingerprint string
 	// nextControlPublicKey is the control key Core announced over a session
@@ -122,6 +126,12 @@ func (r Record) Material() Material {
 		NodePrivateKey:    []byte(r.nodePrivateKey),
 		ControlPublicKey:  []byte(r.controlPublicKey),
 	}
+}
+
+// SignInNodePrivateKey returns a copy of the browser sign-in's own node key,
+// empty when none is kept. Callers must clear the returned bytes after use.
+func (r Record) SignInNodePrivateKey() []byte {
+	return []byte(r.signInNodePrivateKey)
 }
 
 // PendingNodePrivateKey returns a defensive copy of a durably staged rotation
@@ -204,6 +214,13 @@ func validateRecord(record Record) error {
 			strings.TrimSpace(record.pendingNodePrivateKey) != record.pendingNodePrivateKey ||
 			record.pendingNodePrivateKey == record.nodePrivateKey {
 			return fmt.Errorf("%w: pending node private key encoding is invalid", ErrInvalid)
+		}
+	}
+	if record.signInNodePrivateKey != "" {
+		if len(record.signInNodePrivateKey) > maxKeyTextBytes ||
+			strings.TrimSpace(record.signInNodePrivateKey) != record.signInNodePrivateKey ||
+			record.signInNodePrivateKey == record.nodePrivateKey {
+			return fmt.Errorf("%w: sign-in node private key encoding is invalid", ErrInvalid)
 		}
 	}
 	if err := validateFingerprint(record.controlKeyFingerprint); err != nil {

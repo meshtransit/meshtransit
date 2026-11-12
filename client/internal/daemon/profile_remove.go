@@ -217,6 +217,13 @@ func (s *Service) logoutProfileDevice(ctx context.Context, target profile.Profil
 	if len(pendingNode) > 0 {
 		nodeKeys = append(nodeKeys, pendingNode)
 	}
+	// Core may have completed a browser sign-in whose key meshd never made
+	// the node key (Stop Signing In as Core approved): that Device holds it.
+	signIn := record.SignInNodePrivateKey()
+	defer clear(signIn)
+	if len(signIn) > 0 {
+		nodeKeys = append(nodeKeys, signIn)
+	}
 	var logoutErr error
 	for _, nodeKey := range nodeKeys {
 		protocolMaterial := toProtocolMaterial(identity.Material{
