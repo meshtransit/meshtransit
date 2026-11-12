@@ -104,3 +104,13 @@ func (service *BrowserChoiceService) Read(
 	}
 	return BrowserChoicePage{Landing: landing, Choices: choices}, true, nil
 }
+
+// BrowserMoveSource is what the approval page tells the signed-in person
+// about the machine of a pending sign-in (schema 290): Kind "new" (no Device
+// holds its key), "own" (their Device DeviceID named Hostname in Network
+// NetworkName) or "other" (another account's or a Workspace's; no names).
+type BrowserMoveSource struct {
+	Kind                                string
+	DeviceID, Hostname                  string
+	WorkspaceID, NetworkID, NetworkName string
+}

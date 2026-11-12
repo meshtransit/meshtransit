@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 289 {
-		t.Fatalf("len(Catalog()) = %d, want 289", len(catalog))
+	if len(catalog) != 290 {
+		t.Fatalf("len(Catalog()) = %d, want 290", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 289 {
-		t.Fatalf("LatestVersion() = %d, want 289", LatestVersion())
+	if LatestVersion() != 290 {
+		t.Fatalf("LatestVersion() = %d, want 290", LatestVersion())
 	}
 }
 
@@ -8544,6 +8544,42 @@ func TestBrowserIntentIssueEndsApprovalHeldElsewhere(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 289 SQL contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 290: the move is bound to the person's confirmation and their own
+// member Device, borrows scope only, and keeps evidence for the source stream.
+func TestBrowserSignInMovesMachineMigration(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[289]
+	if migration.Version != 290 {
+		t.Fatalf("Catalog()[289].Version = %d, want 290", migration.Version)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh_ops.browser_move_acknowledgement",
+		"CREATE TABLE mesh_ops.browser_move_proof",
+		"device.ownership = 'member'",
+		"device.kind = 'standard'",
+		"device.state = 'active'",
+		"device.custodian_principal_id = p_principal",
+		"ORDER BY scope.workspace_id, scope.network_id",
+		"revoke_member_device_internal_v1(v_device.id, 'moved', v_now)",
+		"advance_member_networks_internal_v1(v_source.workspace_id",
+		"ERRCODE = 'MTL05', MESSAGE = 'the source Network is being deleted'",
+		"'moved_by_owner', TRUE",
+		"PERFORM pg_catalog.set_config('mesh.change_public_id', COALESCE(v_saved_change, ''), TRUE);",
+		"SET plan_cache_mode = force_generic_plan",
+		"current_intent.requested_node_key <> p_requested_node_key)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.move_out_browser_device_v1(UUID, UUID, BIGINT, BYTEA, BYTEA, BYTEA, UUID)\n    TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 290 SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"TO mesh_worker", "BYPASSRLS", "DROP FUNCTION", "set_network_scope"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 290 SQL contains %q", forbidden)
 		}
 	}
 }

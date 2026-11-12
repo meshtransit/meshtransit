@@ -39,7 +39,8 @@ var (
 // Kubernetes gateway must (mtcp-v1 §6.7).
 func mtcpCapabilities(deviceAliases, relayZones, subnetRoutes bool) []string {
 	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1",
-		"session.proof1", mtcpadapter.CapabilitySignOut}
+		"session.proof1", mtcpadapter.CapabilitySignOut,
+		mtcpadapter.CapabilityFreshNodeKey}
 	if deviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}

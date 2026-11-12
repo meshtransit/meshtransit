@@ -692,6 +692,7 @@ func Catalog() []Migration {
 		newMigration(287, "A Device's own map names its account", mapSelfIdentitySQL),
 		newMigration(288, "A Device's own map shows its account's verified email", accountVerifiedEmailSQL),
 		newMigration(289, "A new browser sign-in ends an approval its keys can never complete", browserIntentHeldElsewhereSQL),
+		newMigration(290, "A browser sign-in moves its machine to the approved Network", browserSignInMovesMachineSQL),
 	}
 }
 
@@ -1338,3 +1339,6 @@ var accountVerifiedEmailSQL string
 
 //go:embed 000289_browser_intent_held_elsewhere.up.sql
 var browserIntentHeldElsewhereSQL string
+
+//go:embed 000290_browser_sign_in_moves_machine.up.sql
+var browserSignInMovesMachineSQL string

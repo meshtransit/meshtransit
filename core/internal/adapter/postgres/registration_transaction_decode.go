@@ -245,6 +245,12 @@ type registrationDeviceRecord struct {
 	ownerInternalID int64
 	// signedOut: the owner signed out; only signing in reopens it (schema 283).
 	signedOut bool
+	// A browser sign-in that brings a new Node key replaces the Device's
+	// active one (sign-in-moves-machine §5.1): the approval and the proven
+	// machine key stand in for the old key's proof.
+	rotateNodeKey                       bool
+	nodeEpochInternalID, nodeEpoch      int64
+	nodeEpochVersion, sessionGeneration int64
 }
 
 type registrationLockedState struct {

@@ -84,6 +84,21 @@
       return;
     }
     const workspace = selected.getAttribute("data-workspace");
+    // A computer that already is the person's Device in another Network
+    // moves only when they tick the box (sign-in-moves-machine §7).
+    const moveBox = form.querySelector('input[name="move"]');
+    const ownNetwork = form.getAttribute("data-move-network") || "";
+    const moving = Boolean(moveBox && ownNetwork && selected.value !== ownNetwork);
+    if (moving && !moveBox.checked) {
+      status.textContent = "Tick the box to move this computer to the Network you chose.";
+      moveBox.focus();
+      return;
+    }
+    if (moving && !uuid7.test(moveBox.value)) {
+      button.disabled = true;
+      status.textContent = "Restart login from MeshTransit.";
+      return;
+    }
     if (!intentPath.test(action) || action !== window.location.pathname ||
         !uuid7.test(workspace || "") || !uuid7.test(selected.value)) {
       button.disabled = true;
@@ -115,6 +130,11 @@
       const refreshed = page.getElementById("registration-form");
       const proof = refreshed?.querySelector('input[name="csrf"]');
       const currentNetworks = refreshed?.querySelectorAll('input[name="network"]');
+      const currentMove = refreshed?.querySelector('input[name="move"]');
+      if (moving && (currentMove?.value !== moveBox.value ||
+          refreshed?.getAttribute("data-move-network") !== ownNetwork)) {
+        throw new Error("the computer changed");
+      }
       if (refreshed?.getAttribute("action") !== action || !proof?.value || proof.value.length > 1024 ||
           !Array.from(currentNetworks || []).some((choice) =>
             choice.value === selected.value && choice.getAttribute("data-workspace") === workspace)) {
@@ -124,17 +144,26 @@
         method: "POST", mode: "same-origin", credentials: "same-origin",
         redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ csrf: proof.value, workspace, network: selected.value }).toString(),
+        body: new URLSearchParams(moving
+          ? { csrf: proof.value, workspace, network: selected.value, move: moveBox.value }
+          : { csrf: proof.value, workspace, network: selected.value }).toString(),
         signal: controller.signal,
       });
+      if (response.status === 409) {
+        throw new Error("move not confirmed");
+      }
       if (response.status !== 200 || response.redirected || response.type !== "basic" ||
           response.headers.get("content-type") !== "text/html; charset=utf-8") {
         throw new Error("approval unavailable");
       }
       if (response.body) await response.body.cancel();
       window.location.reload();
-    } catch {
-      status.textContent = "Approval could not be confirmed. Reload this page or restart login from Mesh Client.";
+    } catch (error) {
+      status.textContent = error instanceof Error && error.message === "move not confirmed"
+        ? "Tick the box to move this computer to the Network you chose."
+        : "Approval could not be confirmed. Reload this page or restart login from MeshTransit.";
+      started = false;
+      button.disabled = false;
     } finally {
       clearTimeout(timer);
       controller.abort();

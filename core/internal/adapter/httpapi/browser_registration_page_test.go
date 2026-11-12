@@ -19,6 +19,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -406,4 +407,109 @@ func serveBrowserRegistrationPage(page *BrowserRegistrationPage, path, cookie st
 	response := httptest.NewRecorder()
 	page.ServeHTTP(response, newBrowserRegistrationPageRequest(path, cookie))
 	return response
+}
+
+type browserPageMoverFake struct {
+	browserPageApprovalFake
+	source    control.BrowserMoveSource
+	moveCalls int
+	movedFrom string
+}
+
+func (fake *browserPageMoverFake) LookupMoveSource(context.Context, accountsession.Digest, string) (
+	control.BrowserMoveSource, error) {
+	return fake.source, nil
+}
+
+func (fake *browserPageMoverFake) ApproveMove(_ context.Context, digest accountsession.Digest, token string,
+	chosenWorkspace workspace.ID, selected network.ID, source publicid.ID,
+) (bool, error) {
+	fake.moveCalls++
+	fake.movedFrom = source.String()
+	return digest == fake.wantDigest && token == browserPageTestToken &&
+		selected == fake.wantNetwork && chosenWorkspace == fake.wantWorkspace, nil
+}
+
+// The page shows what the computer already is (schema 290): a Device handed
+// over to the person keeps the form, preselected on its Network (review H1);
+// another account's hides it; moving the person's own Device needs the tick.
+func TestBrowserRegistrationPageMovesOnlyWithConfirmation(t *testing.T) {
+	t.Parallel()
+	const sourceDevice = "01890f00-0000-7000-8000-00000000d001"
+	const sourceNetwork = "01890f00-0000-7000-8000-00000000e001"
+	for _, test := range []struct {
+		name    string
+		source  control.BrowserMoveSource
+		form    bool
+		checked bool
+		moveBox bool
+	}{
+		{name: "handed over", source: control.BrowserMoveSource{Kind: "resume", Hostname: "laptop",
+			NetworkName: "Home"}, form: true, checked: true},
+		{name: "another account", source: control.BrowserMoveSource{Kind: "other"}},
+		{name: "own Device elsewhere", source: control.BrowserMoveSource{Kind: "own", DeviceID: sourceDevice,
+			Hostname: "laptop", NetworkID: sourceNetwork, NetworkName: "Home"}, form: true, moveBox: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			page, reader, _ := browserRegistrationPageFixture(t)
+			management, _ := newBrowserManagementFixture(t)
+			boundToken, err := accountsession.ParseToken(managementTokenFixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest, err := page.keys.ActiveDigest(boundToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader.want = digest
+			selected := reader.page.Choices.Networks[0].NetworkID
+			source := test.source
+			if source.Kind == "resume" {
+				source.NetworkID = selected.String()
+			}
+			mover := &browserPageMoverFake{source: source, browserPageApprovalFake: browserPageApprovalFake{
+				wantDigest: digest, wantNetwork: selected, wantWorkspace: reader.page.Choices.WorkspaceID}}
+			page, err = NewBrowserRegistrationPage(BrowserRegistrationPageOptions{
+				Origin: management.origin, SessionKeys: page.keys,
+				Choices: reader, Management: management, Approval: mover,
+				Timeout: 5 * time.Second, Concurrency: 8,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := browserRegistrationPagePrefix + browserPageTestToken
+			landing := serveBrowserRegistrationPage(page, path, boundToken.Encoded())
+			body := landing.Body.String()
+			if landing.Code != http.StatusOK ||
+				strings.Contains(body, `<form id="registration-form"`) != test.form ||
+				strings.Contains(body, `value="`+selected.String()+`" data-workspace="`+
+					reader.page.Choices.WorkspaceID.String()+`" required checked`) != test.checked ||
+				strings.Contains(body, `name="move" value="`+sourceDevice+`"`) != test.moveBox {
+				t.Fatalf("landing = (%d, %q)", landing.Code, body)
+			}
+			if !test.moveBox {
+				return
+			}
+			_, after, _ := strings.Cut(body, `name="csrf" value="`)
+			proof, _, _ := strings.Cut(after, `"`)
+			form := url.Values{"csrf": {proof}, "workspace": {reader.page.Choices.WorkspaceID.String()},
+				"network": {selected.String()}}
+			unconfirmed := httptest.NewRecorder()
+			page.ServeHTTP(unconfirmed, browserRegistrationPostRequest(path, boundToken.Encoded(), form))
+			if unconfirmed.Code != http.StatusConflict || mover.calls != 0 || mover.moveCalls != 0 {
+				t.Fatalf("unconfirmed move = (%d, approve=%d, move=%d)", unconfirmed.Code, mover.calls, mover.moveCalls)
+			}
+			_, after, _ = strings.Cut(unconfirmed.Body.String(), `name="csrf" value="`)
+			proof, _, _ = strings.Cut(after, `"`)
+			form.Set("csrf", proof)
+			form.Set("move", sourceDevice)
+			confirmed := httptest.NewRecorder()
+			page.ServeHTTP(confirmed, browserRegistrationPostRequest(path, boundToken.Encoded(), form))
+			if confirmed.Code != http.StatusOK || mover.moveCalls != 1 || mover.movedFrom != sourceDevice ||
+				!strings.Contains(confirmed.Body.String(), "Device approved") {
+				t.Fatalf("confirmed move = (%d, move=%d)", confirmed.Code, mover.moveCalls)
+			}
+		})
+	}
 }

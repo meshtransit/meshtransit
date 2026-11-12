@@ -56,6 +56,11 @@ type DeviceLogout interface {
 // Device out and keeps it, and Core answers LogoutResponse (mtcp-v1 §6.5).
 const CapabilitySignOut = "device.signout1"
 
+// CapabilityFreshNodeKey is register.freshnodekey1: a browser sign-in may
+// bring a new node key; Core rotates the Device's key on resume and can move
+// the machine to the approved Network (sign-in-moves-machine §4.1).
+const CapabilityFreshNodeKey = "register.freshnodekey1"
+
 // errLoggedOut ends a session after a Logout (mtcp-v1 §6.5).
 var errLoggedOut = errors.New("mtcp: device logged out")
 
@@ -269,7 +274,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 			return conversation.reject(newDeviceLimit)
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):
 			conversation.keysHeldElsewhere(ctx)
-			return conversation.reject(keysHeldElsewhere)
+			return conversation.reject(keysHeldRejection(err))
 		case err != nil:
 			if ctx.Err() == nil {
 				options.Metrics.browserCompletion(completionFailed)
@@ -328,6 +333,35 @@ var keysHeldElsewhere = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLIC
 	message: "this device's keys already belong to another Device (in another Network, or of another account): " +
 		"sign in again choosing that Device's Network, or remove this account in the app and add it again " +
 		"to get new keys"}
+
+// The reasons a sign-in cannot move its machine (sign-in-moves-machine §8).
+var (
+	machineOfAnotherAccount = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "This computer is another account's device. In the app, choose Add account to connect it as yours."}
+	machineNotMovable = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "This computer belongs to a Workspace or is suspended in its Network. Ask its admin to remove it, " +
+			"then sign in again."}
+	moveNotConfirmed = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "This computer is already in another Network. Sign in again and confirm the move."}
+	moveNeedsNewClient = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "Update MeshTransit to move this computer to another Network."}
+)
+
+// keysHeldRejection names why the keys cannot hold the approved Device, as
+// precisely as Core knows it.
+func keysHeldRejection(err error) rejection {
+	switch {
+	case errors.Is(err, registration.ErrMachineOfAnotherAccount):
+		return machineOfAnotherAccount
+	case errors.Is(err, registration.ErrMachineNotMovable):
+		return machineNotMovable
+	case errors.Is(err, registration.ErrMoveNotConfirmed):
+		return moveNotConfirmed
+	case errors.Is(err, registration.ErrMoveNeedsNewClient):
+		return moveNeedsNewClient
+	}
+	return keysHeldElsewhere
+}
 
 // keysHeldElsewhere records an approval refused because the node's keys hold
 // another Device: an operator sees it, and no key or name is logged.
@@ -451,7 +485,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending *ap
 			return true
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):
 			conversation.keysHeldElsewhere(ctx)
-			_ = conversation.reject(keysHeldElsewhere)
+			_ = conversation.reject(keysHeldRejection(err))
 			return true
 		}
 		// Transient; checked again on the next tick. Counted on each try and

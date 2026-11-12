@@ -324,6 +324,19 @@ MUST reject a request whose proofs do not verify (`INVALID`).
 
 ### 6.2 Responses
 
+**Sign-in node key (`register.freshnodekey1`).** With this capability a
+browser sign-in (`auth.interactive`) SHOULD carry a node key of its own,
+generated when the sign-in starts and kept until Core gives a final answer.
+Core then completes it in one of three ways: a new Device; the Device the
+machine key already holds in the approved Network, whose node key Core
+rotates to the new one (the old epoch expires, sessions on it end); or, when
+that Device is in another Network and is the approving person's own member
+Device that they confirmed moving on the approval page, a move: Core revokes
+it (reason `moved`) and creates the new Device in the same transaction. Any
+other Device holding the machine key is refused with `rejected{CONFLICT}` and
+a message saying why. Without the capability the node keeps its profile's
+node key, which Core never accepts for a move (node keys are never reused).
+
 `RegisterResponse` has exactly one outcome:
 
 - `authorized`: the Device ID, Network, assigned addresses, key expiry. The
@@ -2066,6 +2079,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7) and `RotateMachineKey` from gateways (6.8); a Kubernetes gateway requires it |
 | `device.signout1` | `Logout.keep_device` signs the Device out and keeps it, and Core answers `Logout` with `LogoutResponse` (6.5) |
+| `register.freshnodekey1` | A browser sign-in may carry a new node key: Core rotates the resumed Device's key, or moves the machine's own member Device to the approved Network once the person confirmed it on the approval page (6.2) |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
 | `router.health1` | Node sends `RouteHealthReport` (8.3); only with `router.subnet.v1` (Sites) or `router.exit.v1` (its Exit Pool) |

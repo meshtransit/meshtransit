@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/audit"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -103,8 +104,81 @@ func (store *BrowserApprovalStore) ApproveInWorkspace(ctx context.Context,
 	return store.approve(ctx, digest, token, selectedWorkspace, selectedNetwork)
 }
 
+// ApproveMove approves like ApproveInWorkspace and records, in the same
+// transaction, that the person confirmed moving this machine's Device
+// moveSource there (schema 290). False, with nothing recorded, when the
+// approval or the acknowledgement does not hold.
+func (store *BrowserApprovalStore) ApproveMove(ctx context.Context,
+	digest accountsession.Digest, token string, selectedWorkspace workspace.ID, selectedNetwork network.ID,
+	moveSource publicid.ID,
+) (bool, error) {
+	if !selectedWorkspace.IsValid() || !moveSource.IsValid() {
+		return false, ErrInvalidBrowserApproval
+	}
+	return store.approveWith(ctx, digest, token, selectedWorkspace, selectedNetwork, moveSource)
+}
+
+const acknowledgeBrowserMoveSQL = `SELECT mesh_ops.acknowledge_browser_move_v1(
+    $1::UUID, $2::BIGINT, $3::TEXT, $4::BYTEA, $5::BYTEA, $6::UUID
+)`
+
+const lookupBrowserMoveSourceSQL = `SELECT kind, COALESCE(device_public_id::TEXT, ''), COALESCE(device_hostname, ''),
+    COALESCE(workspace_public_id::TEXT, ''), COALESCE(network_public_id::TEXT, ''),
+    COALESCE(network_display_name, '')
+FROM mesh_ops.lookup_browser_move_source_v1($1::UUID, $2::BIGINT, $3::TEXT, $4::BYTEA, $5::BYTEA)`
+
+// LookupMoveSource tells what the approval page shows about the machine of
+// a pending intent: "new", "own" (with its Device and Network) or "other"
+// (no names). Empty when the session or intent does not hold.
+func (store *BrowserApprovalStore) LookupMoveSource(ctx context.Context, digest accountsession.Digest,
+	token string,
+) (_ control.BrowserMoveSource, resultErr error) {
+	if ctx == nil || store == nil || store.database == nil || !digest.IsValid() {
+		return control.BrowserMoveSource{}, ErrInvalidBrowserApproval
+	}
+	intentDigest, err := enrollment.DigestPresentedBrowserIntentToken(token)
+	if err != nil {
+		return control.BrowserMoveSource{}, ErrInvalidBrowserApproval
+	}
+	transaction, err := store.database.Begin(ctx)
+	if err != nil || transaction == nil {
+		return control.BrowserMoveSource{}, ErrBrowserApprovalUnavailable
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(transaction))
+	}()
+	if err := transaction.Exec(ctx, configureAccountSessionTransactionSQL,
+		postgresTimeout(store.options.StatementTimeout),
+		postgresTimeout(store.options.IdleTimeout)); err != nil {
+		return control.BrowserMoveSource{}, errors.Join(ErrBrowserApprovalUnavailable, err)
+	}
+	sessionBytes := digest.Bytes()
+	intentBytes := intentDigest.Bytes()
+	var source control.BrowserMoveSource
+	err = transaction.QueryRow(ctx, lookupBrowserMoveSourceSQL, store.deploymentID.String(), store.recoveryEpoch,
+		digest.KeyID().String(), sessionBytes[:], intentBytes[:],
+	).Scan(&source.Kind, &source.DeviceID, &source.Hostname, &source.WorkspaceID, &source.NetworkID,
+		&source.NetworkName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return control.BrowserMoveSource{}, nil
+	}
+	if err != nil {
+		return control.BrowserMoveSource{}, errors.Join(ErrBrowserApprovalUnavailable, err)
+	}
+	if source.Kind != "new" && source.Kind != "own" && source.Kind != "other" {
+		return control.BrowserMoveSource{}, ErrBrowserApprovalEvidence
+	}
+	return source, nil
+}
+
 func (store *BrowserApprovalStore) approve(ctx context.Context, sessionDigest accountsession.Digest,
 	encodedToken string, selectedWorkspace workspace.ID, selectedNetwork network.ID,
+) (bool, error) {
+	return store.approveWith(ctx, sessionDigest, encodedToken, selectedWorkspace, selectedNetwork, publicid.ID{})
+}
+
+func (store *BrowserApprovalStore) approveWith(ctx context.Context, sessionDigest accountsession.Digest,
+	encodedToken string, selectedWorkspace workspace.ID, selectedNetwork network.ID, moveSource publicid.ID,
 ) (_ bool, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil ||
 		!validAccountSessionOptions(store.options) || !store.deploymentID.IsValid() ||
@@ -224,6 +298,19 @@ func (store *BrowserApprovalStore) approve(ctx context.Context, sessionDigest ac
 		networkRevision: networkRevision, requestHash: requestHash,
 	}); err != nil {
 		return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+	}
+	if moveSource.IsValid() {
+		var acknowledged bool
+		if err := transaction.QueryRow(ctx, acknowledgeBrowserMoveSQL, store.deploymentID.String(),
+			store.recoveryEpoch, sessionDigest.KeyID().String(), sessionBytes[:], intentBytes[:],
+			moveSource.String()).Scan(&acknowledged); err != nil {
+			return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+		}
+		// The Device the page showed no longer holds this machine, or is not
+		// the person's to move: nothing is approved.
+		if !acknowledged {
+			return false, nil
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return false, errors.Join(ErrBrowserApprovalUnavailable, err)

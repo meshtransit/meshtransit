@@ -41,7 +41,7 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 		{name: "expired machine", owner: 11, profile: 601, device: "active", machine: "expired", current: true},
 		{name: "deleted Device or future machine", owner: 11, profile: 601, device: "active", machine: "active"},
 		{name: "machine material mismatch", owner: 11, profile: 601, device: "active", machine: "active", current: true, changedMachine: true},
-		{name: "Node material mismatch", owner: 11, profile: 601, device: "active", machine: "active", current: true, changedNode: true},
+		{name: "new Node key rotates", owner: 11, profile: 601, device: "active", machine: "active", current: true, changedNode: true, allow: true},
 		{name: "missing active Node", owner: 11, profile: 601, device: "active", machine: "active", current: true, nodeAbsent: true},
 		{name: "new machine", absent: true, allow: true},
 	} {
@@ -89,6 +89,10 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 					material[0]++
 				}
 				*d[0].(*[]byte) = append([]byte(nil), material[:]...)
+				*d[1].(*int64) = 71
+				*d[2].(*int64) = 3
+				*d[3].(*int64) = 2
+				*d[4].(*int64) = 5
 				return nil
 			}}
 			if scenario.nodeAbsent {
@@ -109,6 +113,9 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 			}
 			if record.handover != scenario.handover {
 				t.Fatalf("handover = %t, want %t", record.handover, scenario.handover)
+			}
+			if record.rotateNodeKey != scenario.changedNode {
+				t.Fatalf("rotate = %t, want %t", record.rotateNodeKey, scenario.changedNode)
 			}
 			if resumed && (!bytes.Equal(record.nodeKey, []byte{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) || record.publicID != testRegistrationNodePublicID) {
 				t.Fatal("identity was not preserved")

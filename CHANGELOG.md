@@ -5,6 +5,20 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- core + meshd (schema 290, sign-in moves the machine): when a person approves
+  a browser sign-in for a Network other than the one where the machine already
+  is their own member Device, Core revokes that Device (reason `moved`, like
+  "Remove this device") and creates the new one in the same transaction, after
+  one approval. The approval page shows what the computer is, preselects its
+  Network, and moves it only after the person ticks "Move this computer here";
+  a Workspace's, suspended, handed-over or another account's Device is never
+  moved, and the refusal says why. Core offers `register.freshnodekey1`: a
+  browser sign-in may bring a new node key, which rotates the Device's key on
+  resume; meshd keeps one key per sign-in until Core answers and makes it the
+  node key in the same write that registers the profile, and keeps the
+  profile's key with an older Core. A machine moved out of a Network can come
+  back to it as a new Device, and a pending approval with another node key of
+  the same machine ends instead of blocking a new sign-in.
 - core + meshd (TD-CORE-150): a browser approval Core cannot complete because
   the node's keys already hold another Device (one in another Network or
   Workspace hit the global key indexes, a duplicate-key error retried every 2 s

@@ -406,7 +406,8 @@ WHERE device.public_id=$1::UUID AND lease.state='active'`, created.NodeID().Stri
 	}{
 		{name: "same owner and keys", identity: identity, allow: true},
 		{name: "expired Device resumes", identity: identity, allow: true, expire: true},
-		{name: "different Node key denied", identity: browserReloginChangedNode(t, identity), allow: false},
+		// A new Node key now rotates the Device's key (schema 290); that is
+		// covered by assertPostgreSQLBrowserMoveMachine.
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			if scenario.expire {
@@ -507,6 +508,27 @@ WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID AND event_class='
 		})
 	}
 
+	// An approval nobody completes: the abandoned-approval checks below start
+	// from its authorized registration.
+	abandonedID, err := publicid.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandonedIntent, err := enrollment.ParseBrowserIntentID(abandonedID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandonedNonce, err := enrollment.NewBrowserIntentNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, abandonedIntent, abandonedNonce, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved, err := approvals.Approve(ctx, session, abandoned.Encoded(), networkID); err != nil || !approved {
+		t.Fatalf("approval left uncompleted = %v/%v", approved, err)
+	}
 	assertPostgreSQLAbandonedBrowserApproval(ctx, t, admin, intents, approvals, completion,
 		deploymentID, epoch, session, networkID, identity, hostname, created.NodeID().String())
 }
@@ -643,19 +665,6 @@ WHERE pending_registration_public_id=$1::UUID`, abandonedID).Scan(&abandonedInte
 	if err != nil || !found || result.NodeID().String() != deviceID || result.Disposition() != registration.DispositionResumed {
 		t.Fatalf("fresh SSO after abandoned approval: %+v/%v/%v", result, found, err)
 	}
-}
-
-func browserReloginChangedNode(t *testing.T, original node.RegistrationIdentity) node.RegistrationIdentity {
-	t.Helper()
-	key, err := node.NewKey([32]byte{0x94})
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := node.NewRegistrationIdentity(original.MachineKey(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return identity
 }
 
 func boolBrowserExpiry(expired bool) int {

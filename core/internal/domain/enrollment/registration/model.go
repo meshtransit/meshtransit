@@ -2,6 +2,7 @@ package registration
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -38,6 +39,16 @@ var (
 	// another owner, or with another node key. Asking again never changes it:
 	// the node signs in to that Device's Network, or that Device is removed.
 	ErrKeysHeldElsewhere = errors.New("registration: the machine key holds another Device")
+	// The reasons a browser sign-in cannot move its machine to the approved
+	// Network (sign-in-moves-machine §8); each is also ErrKeysHeldElsewhere.
+	ErrMachineOfAnotherAccount = fmt.Errorf("registration: the machine is another account's Device: %w",
+		ErrKeysHeldElsewhere)
+	ErrMachineNotMovable = fmt.Errorf("registration: the machine is a Workspace's or a suspended Device: %w",
+		ErrKeysHeldElsewhere)
+	ErrMoveNotConfirmed = fmt.Errorf("registration: the move was not confirmed on the approval page: %w",
+		ErrKeysHeldElsewhere)
+	ErrMoveNeedsNewClient = fmt.Errorf("registration: an older client cannot move its machine: %w",
+		ErrKeysHeldElsewhere)
 )
 
 // Command is an authenticated, server-scoped credential registration request.

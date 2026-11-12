@@ -149,10 +149,12 @@ type browserCompletionAuthority struct {
 type browserCompletionIDs struct {
 	device, machineEpoch, nodeEpoch, v4Lease, v6Lease publicid.ID
 	change, event, outbox                             publicid.ID
+	// A move revokes the source Device under its own change (schema 290).
+	moveChange, moveEvent, moveOutbox publicid.ID
 }
 
 func newBrowserCompletionIDs() (browserCompletionIDs, error) {
-	var values [8]publicid.ID
+	var values [11]publicid.ID
 	for index := range values {
 		id, err := publicid.New()
 		if err != nil {
@@ -164,6 +166,7 @@ func newBrowserCompletionIDs() (browserCompletionIDs, error) {
 		device: values[0], machineEpoch: values[1], nodeEpoch: values[2],
 		v4Lease: values[3], v6Lease: values[4], change: values[5],
 		event: values[6], outbox: values[7],
+		moveChange: values[8], moveEvent: values[9], moveOutbox: values[10],
 	}, nil
 }
 
@@ -202,6 +205,11 @@ func (store *BrowserCompletionStore) Complete(
 		postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
+	// Before the authority: both Networks' revisions in ascending order.
+	move, err := lockBrowserMoveRevisions(ctx, tx, store.deploymentID, store.recoveryEpoch, digest, identityValue)
+	if err != nil {
+		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
+	}
 	machineKey := identityValue.MachineKey().Bytes()
 	fingerprint := identityValue.MachineKey().Fingerprint()
 	nodeKey := identityValue.NodeKey().Bytes()
@@ -237,7 +245,7 @@ func (store *BrowserCompletionStore) Complete(
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
 	result, err := completeApprovedBrowserRegistration(ctx, tx, store.options,
-		identityValue, hostname, digest, authority, ids, store.deploymentID, store.recoveryEpoch)
+		identityValue, hostname, digest, authority, ids, store.deploymentID, store.recoveryEpoch, move)
 	if err != nil {
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
@@ -301,6 +309,7 @@ func completeApprovedBrowserRegistration(
 	requestedHostname node.Hostname, tokenDigest enrollment.BrowserIntentDigest,
 	authority browserCompletionAuthority,
 	ids browserCompletionIDs, deploymentID deployment.ID, recoveryEpoch int64,
+	move browserMoveSource,
 ) (registration.Result, error) {
 	workspaceID, workspaceErr := workspace.ParseID(authority.workspacePublicID)
 	networkID, networkErr := network.ParseID(authority.networkPublicID)
@@ -337,6 +346,15 @@ func completeApprovedBrowserRegistration(
 	if !resumed {
 		if err := checkNewDeviceLimit(ctx, tx, authority); err != nil {
 			return registration.Result{}, err
+		}
+		if err := move.refusal(); err != nil {
+			return registration.Result{}, err
+		}
+		if move.found {
+			if err := moveOutBrowserDevice(ctx, tx, deploymentID, recoveryEpoch, tokenDigest,
+				identityValue, authority, move, ids); err != nil {
+				return registration.Result{}, err
+			}
 		}
 	}
 	disposition := registration.DispositionCreated
@@ -407,6 +425,14 @@ func completeApprovedBrowserRegistration(
 			authority.principalInternalID, authority.profileInternalID,
 		).Scan(&deviceVersion); err != nil || deviceVersion != existing.version+1 {
 			return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
+		}
+		if existing.rotateNodeKey {
+			deviceVersion, err = rotateBrowserResumeNodeKey(ctx, tx, existing, identityValue,
+				authority.workspaceInternalID, authority.networkInternalID, deviceVersion,
+				ids.nodeEpoch.String(), occurredAt)
+			if err != nil {
+				return registration.Result{}, err
+			}
 		}
 	} else {
 		if err := helper.releaseHostname(ctx, selectedHostname); err != nil {
@@ -486,7 +512,7 @@ func completeApprovedBrowserRegistration(
 	if err := appendBrowserCompletionEvidence(ctx, tx, helper.locked.audit,
 		authority, ids, selectedHostname, deviceVersion,
 		newNetworkRevision, newInventoryRevision, disposition, resumed && existing.handover,
-		resumed && existing.signedOut,
+		resumed && existing.signedOut, resumed && existing.rotateNodeKey,
 	); err != nil {
 		return registration.Result{}, err
 	}
@@ -507,7 +533,7 @@ func appendBrowserCompletionEvidence(
 	head registrationAuditHead, authority browserCompletionAuthority,
 	ids browserCompletionIDs, hostname node.Hostname,
 	deviceVersion, networkRevision, inventoryRevision int64, disposition registration.Disposition,
-	handover, signedIn bool,
+	handover, signedIn, nodeKeyRotated bool,
 ) error {
 	action := "device.registered"
 	if disposition == registration.DispositionResumed {
@@ -523,7 +549,8 @@ func appendBrowserCompletionEvidence(
 	auditPayload, err := json.Marshal(struct {
 		Hostname       string `json:"hostname"`
 		RegistrationID string `json:"registration_id"`
-	}{hostname.String(), authority.registrationPublicID})
+		NodeKeyRotated bool   `json:"node_key_rotated,omitempty"`
+	}{hostname.String(), authority.registrationPublicID, nodeKeyRotated})
 	if err != nil {
 		return err
 	}

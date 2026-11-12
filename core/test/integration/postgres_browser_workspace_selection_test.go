@@ -17,6 +17,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
@@ -319,6 +320,214 @@ WHERE change_public_id='01890f00-0000-7000-8000-000000001912'::UUID
 	}
 	if _, found, err := completion.Complete(ctx, identity, hostname, home.Encoded()); err != nil || !found {
 		t.Fatalf("complete into the Device's Network = %v/%v", found, err)
+	}
+	assertPostgreSQLBrowserMoveMachine(ctx, t, admin, intents, approval, completion, deploymentID, epoch,
+		digest, identity, hostname, homeWorkspace, homeNetwork, otherWorkspace, otherNetwork)
+}
+
+// Schema 290: the machine's Device is in Network 202; a sign-in approved for
+// Network 203 moves it there once the person confirmed it, and back again.
+func assertPostgreSQLBrowserMoveMachine(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	intents *postgresadapter.BrowserIntentStore, approval *postgresadapter.BrowserApprovalStore,
+	completion *postgresadapter.BrowserCompletionStore, deploymentID deployment.ID, epoch int64,
+	digest accountsession.Digest, original node.RegistrationIdentity, hostname node.Hostname,
+	homeWorkspace workspace.ID, homeNetwork network.ID, otherWorkspace workspace.ID, otherNetwork network.ID,
+) {
+	t.Helper()
+	// Earlier fixtures used up the person's new-Device allowance in 203 for
+	// today; they are aged a day so the moves below are counted alone.
+	var revision int64
+	if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision WHERE workspace_id=103 AND network_id=203`).Scan(&revision); err != nil {
+		t.Fatalf("revision 203: %v", err)
+	}
+	var anyDevice string
+	var anyVersion int64
+	if err := admin.QueryRow(ctx, `SELECT public_id::TEXT, version FROM mesh.device WHERE workspace_id=103 AND network_id=203
+  AND registered_by_kind='principal' AND registered_by_principal_id=11
+  AND created_at > pg_catalog.transaction_timestamp() - INTERVAL '1 day'
+  AND id IN (SELECT device_id FROM mesh.pending_registration WHERE authorization_kind='interactive'
+             AND state='completed' AND workspace_id=103 AND network_id=203) ORDER BY id LIMIT 1`).Scan(&anyDevice, &anyVersion); err != nil {
+		t.Fatalf("a Device in 203: %v", err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000001921",
+		eventPublicID:  "01890f02-0000-7000-8000-000000001921",
+		outboxPublicID: "01890f03-0000-7000-8000-000000001921",
+		streamID:       203, aggregateKind: "device", aggregatePublicID: anyDevice,
+		aggregateVersion: anyVersion + 1, networkRevision: revision,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "device.age.fixture", permission: "system.bootstrap", outboxEventClass: "device.age.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `UPDATE mesh.device SET created_at=created_at-INTERVAL '2 days', version=version+1,
+updated_at=pg_catalog.clock_timestamp() WHERE workspace_id=103 AND network_id=203
+  AND registered_by_kind='principal' AND registered_by_principal_id=11
+  AND created_at > pg_catalog.transaction_timestamp() - INTERVAL '1 day'
+  AND id IN (SELECT device_id FROM mesh.pending_registration WHERE authorization_kind='interactive'
+             AND state='completed' AND workspace_id=103 AND network_id=203)`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	withNodeKey := func(seed byte) node.RegistrationIdentity {
+		t.Helper()
+		key, err := node.NewKey([32]byte{seed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity, err := node.NewRegistrationIdentity(original.MachineKey(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return identity
+	}
+	issue := func(id string, identity node.RegistrationIdentity) enrollment.BrowserIntentToken {
+		t.Helper()
+		intentID, err := enrollment.ParseBrowserIntentID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nonce, err := enrollment.NewBrowserIntentNonce()
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, 5*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	machineMaterial := original.MachineKey().Bytes()
+	var sourceID string
+	if err := admin.QueryRow(ctx, `SELECT device.public_id::TEXT FROM mesh.device device
+JOIN mesh.device_machine_key_epoch machine ON machine.device_id=device.id AND machine.state='active'
+WHERE machine.public_key=$1::BYTEA`, machineMaterial[:]).Scan(&sourceID); err != nil {
+		t.Fatalf("the machine's Device: %v", err)
+	}
+	source, err := publicid.Parse(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An older client keeps the Device's own node key: it must update first.
+	old := issue("01890f00-0000-7000-8000-000000001922", original)
+	if seen, err := approval.LookupMoveSource(ctx, digest, old.Encoded()); err != nil || seen.Kind != "own" ||
+		seen.DeviceID != sourceID || seen.NetworkID != homeNetwork.String() {
+		t.Fatalf("page lookup = %+v/%v", seen, err)
+	}
+	if approved, err := approval.ApproveMove(ctx, digest, old.Encoded(), otherWorkspace, otherNetwork, source); err != nil || !approved {
+		t.Fatalf("approve move (old client) = %v/%v", approved, err)
+	}
+	if _, found, err := completion.Complete(ctx, original, hostname, old.Encoded()); found ||
+		!errors.Is(err, registration.ErrMoveNeedsNewClient) {
+		t.Fatalf("old client move = %v/%v", found, err)
+	}
+	// A new key without the page's confirmation is refused, and moves nothing.
+	moving := withNodeKey(0xe3)
+	unconfirmed := issue("01890f00-0000-7000-8000-000000001923", moving)
+	if approved, err := approval.ApproveInWorkspace(ctx, digest, unconfirmed.Encoded(), otherWorkspace, otherNetwork); err != nil || !approved {
+		t.Fatalf("approve without confirmation = %v/%v", approved, err)
+	}
+	if _, found, err := completion.Complete(ctx, moving, hostname, unconfirmed.Encoded()); found ||
+		!errors.Is(err, registration.ErrMoveNotConfirmed) {
+		t.Fatalf("unconfirmed move = %v/%v", found, err)
+	}
+	// Confirmed: the Device moves to 203.
+	confirmed := issue("01890f00-0000-7000-8000-000000001924", moving)
+	if approved, err := approval.ApproveMove(ctx, digest, confirmed.Encoded(), otherWorkspace, otherNetwork, source); err != nil || !approved {
+		t.Fatalf("approve move = %v/%v", approved, err)
+	}
+	moved, found, err := completion.Complete(ctx, moving, hostname, confirmed.Encoded())
+	if err != nil || !found || moved.Scope().NetworkID() != otherNetwork || moved.NodeID().String() == sourceID ||
+		moved.Disposition() != registration.DispositionCreated {
+		t.Fatalf("move = %+v/%v/%v", moved, found, err)
+	}
+	var state, reason string
+	if err := admin.QueryRow(ctx, `SELECT device.state, machine.revocation_reason FROM mesh.device device
+JOIN mesh.device_machine_key_epoch machine ON machine.device_id=device.id AND machine.workspace_id=device.workspace_id
+ AND machine.network_id=device.network_id
+WHERE device.public_id=$1::UUID ORDER BY machine.epoch DESC LIMIT 1`, sourceID).Scan(&state, &reason); err != nil ||
+		state != "revoked" || reason != "moved" {
+		t.Fatalf("moved-out Device = %s/%s/%v", state, reason, err)
+	}
+	var events int
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh_audit.audit_event
+WHERE action='device.moved_out' AND target_public_id=$1::UUID AND network_id=202
+  AND actor_principal_public_id='01890f00-0000-7000-8000-000000000011'::UUID
+  AND payload ? 'moved_by_owner' AND NOT payload ? 'moved_to_network'`, sourceID).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("moved-out evidence = %d/%v", events, err)
+	}
+	// Back to 202: the 'moved' revocation there does not block a new Device.
+	back := withNodeKey(0xe4)
+	returning := issue("01890f00-0000-7000-8000-000000001925", back)
+	seen, err := approval.LookupMoveSource(ctx, digest, returning.Encoded())
+	if err != nil || seen.Kind != "own" || seen.DeviceID != moved.NodeID().String() || seen.NetworkID != otherNetwork.String() {
+		t.Fatalf("page lookup after move = %+v/%v", seen, err)
+	}
+	newSource, err := publicid.Parse(seen.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved, err := approval.ApproveMove(ctx, digest, returning.Encoded(), homeWorkspace, homeNetwork, newSource); err != nil || !approved {
+		t.Fatalf("approve move back = %v/%v", approved, err)
+	}
+	returned, found, err := completion.Complete(ctx, back, hostname, returning.Encoded())
+	if err != nil || !found || returned.Scope().NetworkID() != homeNetwork || returned.NodeID().String() == sourceID {
+		t.Fatalf("move back = %+v/%v/%v", returned, found, err)
+	}
+	// Signing in again to the same Device with another new key rotates it.
+	again := withNodeKey(0xe5)
+	resume := issue("01890f00-0000-7000-8000-000000001926", again)
+	if approved, err := approval.ApproveInWorkspace(ctx, digest, resume.Encoded(), homeWorkspace, homeNetwork); err != nil || !approved {
+		t.Fatalf("approve resume = %v/%v", approved, err)
+	}
+	resumed, found, err := completion.Complete(ctx, again, hostname, resume.Encoded())
+	if err != nil || !found || resumed.NodeID() != returned.NodeID() || resumed.Disposition() != registration.DispositionResumed {
+		t.Fatalf("resume with a new key = %+v/%v/%v", resumed, found, err)
+	}
+	var epochs int
+	var current int64
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*), max(device.current_node_key_epoch) FROM mesh.device_node_key_epoch node_key
+JOIN mesh.device device ON device.id=node_key.device_id WHERE device.public_id=$1::UUID`,
+		returned.NodeID().String()).Scan(&epochs, &current); err != nil || epochs != 2 || current != 2 {
+		t.Fatalf("rotated node keys = %d/%d/%v", epochs, current, err)
+	}
+	// An administrator's revocation whose free-text reason reads "moved" is
+	// not a move: the machine stays refused in that Network (review H3).
+	var deviceVersion, homeRevision int64
+	if err := admin.QueryRow(ctx, `SELECT version FROM mesh.device WHERE public_id=$1::UUID`,
+		returned.NodeID().String()).Scan(&deviceVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision WHERE workspace_id=102 AND network_id=202`).Scan(&homeRevision); err != nil {
+		t.Fatal(err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000001927",
+		eventPublicID:  "01890f02-0000-7000-8000-000000001927",
+		outboxPublicID: "01890f03-0000-7000-8000-000000001927",
+		streamID:       202, aggregateKind: "device", aggregatePublicID: returned.NodeID().String(),
+		aggregateVersion: deviceVersion + 1, networkRevision: homeRevision + 1,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "device.revoked.fixture", permission: "system.bootstrap", outboxEventClass: "device.revoked.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `SELECT mesh_ops.revoke_member_device_internal_v1(id, 'moved', pg_catalog.clock_timestamp())
+FROM mesh.device WHERE public_id=$1::UUID`, returned.NodeID().String()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000102'::UUID,'01890f00-0000-7000-8000-000000000202'::UUID)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.advance_network_inventory_revision()`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	retry := withNodeKey(0xe6)
+	refused := issue("01890f00-0000-7000-8000-000000001928", retry)
+	if approved, err := approval.ApproveInWorkspace(ctx, digest, refused.Encoded(), homeWorkspace, homeNetwork); err != nil || !approved {
+		t.Fatalf("approve after an administrator's revocation = %v/%v", approved, err)
+	}
+	if _, found, err := completion.Complete(ctx, retry, hostname, refused.Encoded()); found ||
+		!errors.Is(err, registration.ErrKeysHeldElsewhere) {
+		t.Fatalf("an administrator's \"moved\" revocation let the machine back in = %v/%v", found, err)
 	}
 }
 

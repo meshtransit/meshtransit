@@ -236,8 +236,17 @@ FROM mesh_ops.issue_browser_registration_intent_v1(
     $1::UUID, $2::BYTEA, $3::BYTEA, $4::BYTEA, 'browser-test-device'::TEXT,
     $5::BYTEA, 'browser-v1'::TEXT, $6::BYTEA, $7::TIMESTAMPTZ
 )`, retryID, machineKey, fingerprint, wrongNode, retryNonce, retryDigest, expiresAt, recoveryEpoch).Scan(&conflictingID)
-	if err == nil {
-		t.Fatal("browser intent accepted a Node-key change on the same machine")
+	// Schema 290: the same Noise-proven machine starting a new sign-in with a
+	// new node key ends its pending intent and gets a new one, instead of a
+	// conflict until the old one expires (sign-in-moves-machine §4.3).
+	if err != nil || conflictingID != retryID {
+		t.Fatalf("new node key on a pending intent = %q/%v, want the new intent %s", conflictingID, err, retryID)
+	}
+	var endedPending int
+	if err := transaction.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.browser_registration_intent
+WHERE machine_key=$1::BYTEA AND state='expired' AND public_id<>$2::UUID`, machineKey, retryID).Scan(&endedPending); err != nil ||
+		endedPending < 1 {
+		t.Fatalf("pending intent with the old node key not ended: %d/%v", endedPending, err)
 	}
 	if _, rollbackErr := transaction.Exec(ctx, `ROLLBACK TO SAVEPOINT browser_intent_conflict`); rollbackErr != nil {
 		t.Fatal(rollbackErr)
