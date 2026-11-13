@@ -156,6 +156,11 @@ const (
 	// RegistrationStateAdminApprovalRequired means an administrator must
 	// approve a Kubernetes cluster join by the replica's code (mtcp-v1 §6.6).
 	RegistrationStateAdminApprovalRequired RegistrationState = "admin_approval_required"
+	// RegistrationStateAlreadyInNetwork means the person chose, on the
+	// approval page, the Device another profile of this machine already is
+	// in that Network (duplicate-device design §9): the sign-in ended and no
+	// Device was made. SiblingMachineKey names that profile's key.
+	RegistrationStateAlreadyInNetwork RegistrationState = "already_in_network"
 )
 
 // ClusterJoin asks to join a Kubernetes cluster as a gateway replica.
@@ -226,6 +231,13 @@ type RegisterOptions struct {
 	// (sign-in-moves-machine §4): used instead of the profile's when Core
 	// offers register.freshnodekey1, never otherwise.
 	SignInNodePrivateKey []byte
+	// SiblingMachinePrivateKeys are the machine keys of this machine's other
+	// profiles on the same server that may hold a Device (duplicate-device
+	// design §4.2). A browser sign-in proves them in its session when Core
+	// offers register.siblings1, so Core never makes the person a second
+	// Device in a Network one of them is already in. At most 16; never sent
+	// otherwise.
+	SiblingMachinePrivateKeys [][]byte
 }
 
 // RegistrationResult excludes account data and private material.
@@ -237,6 +249,10 @@ type RegistrationResult struct {
 	Approval *AdminApproval
 	// SignInKeyUsed reports that the request carried SignInNodePrivateKey.
 	SignInKeyUsed bool
+	// SiblingMachineKey is, for RegistrationStateAlreadyInNetwork, the
+	// public machine key of the sibling profile whose Device the person
+	// chose instead.
+	SiblingMachineKey [32]byte
 }
 
 // HostOffer is what the host's local settings offer Core (mtcp-v1 §8.2).

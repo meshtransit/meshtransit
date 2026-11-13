@@ -47,6 +47,19 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 	case RegistrationUnregistered, RegistrationPending:
 		return profile.Profile{}, profile.Profile{}, ErrAddAccountNoDevice
 	}
+	// One browser sign-in waits per server (duplicate-device §4.3, N4): no
+	// profile is made for a second one. StartLogin checks it again.
+	if current, err := s.profiles.Active(ctx); err == nil {
+		release, err := s.acquireRegistration(ctx)
+		if err != nil {
+			return profile.Profile{}, profile.Profile{}, err
+		}
+		err = s.checkPendingElsewhere(ctx, current, status.ControlFingerprint)
+		release()
+		if err != nil {
+			return profile.Profile{}, profile.Profile{}, err
+		}
+	}
 	snapshot := s.profiles.Snapshot()
 	var active profile.Profile
 	taken := make(map[string]bool, len(snapshot.Profiles))

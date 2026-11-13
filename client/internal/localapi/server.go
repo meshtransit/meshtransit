@@ -1202,6 +1202,19 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, daemon.ErrStopSignInUnavailable):
 		s.writeError(writer, http.StatusServiceUnavailable, "stop_sign_in_unavailable",
 			"the stopped sign-in could not be recorded, so it is still pending; try again")
+	case errors.Is(err, daemon.ErrSignInPendingElsewhere):
+		waiting := ""
+		if pending, ok := errors.AsType[*daemon.SignInPendingElsewhereError](err); ok {
+			waiting = pending.ProfileID
+		}
+		s.writeJSON(writer, http.StatusConflict, errorResponse{
+			APIVersion: apiVersion, Code: "sign_in_pending_elsewhere", ProfileID: waiting,
+			Message: "another account on this server is waiting for its browser sign-in; stop that sign-in or " +
+				"switch to it",
+		})
+	case errors.Is(err, daemon.ErrSiblingProfileMissing):
+		s.writeError(writer, http.StatusConflict, "already_in_network_missing",
+			"this computer is already in that Network under an account that is no longer in the app; sign in again")
 	case errors.Is(err, daemon.ErrNoPendingAuthorization):
 		s.writeError(writer, http.StatusConflict, "no_pending_authorization", "no browser authorization is pending")
 	case errors.Is(err, controlplane.ErrNodeKeyExpired):

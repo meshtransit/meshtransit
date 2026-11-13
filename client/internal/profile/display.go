@@ -54,6 +54,10 @@ type Display struct {
 	// dropped approval registers nothing, but the keys may hold a Device from
 	// before, so Core is asked before they are dropped.
 	SignInStopped bool `json:"sign_in_stopped,omitempty"`
+	// JoinedProfileID is the profile Core switched this one's sign-in to
+	// (already_in_network, duplicate-device design §9) until meshd finished
+	// the switch: a crash before then is finished on the next start.
+	JoinedProfileID string `json:"joined_profile_id,omitempty"`
 	// RemovedAt is when meshd learned Core removed the Device; the names
 	// stay so the apps can say which one.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`

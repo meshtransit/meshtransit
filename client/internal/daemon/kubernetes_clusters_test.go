@@ -13,8 +13,10 @@ func TestKubernetesClustersAt(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	views := kubernetesClusterViews([]networkmap.KubernetesCluster{
-		{ID: "a", Name: "alpha", State: networkmap.KubernetesClusterTrusted, RootFingerprints: [][32]byte{{1}},
-			Roots: [][]byte{[]byte("der")}, HeldUntil: now.Add(-time.Minute)},
+		{
+			ID: "a", Name: "alpha", State: networkmap.KubernetesClusterTrusted, RootFingerprints: [][32]byte{{1}},
+			Roots: [][]byte{[]byte("der")}, HeldUntil: now.Add(-time.Minute),
+		},
 		{ID: "b", Name: "beta", State: networkmap.KubernetesClusterTrusted},
 	})
 	current := kubernetesClustersAt(views, now)

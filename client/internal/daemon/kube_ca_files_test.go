@@ -24,9 +24,11 @@ func kubeCARoot(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +49,13 @@ func TestKubeCAFilesFollowTheProfile(t *testing.T) {
 		profileB = "0b0b0b0b0b0b0b0b"
 		cluster  = "01890f90-0000-7000-8000-0000000000a1"
 	)
-	snapshot := networkmap.Snapshot{KubernetesClustersAuthoritative: true, KubernetesClustersNegotiated: true,
-		KubernetesClusters: []networkmap.KubernetesCluster{{ID: cluster, Name: "prod",
-			State: networkmap.KubernetesClusterTrusted, Roots: [][]byte{kubeCARoot(t)}}}}
+	snapshot := networkmap.Snapshot{
+		KubernetesClustersAuthoritative: true, KubernetesClustersNegotiated: true,
+		KubernetesClusters: []networkmap.KubernetesCluster{{
+			ID: cluster, Name: "prod",
+			State: networkmap.KubernetesClusterTrusted, Roots: [][]byte{kubeCARoot(t)},
+		}},
+	}
 	read := func(profile string) string {
 		t.Helper()
 		content, err := os.ReadFile(filepath.Join(base, profile, cluster+".pem")) //nolint:gosec // The test's own directory.

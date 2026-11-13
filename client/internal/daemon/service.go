@@ -249,6 +249,9 @@ type Login struct {
 	ProfileID string
 	State     string
 	AuthURL   string
+	// joinedFrom is, for RegistrationAlreadyInNetwork, the profile whose
+	// sign-in ended; CompleteLogin then finishes the switch.
+	joinedFrom string
 }
 
 // NodeKeyRotation is the non-secret result of a committed key transition.
@@ -815,6 +818,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	}()
 	// The restart the marker announced has happened: a later stop is real.
 	clearRestartMarker(s.restartMarkerPath, s.logger)
+	// A switch to the account already in a Network that a crash interrupted
+	// finishes first (duplicate-device design N5).
+	s.resumeJoined(ctx)
 	if s.flowLogs != nil {
 		// Kept across map streams: a ticket outlives its session, and the
 		// last window is put on disk before Run returns.
@@ -2793,6 +2799,17 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 				return Login{}, ErrSignedOutNeedsSignIn
 			}
 		}
+	} else if active, err := s.profiles.Active(ctx); err == nil {
+		// A new sign-in on a profile whose switch did not finish replaces
+		// that switch: it is what the person asks for now.
+		s.clearJoined(active.ID)
+		// One browser sign-in waits per server (duplicate-device §4.3),
+		// checked under the registration gate that starts it.
+		if record, err := s.identities.Get(ctx, active.ID); err == nil {
+			if err := s.checkPendingElsewhere(ctx, active, record.ControlKeyFingerprint()); err != nil {
+				return Login{}, err
+			}
+		}
 	}
 
 	return s.register(ctx, authKey, "")
@@ -2800,7 +2817,20 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 
 // CompleteLogin performs a short follow-up poll using the persisted browser URL.
 func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
-	return s.completeLogin(ctx, completionPollTimeout)
+	// A switch to the account already in that Network that did not finish
+	// (a crash, or a failed write) finishes now.
+	if active := s.profiles.Snapshot().ActiveProfileID; active != "" && !s.gateway {
+		if display, found := s.ProfileDisplay(active); found && display.JoinedProfileID != "" {
+			return s.finishJoined(ctx, active, display.JoinedProfileID, true)
+		}
+	}
+	login, err := s.completeLogin(ctx, completionPollTimeout)
+	if err != nil || login.State != RegistrationAlreadyInNetwork || login.joinedFrom == "" {
+		return login, err
+	}
+	// Outside the registration gate: the switch removes a profile, which
+	// takes it (design §9).
+	return s.finishJoined(ctx, login.joinedFrom, login.ProfileID, true)
 }
 
 // RotateNodeKey stages a fresh key durably, requests one authenticated remote
@@ -2964,26 +2994,7 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 			return Login{}, ctx.Err()
 		}
 		if _, refused := errors.AsType[*controlplane.RejectedError](err); refused {
-			// Core refused this approval for good (expired, or keys that hold
-			// another Device: TD-CORE-150). Asking again would be refused
-			// again: the pending sign-in ends, the keys stay. First recorded as
-			// stopped, as Stop Signing In does: the keys may hold a Device (a
-			// conflict proves one), so removing the profile asks Core first.
-			// When that record cannot be written the sign-in is kept, never ended
-			// silently; a meshd without a display store keeps no such record.
-			if s.display != nil {
-				if stopErr := s.displaySignInStopped(active.ID); stopErr != nil {
-					return Login{}, errors.Join(err, stopErr)
-				}
-			}
-			if _, clearErr := s.identities.SetRegistration(ctx, active.ID, "", false); clearErr != nil {
-				return Login{}, errors.Join(err, fmt.Errorf("ending the refused sign-in: %w", clearErr))
-			}
-			// Core gave its final answer to this sign-in: its key is not kept.
-			if _, clearErr := s.identities.SetSignInNodeKey(ctx, active.ID, nil); clearErr != nil {
-				return Login{}, errors.Join(err, fmt.Errorf("dropping the refused sign-in key: %w", clearErr))
-			}
-			return Login{}, err
+			return Login{}, errors.Join(err, s.endRefusedSignIn(ctx, active.ID))
 		}
 		if errors.Is(err, controlplane.ErrRegistrationTemporary) {
 			if err := waitForCompletionPoll(ctx, pollCtx); err != nil {
@@ -3005,6 +3016,29 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 	}
 
 	return result, nil
+}
+
+// endRefusedSignIn ends a sign-in Core refused for good (expired, or keys
+// that hold another Device: TD-CORE-150). Asking again would be refused
+// again: the pending sign-in ends, the keys stay. First recorded as stopped,
+// as Stop Signing In does: the keys may hold a Device (a conflict proves
+// one), so removing the profile asks Core first. When that record cannot be
+// written the sign-in is kept, never ended silently; a meshd without a
+// display store keeps no such record.
+func (s *Service) endRefusedSignIn(ctx context.Context, id string) error {
+	if s.display != nil {
+		if err := s.displaySignInStopped(id); err != nil {
+			return err
+		}
+	}
+	if _, err := s.identities.SetRegistration(ctx, id, "", false); err != nil {
+		return fmt.Errorf("ending the refused sign-in: %w", err)
+	}
+	// Core gave its final answer to this sign-in: its key is not kept.
+	if _, err := s.identities.SetSignInNodeKey(ctx, id, nil); err != nil {
+		return fmt.Errorf("dropping the refused sign-in key: %w", err)
+	}
+	return nil
 }
 
 func waitForCompletionPoll(ctx, pollCtx context.Context) error {
@@ -3049,6 +3083,15 @@ func (s *Service) registerWithRecord(
 		return Login{}, err
 	}
 	defer clear(signInKey)
+	var siblings [][]byte
+	if authKey == "" && !s.gateway {
+		siblings = s.siblingMachineKeys(stateCtx, active, record.ControlKeyFingerprint())
+	}
+	defer func() {
+		for _, sibling := range siblings {
+			clear(sibling)
+		}
+	}()
 	identityMaterial := record.Material()
 	protocolMaterial := toProtocolMaterial(identityMaterial)
 	clearIdentityMaterial(identityMaterial)
@@ -3058,12 +3101,13 @@ func (s *Service) registerWithRecord(
 		active.ControlURL,
 		protocolMaterial,
 		controlplane.RegisterOptions{
-			Hostname:             s.hostname,
-			Version:              "meshd/" + s.build.Version,
-			PinnedFingerprint:    record.ControlKeyFingerprint(),
-			AuthKey:              authKey,
-			FollowupURL:          followupURL,
-			SignInNodePrivateKey: signInKey,
+			Hostname:                  s.hostname,
+			Version:                   "meshd/" + s.build.Version,
+			PinnedFingerprint:         record.ControlKeyFingerprint(),
+			AuthKey:                   authKey,
+			FollowupURL:               followupURL,
+			SignInNodePrivateKey:      signInKey,
+			SiblingMachinePrivateKeys: siblings,
 		},
 	)
 	if err != nil {
@@ -3106,6 +3150,8 @@ func (s *Service) registerWithRecord(
 				return Login{}, fmt.Errorf("dropping the unused sign-in key: %w", err)
 			}
 		}
+	case controlplane.RegistrationStateAlreadyInNetwork:
+		return s.joinedExisting(stateCtx, active, record, result.SiblingMachineKey)
 	default:
 		return Login{}, fmt.Errorf("%w: unsupported registration state", ErrRegistration)
 	}

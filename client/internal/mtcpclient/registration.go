@@ -62,6 +62,7 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 	if err != nil {
 		return controlplane.RegistrationResult{}, err
 	}
+	sent := attachSiblings(s, request, keys, options)
 	if err := s.send(sharedmtcp.MessageRegisterRequest, request); err != nil {
 		return controlplane.RegistrationResult{}, temporary(err)
 	}
@@ -74,6 +75,12 @@ func (c *Client) Register(ctx context.Context, controlURL string, material contr
 		wait = min(max(options.JoinWait, 0), maxJoinWait)
 	}
 	result, err := awaitRegistration(ctx, s, wait, options.ClusterJoin != nil, c.sessionError, c.coreNow)
+	if err == nil && result.State == controlplane.RegistrationStateAlreadyInNetwork &&
+		!slices.Contains(sent, result.SiblingMachineKey) {
+		// Core names only a key this session proved (mtcp-v1 §6.2).
+		return controlplane.RegistrationResult{}, fmt.Errorf("%w: already in network for a key not sent",
+			controlplane.ErrRegistration)
+	}
 	result.SignInKeyUsed = signInUsed && err == nil
 	return result, err
 }
@@ -103,7 +110,8 @@ func (c *Client) openRegistration(ctx context.Context, origin *url.URL, keys pro
 		public := signIn.Public()
 		s, err := c.open(ctx, origin, sessionOptions{
 			machine: keys.machine, control: keys.control,
-			nodeKey: public[:], version: options.Version, capabilities: []string{freshNodeKeyCapability},
+			nodeKey: public[:], version: options.Version,
+			capabilities: append([]string{freshNodeKeyCapability}, siblingCapabilities(options)...),
 		})
 		if err != nil {
 			return nil, profileKeys{}, false, err
@@ -116,7 +124,7 @@ func (c *Client) openRegistration(ctx context.Context, origin *url.URL, keys pro
 	nodePublic := keys.node.Public()
 	s, err := c.open(ctx, origin, sessionOptions{
 		machine: keys.machine, control: keys.control,
-		nodeKey: nodePublic[:], version: options.Version,
+		nodeKey: nodePublic[:], version: options.Version, capabilities: siblingCapabilities(options),
 	})
 	return s, keys, false, err
 }
@@ -268,6 +276,19 @@ func registrationOutcome(response *mtcpv1.RegisterResponse, join bool, coreNow t
 			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: approval,
 		}, false, nil
+	case response.GetAlreadyInNetwork() != nil:
+		if join {
+			return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: unexpected already in network",
+				controlplane.ErrRegistration)
+		}
+		sibling := response.GetAlreadyInNetwork().GetSiblingMachineKey()
+		if len(sibling) != key.Size || [key.Size]byte(sibling) == ([key.Size]byte{}) {
+			return controlplane.RegistrationResult{}, true, fmt.Errorf("%w: malformed already in network",
+				controlplane.ErrRegistration)
+		}
+		return controlplane.RegistrationResult{
+			State: controlplane.RegistrationStateAlreadyInNetwork, SiblingMachineKey: [key.Size]byte(sibling),
+		}, true, nil
 	case response.GetRejected() != nil:
 		rejected := &controlplane.RejectedError{
 			Code:    strings.ToLower(response.GetRejected().GetCode().String()),

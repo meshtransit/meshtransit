@@ -498,6 +498,9 @@ type errorResponse struct {
 	APIVersion string `json:"api_version"`
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+	// ProfileID names the profile an error is about, when one is:
+	// sign_in_pending_elsewhere names the profile whose sign-in waits.
+	ProfileID string `json:"profile_id,omitempty"`
 }
 
 func mapProfile(item profile.Profile, activeID string) profileResponse {

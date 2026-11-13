@@ -2819,10 +2819,16 @@ func (f *fakeControl) BootstrapTrust(context.Context, string, string) (controlpl
 		return controlplane.TrustResult{}, f.bootstrapErr
 	}
 
+	// Each profile has its own machine key, as on a real machine
+	// (duplicate-device design §1).
+	machine, err := controlplane.GenerateNodePrivateKey()
+	if err != nil {
+		return controlplane.TrustResult{}, err
+	}
 	return controlplane.TrustResult{
 		Fingerprint: testFingerprint,
 		Material: controlplane.KeyMaterial{
-			MachinePrivateKey: []byte("machine-private"),
+			MachinePrivateKey: machine,
 			NodePrivateKey:    []byte("privkey:" + strings.Repeat("01", 32)),
 			ControlPublicKey:  []byte("control-public"),
 		},
@@ -2845,6 +2851,11 @@ func (f *fakeControl) Register(
 	f.registerMaterial = material
 	// The caller clears the sign-in key after the call: keep a copy.
 	options.SignInNodePrivateKey = bytes.Clone(options.SignInNodePrivateKey)
+	siblings := make([][]byte, 0, len(options.SiblingMachinePrivateKeys))
+	for _, sibling := range options.SiblingMachinePrivateKeys {
+		siblings = append(siblings, bytes.Clone(sibling))
+	}
+	options.SiblingMachinePrivateKeys = siblings
 	f.registerOptions = append(f.registerOptions, options)
 	registerFunc := f.registerFunc
 	if registerFunc != nil {
@@ -3460,10 +3471,14 @@ func TestService_BrowserSignInCarriesItsOwnNodeKey(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatal(err)
 	}
-	pending := controlplane.RegistrationResult{State: controlplane.RegistrationStateAuthorizationRequired,
-		AuthURL: approvalURL, SignInKeyUsed: true}
-	control.registrationResults = []controlplane.RegistrationResult{pending, pending,
-		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true, SignInKeyUsed: true}}
+	pending := controlplane.RegistrationResult{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
+		AuthURL: approvalURL, SignInKeyUsed: true,
+	}
+	control.registrationResults = []controlplane.RegistrationResult{
+		pending, pending,
+		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true, SignInKeyUsed: true},
+	}
 	before, err := identities.Get(t.Context(), profileID)
 	if err != nil {
 		t.Fatal(err)
@@ -3511,7 +3526,8 @@ func TestService_BrowserSignInKeepsTheKeyWithOlderCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	control.registrationResults = []controlplane.RegistrationResult{
-		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true}}
+		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true},
+	}
 	before, err := identities.Get(t.Context(), profileID)
 	if err != nil {
 		t.Fatal(err)

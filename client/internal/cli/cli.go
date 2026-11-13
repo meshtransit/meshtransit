@@ -411,7 +411,7 @@ func waitForLogin(
 	for {
 		result, err := client.CompleteLogin(ctx)
 		switch {
-		case err == nil && result.State == "registered":
+		case err == nil && (result.State == "registered" || result.State == "already_in_network"):
 			return finish(result)
 		case err == nil && result.State == "authorization_required":
 		case err == nil:
@@ -538,6 +538,18 @@ func writeLoginResult(
 	}
 	if result.State == "registered" {
 		_, _ = fmt.Fprintf(stdout, "Registered active profile %s.\n", result.ProfileID)
+
+		return 0
+	}
+	if result.State == "already_in_network" {
+		// The person chose, on the approval page, the Device this computer
+		// already is in that Network under another profile (duplicate-device
+		// design §9): meshd switched to it.
+		_, _ = fmt.Fprintf(stdout, "This computer is already in that Network: switched to profile %s.\n",
+			result.ProfileID)
+		if result.AuthURL != "" {
+			_, _ = fmt.Fprintf(stdout, "It is signed out. Sign it back in: %s\n", result.AuthURL)
+		}
 
 		return 0
 	}
