@@ -23,8 +23,15 @@ type BrowserRegistrationSiblings interface {
 // browserRegistrationSiblingView is one of the person's Devices on this
 // machine, in a Network the page does not let them pick again.
 type browserRegistrationSiblingView struct {
-	DeviceID, Hostname, NetworkName string
-	SignedOut, Suspended            bool
+	DeviceID, Hostname, NetworkName, WorkspaceName string
+	SignedOut, Suspended                           bool
+}
+
+// browserRegistrationSiblingRow is one row of the "already on this
+// computer" list with the page it is on (its form needs the page's proof).
+type browserRegistrationSiblingRow struct {
+	Page browserRegistrationChoiceView
+	Row  browserRegistrationSiblingView
 }
 
 // browserRegistrationJoinedView is the result page of "Use that account".
@@ -40,11 +47,12 @@ func (page *BrowserRegistrationPage) siblings() (BrowserRegistrationSiblings, bo
 }
 
 // readSiblings adds the person's Devices on this machine to the view and
-// takes their Networks out of the choices. A Network this sign-in's own
+// leaves their Networks out of the list. A Network this sign-in's own
 // Device is in stays a choice: signing that Device back in comes first
-// (design §8.1). Call it after readMove.
+// (design §8.1). names maps Workspace IDs to their names. Call it after
+// readMove.
 func (page *BrowserRegistrationPage) readSiblings(ctx context.Context, digest accountsession.Digest,
-	encodedToken string, view *browserRegistrationChoiceView,
+	encodedToken string, view *browserRegistrationChoiceView, names map[string]string,
 ) error {
 	siblings, ok := page.siblings()
 	if !ok {
@@ -54,31 +62,35 @@ func (page *BrowserRegistrationPage) readSiblings(ctx context.Context, digest ac
 	if err != nil {
 		return err
 	}
-	taken := make(map[string]string, len(devices))
+	taken := make(map[string]bool, len(devices))
+	var rows []browserRegistrationSiblingView
 	for _, device := range devices {
 		if device.NetworkID == "" || device.NetworkID == view.Move.NetworkID ||
-			device.NetworkID == view.Resume.NetworkID {
-			continue
-		}
-		if _, seen := taken[device.NetworkID]; seen {
+			device.NetworkID == view.Resume.NetworkID || taken[device.NetworkID] {
 			continue // an older duplicate (design §11): the first one speaks for the Network
 		}
-		taken[device.NetworkID] = device.Hostname
-		view.Siblings = append(view.Siblings, browserRegistrationSiblingView{
+		taken[device.NetworkID] = true
+		rows = append(rows, browserRegistrationSiblingView{
 			DeviceID: device.DeviceID, Hostname: device.Hostname, NetworkName: device.NetworkName,
-			SignedOut: device.State == control.SiblingSignedOut || device.State == control.SiblingExpired,
-			Suspended: !device.Usable(),
+			WorkspaceName: names[device.WorkspaceID],
+			SignedOut:     device.State == control.SiblingSignedOut || device.State == control.SiblingExpired,
+			Suspended:     !device.Usable(),
 		})
 	}
-	for workspaceIndex := range view.Workspaces {
-		networks := view.Workspaces[workspaceIndex].Networks
-		for networkIndex := range networks {
-			if hostname, ok := taken[networks[networkIndex].ID]; ok {
-				networks[networkIndex].Taken = hostname
-				view.NetworkCount--
-			}
-		}
+	if len(rows) > browserRegistrationShownSiblings {
+		view.Siblings, view.MoreSiblings = rows[:browserRegistrationShownSiblings], rows[browserRegistrationShownSiblings:]
+	} else {
+		view.Siblings = rows
 	}
+	kept := view.Networks[:0:0]
+	for _, choice := range view.Networks {
+		if taken[choice.ID] {
+			view.LeftOut = true
+			continue
+		}
+		kept = append(kept, choice)
+	}
+	view.Networks = kept
 	return nil
 }
 

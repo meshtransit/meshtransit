@@ -168,7 +168,7 @@ func TestLoginServerBrowserWorkspaceSelection(t *testing.T) {
 	options.Dispatcher = dispatcher
 	server, client := startLoginTestServer(t, options)
 	path := browserRegistrationPagePrefix + browserPageTestToken
-	// One chooser shows every Workspace with its Networks; no second step.
+	// One landing shows the Workspaces and the first one's Networks.
 	request := loginServerTestRequest(t, server, http.MethodGet, path)
 	request.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: session.Encoded(),
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
@@ -183,13 +183,34 @@ func TestLoginServerBrowserWorkspaceSelection(t *testing.T) {
 	}()
 	body, err := io.ReadAll(response.Body)
 	if err != nil || response.StatusCode != http.StatusOK ||
-		!strings.Contains(string(body), "Choose where to connect") ||
+		!strings.Contains(string(body), "Choose a Network for this computer") ||
 		!strings.Contains(string(body), choices.page.Choices.WorkspaceDisplayName) ||
 		response.Header.Get("Cache-Control") != servedNoStore {
 		t.Fatalf("chooser response = (%d, %q, %v)", response.StatusCode, body, err)
 	}
 	if choices.calls != 2 {
 		t.Fatalf("chooser calls = %d, want Workspaces and Networks in one landing", choices.calls)
+	}
+	// The page's own Workspace query passes the dispatcher; another does not.
+	for query, want := range map[string]int{
+		"workspace=" + choices.page.Choices.WorkspaceID.String():          http.StatusOK,
+		"workspace=" + choices.page.Choices.WorkspaceID.String() + "&x=1": 0,
+	} {
+		selected := loginServerTestRequest(t, server, http.MethodGet, path+"?"+query)
+		selected.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: session.Encoded(),
+			Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		answer, err := client.Do(selected)
+		if err != nil {
+			// The dispatcher drops a request it does not admit.
+			if want == http.StatusOK {
+				t.Errorf("?%s: %v", query, err)
+			}
+			continue
+		}
+		_ = answer.Body.Close()
+		if answer.StatusCode != want {
+			t.Errorf("?%s = %d, want %d", query, answer.StatusCode, want)
+		}
 	}
 }
 

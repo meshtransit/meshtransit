@@ -408,3 +408,80 @@ test("use that account never sends for a foreign path or device", async () => {
     assert.match(instance.joinStatus.textContent, /^Restart login/);
   }
 });
+
+function networkHarness(names) {
+  const events = new Map();
+  let chosen = null;
+  let focused = null;
+  const rows = names.map((name) => {
+    const input = { name, focus() { focused = name; } };
+    return {
+      hidden: false, textContent: name,
+      querySelector(selector) {
+        if (selector === "input") return input;
+        assert.equal(selector, "input:checked");
+        return chosen === input ? input : null;
+      },
+      input,
+    };
+  });
+  for (const row of rows) {
+    row.input.closest = (selector) => {
+      assert.equal(selector, "label");
+      return { querySelector(selector) { assert.equal(selector, ".choice__name"); return { textContent: row.textContent }; } };
+    };
+  }
+  const list = {
+    querySelectorAll(selector) { assert.equal(selector, "li"); return rows; },
+    querySelector(selector) { assert.equal(selector, "input:checked"); return chosen; },
+    addEventListener(name, handler) { events.set(`list:${name}`, handler); },
+  };
+  const filter = { hidden: true, value: "", addEventListener(name, handler) { events.set(`filter:${name}`, handler); } };
+  const more = { hidden: true, addEventListener(name, handler) { events.set(`more:${name}`, handler); } };
+  const none = { hidden: true };
+  const connect = { textContent: "Connect device" };
+  const elements = { "network-list": list, "network-filter": filter, "network-more": more, "network-none": none,
+    "registration-confirm": connect };
+  const document = {
+    getElementById(id) { return elements[id] ?? null; },
+    querySelectorAll(selector) { assert.equal(selector, "form.sibling__form"); return []; },
+  };
+  vm.runInNewContext(script, { document, window: { location: { pathname: action } }, URLSearchParams }, { timeout: 1000 });
+  return {
+    rows, filter, more, none, connect,
+    visible: () => rows.filter((row) => !row.hidden).map((row) => row.textContent),
+    type(value) { filter.value = value; events.get("filter:input")(); },
+    choose(index) { chosen = rows[index].input; events.get("list:change")(); },
+    showMore() { events.get("more:click")(); },
+    get focused() { return focused; },
+  };
+}
+
+test("Networks: ten at first, search beyond, the chosen one stays, and the button names it", () => {
+  const names = Array.from({ length: 13 }, (_, index) => `Net ${String(index).padStart(2, "0")}`);
+  const page = networkHarness(names);
+  assert.equal(page.visible().length, 10);
+  assert.equal(page.filter.hidden, false);
+  assert.equal(page.more.hidden, false);
+  page.choose(12);
+  assert.equal(page.connect.textContent, "Connect to Net 12");
+  page.type("net 0");
+  assert.deepEqual(page.visible(), names.slice(0, 10));
+  assert.equal(page.more.hidden, true);
+  page.type("nothing");
+  assert.deepEqual(page.visible(), []);
+  assert.equal(page.none.hidden, false);
+  page.type("");
+  page.showMore();
+  assert.equal(page.visible().length, 13);
+  assert.equal(page.more.hidden, true);
+  assert.equal(page.focused, "Net 10");
+});
+
+test("Networks: a short list has no search box and no Show more", () => {
+  const page = networkHarness(["Lab", "Office"]);
+  assert.deepEqual(page.visible(), ["Lab", "Office"]);
+  assert.equal(page.filter.hidden, true);
+  assert.equal(page.more.hidden, true);
+  assert.equal(page.connect.textContent, "Connect device");
+});

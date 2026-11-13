@@ -68,9 +68,13 @@ func newSiblingPageFixture(t *testing.T, source control.BrowserMoveSource,
 	}
 	reader.want = digest
 	selected := reader.page.Choices.Networks[0].NetworkID
-	fake := &browserPageSiblingFake{devices: devices, browserPageMoverFake: browserPageMoverFake{source: source,
-		browserPageApprovalFake: browserPageApprovalFake{wantDigest: digest, wantNetwork: selected,
-			wantWorkspace: reader.page.Choices.WorkspaceID}}}
+	fake := &browserPageSiblingFake{devices: devices, browserPageMoverFake: browserPageMoverFake{
+		source: source,
+		browserPageApprovalFake: browserPageApprovalFake{
+			wantDigest: digest, wantNetwork: selected,
+			wantWorkspace: reader.page.Choices.WorkspaceID,
+		},
+	}}
 	page, err = NewBrowserRegistrationPage(BrowserRegistrationPageOptions{
 		Origin: management.origin, SessionKeys: page.keys, Choices: reader, Management: management,
 		Approval: fake, Timeout: 5 * time.Second, Concurrency: 8,
@@ -78,14 +82,18 @@ func newSiblingPageFixture(t *testing.T, source control.BrowserMoveSource,
 	if err != nil {
 		t.Fatal(err)
 	}
-	return siblingPageFixture{page: page, fake: fake, cookie: boundToken.Encoded(),
+	return siblingPageFixture{
+		page: page, fake: fake, cookie: boundToken.Encoded(),
 		path: browserRegistrationPagePrefix + browserPageTestToken, network: selected.String(),
-		space: reader.page.Choices.WorkspaceID.String()}
+		space: reader.page.Choices.WorkspaceID.String(),
+	}
 }
 
 func (fixture siblingPageFixture) sibling(state string) control.BrowserSiblingDevice {
-	return control.BrowserSiblingDevice{DeviceID: siblingTestDevice, Hostname: "laptop-2", State: state,
-		WorkspaceID: fixture.space, NetworkID: fixture.network, NetworkName: "Provider Net"}
+	return control.BrowserSiblingDevice{
+		DeviceID: siblingTestDevice, Hostname: "laptop-2", State: state,
+		WorkspaceID: fixture.space, NetworkID: fixture.network, NetworkName: "Provider Net",
+	}
 }
 
 func (fixture siblingPageFixture) post(form url.Values) *httptest.ResponseRecorder {
@@ -107,11 +115,19 @@ func TestBrowserRegistrationPageNamesSiblingDevices(t *testing.T) {
 	for _, test := range []struct {
 		name, state, says, button string
 	}{
-		{name: "active", state: control.SiblingActive, says: "under another account in the app",
-			button: "Use that account"},
-		{name: "signed out", state: control.SiblingSignedOut, says: "signed out.", button: "Sign back in to laptop-2"},
-		{name: "expired", state: control.SiblingExpired, says: "signed out.", button: "Sign back in to laptop-2"},
-		{name: "suspended", state: control.SiblingSuspended, says: "which is suspended. Ask your admin."},
+		{
+			name: "active", state: control.SiblingActive, says: "Member Workspace · laptop-2</span>",
+			button: ">Use this account</button>",
+		},
+		{
+			name: "signed out", state: control.SiblingSignedOut, says: "Member Workspace · laptop-2, signed out",
+			button: ">Sign back in</button>",
+		},
+		{
+			name: "expired", state: control.SiblingExpired, says: "Member Workspace · laptop-2, signed out",
+			button: ">Sign back in</button>",
+		},
+		{name: "suspended", state: control.SiblingSuspended, says: "Member Workspace · suspended</span>"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -120,10 +136,11 @@ func TestBrowserRegistrationPageNamesSiblingDevices(t *testing.T) {
 			landing := serveBrowserRegistrationPage(fixture.page, fixture.path, fixture.cookie)
 			body := landing.Body.String()
 			if landing.Code != http.StatusOK ||
-				!strings.Contains(body, "This computer is already in <strong>Provider Net</strong> as <strong>laptop-2</strong>") ||
+				!strings.Contains(body, "Already on this computer, under other accounts") ||
+				!strings.Contains(body, "<strong>Provider Net</strong>") ||
 				!strings.Contains(body, test.says) ||
-				!strings.Contains(body, `value="`+fixture.network+`" data-workspace="`+fixture.space+`" disabled>`) ||
-				!strings.Contains(body, "Already on this computer as laptop-2") ||
+				strings.Contains(body, `value="`+fixture.network+`"`) ||
+				!strings.Contains(body, "that this computer is not in already.") ||
 				strings.Contains(body, `id="registration-confirm"`) {
 				t.Fatalf("landing = (%d, %q)", landing.Code, body)
 			}
@@ -141,8 +158,10 @@ func TestBrowserRegistrationPageNamesSiblingDevices(t *testing.T) {
 func TestBrowserRegistrationPageResumeComesBeforeSibling(t *testing.T) {
 	t.Parallel()
 	fixture := newSiblingPageFixture(t, control.BrowserMoveSource{})
-	fixture.fake.source = control.BrowserMoveSource{Kind: "resume", Hostname: "laptop",
-		NetworkID: fixture.network, NetworkName: "Provider Net"}
+	fixture.fake.source = control.BrowserMoveSource{
+		Kind: "resume", Hostname: "laptop",
+		NetworkID: fixture.network, NetworkName: "Provider Net",
+	}
 	fixture.fake.devices = []control.BrowserSiblingDevice{fixture.sibling(control.SiblingActive)}
 	landing := serveBrowserRegistrationPage(fixture.page, fixture.path, fixture.cookie)
 	body := landing.Body.String()
@@ -150,8 +169,10 @@ func TestBrowserRegistrationPageResumeComesBeforeSibling(t *testing.T) {
 		strings.Contains(body, `name="join"`) || !strings.Contains(body, `id="registration-confirm"`) {
 		t.Fatalf("landing = (%d, %q)", landing.Code, body)
 	}
-	approved := fixture.post(url.Values{"csrf": {pageProof(body)}, "workspace": {fixture.space},
-		"network": {fixture.network}})
+	approved := fixture.post(url.Values{
+		"csrf": {pageProof(body)}, "workspace": {fixture.space},
+		"network": {fixture.network},
+	})
 	if approved.Code != http.StatusOK || fixture.fake.calls != 1 {
 		t.Fatalf("resume = (%d, approve=%d)", approved.Code, fixture.fake.calls)
 	}
@@ -169,26 +190,40 @@ func TestBrowserRegistrationPageJoinsExistingDevice(t *testing.T) {
 		joins  int
 		saying string
 	}{
-		{name: "active", state: control.SiblingActive, code: http.StatusOK, joins: 1,
+		{
+			name: "active", state: control.SiblingActive, code: http.StatusOK, joins: 1,
 			form:   func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {siblingTestDevice}} },
-			saying: "It switches to the account already in <strong>Provider Net</strong>. You can close this tab."},
-		{name: "signed out", state: control.SiblingSignedOut, code: http.StatusOK, joins: 1,
+			saying: "It switches to the account already in <strong>Provider Net</strong>. You can close this tab.",
+		},
+		{
+			name: "signed out", state: control.SiblingSignedOut, code: http.StatusOK, joins: 1,
 			form:   func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {siblingTestDevice}} },
-			saying: "and asks you to sign it back in"},
-		{name: "suspended", state: control.SiblingSuspended, code: http.StatusNotFound,
-			form: func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {siblingTestDevice}} }},
-		{name: "another Device", state: control.SiblingActive, code: http.StatusNotFound,
+			saying: "and asks you to sign it back in",
+		},
+		{
+			name: "suspended", state: control.SiblingSuspended, code: http.StatusNotFound,
+			form: func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {siblingTestDevice}} },
+		},
+		{
+			name: "another Device", state: control.SiblingActive, code: http.StatusNotFound,
 			form: func(proof string) url.Values {
 				return url.Values{"csrf": {proof}, "join": {"01890f00-0000-7000-8000-00000000d199"}}
-			}},
-		{name: "with a Network", state: control.SiblingActive, code: http.StatusBadRequest,
+			},
+		},
+		{
+			name: "with a Network", state: control.SiblingActive, code: http.StatusBadRequest,
 			form: func(proof string) url.Values {
 				return url.Values{"csrf": {proof}, "join": {siblingTestDevice}, "network": {siblingTestNetwork}}
-			}},
-		{name: "malformed Device", state: control.SiblingActive, code: http.StatusBadRequest,
-			form: func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {"laptop-2"}} }},
-		{name: "no proof", state: control.SiblingActive, code: http.StatusForbidden,
-			form: func(string) url.Values { return url.Values{"csrf": {"forged"}, "join": {siblingTestDevice}} }},
+			},
+		},
+		{
+			name: "malformed Device", state: control.SiblingActive, code: http.StatusBadRequest,
+			form: func(proof string) url.Values { return url.Values{"csrf": {proof}, "join": {"laptop-2"}} },
+		},
+		{
+			name: "no proof", state: control.SiblingActive, code: http.StatusForbidden,
+			form: func(string) url.Values { return url.Values{"csrf": {"forged"}, "join": {siblingTestDevice}} },
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -220,17 +255,21 @@ func TestBrowserRegistrationPageRefusesSecondDeviceInNetwork(t *testing.T) {
 		move   bool
 	}{
 		{name: "new Device"},
-		{name: "own Device elsewhere", move: true, source: control.BrowserMoveSource{Kind: "own",
+		{name: "own Device elsewhere", move: true, source: control.BrowserMoveSource{
+			Kind:     "own",
 			DeviceID: "01890f00-0000-7000-8000-00000000d001", Hostname: "laptop",
-			NetworkID: siblingTestNetwork, NetworkName: "Home"}},
+			NetworkID: siblingTestNetwork, NetworkName: "Home",
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newSiblingPageFixture(t, test.source)
 			landing := serveBrowserRegistrationPage(fixture.page, fixture.path, fixture.cookie)
 			fixture.fake.devices = []control.BrowserSiblingDevice{fixture.sibling(control.SiblingActive)}
-			form := url.Values{"csrf": {pageProof(landing.Body.String())}, "workspace": {fixture.space},
-				"network": {fixture.network}}
+			form := url.Values{
+				"csrf": {pageProof(landing.Body.String())}, "workspace": {fixture.space},
+				"network": {fixture.network},
+			}
 			if test.move {
 				form.Set("move", test.source.DeviceID)
 			}

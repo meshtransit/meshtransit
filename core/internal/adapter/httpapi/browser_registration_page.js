@@ -135,6 +135,57 @@
     });
   }
 
+  // Networks: the first ten, then Show more; a search box once there are
+  // more than ten. Without a search, the chosen one stays in view. (The
+  // Workspace select changes page only with its button: arrowing through
+  // it must not reload the page.)
+  const networkList = document.getElementById("network-list");
+  if (networkList) {
+    const filter = document.getElementById("network-filter");
+    const more = document.getElementById("network-more");
+    const none = document.getElementById("network-none");
+    const rows = Array.from(networkList.querySelectorAll("li"));
+    const firstRows = 10;
+    let expanded = rows.length <= firstRows;
+    const show = () => {
+      const query = (filter ? filter.value : "").trim().toLocaleLowerCase();
+      let shown = 0;
+      for (const row of rows) {
+        const chosen = Boolean(row.querySelector("input:checked"));
+        const matches = !query || (row.textContent || "").toLocaleLowerCase().includes(query);
+        const visible = matches && (Boolean(query) || expanded || shown < firstRows || chosen);
+        row.hidden = !visible;
+        if (visible) shown += 1;
+      }
+      if (none) none.hidden = shown !== 0;
+      if (more) more.hidden = expanded || Boolean(query);
+    };
+    if (filter && rows.length > firstRows) {
+      filter.hidden = false;
+      filter.addEventListener("input", show);
+    }
+    if (more) {
+      more.addEventListener("click", () => {
+        expanded = true;
+        show();
+        // The button is gone: keep the keyboard where the list went on.
+        rows[firstRows]?.querySelector("input")?.focus();
+      });
+    }
+    show();
+    // The button names the Network chosen.
+    const connect = document.getElementById("registration-confirm");
+    if (connect) {
+      const label = () => {
+        const chosen = networkList.querySelector("input:checked");
+        const name = chosen?.closest("label")?.querySelector(".choice__name")?.textContent;
+        connect.textContent = name ? `Connect to ${name}` : "Connect device";
+      };
+      networkList.addEventListener("change", label);
+      label();
+    }
+  }
+
   const form = document.getElementById("registration-form");
   const button = document.getElementById("registration-confirm");
   const status = document.getElementById("registration-status");

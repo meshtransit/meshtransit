@@ -90,7 +90,7 @@ func TestBrowserRegistrationPageRequiresSSOAndEscapesNetworkNames(t *testing.T) 
 	// One landing reads the Workspaces and each Workspace's Networks together.
 	authenticated := serveBrowserRegistrationPage(page, path, session.Encoded())
 	if authenticated.Code != http.StatusOK || reader.calls != 2 ||
-		!strings.Contains(authenticated.Body.String(), "Choose where to connect") ||
+		!strings.Contains(authenticated.Body.String(), "Choose a Network for this computer") ||
 		!strings.Contains(authenticated.Body.String(), "Member Workspace") ||
 		!strings.Contains(authenticated.Body.String(), "node-one.example") ||
 		!strings.Contains(authenticated.Body.String(), "&lt;img") ||

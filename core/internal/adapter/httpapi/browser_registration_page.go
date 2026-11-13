@@ -26,9 +26,6 @@ const (
 	browserRegistrationStylesPath = "/register/v1/styles.css"
 	browserRegistrationScriptPath = "/register/v1/client.js"
 	browserRegistrationPageLimit  = 100
-	// browserRegistrationWorkspaceLimit bounds the Network reads one landing
-	// makes; a person rarely belongs to more Workspaces than this.
-	browserRegistrationWorkspaceLimit = 20
 	browserRegistrationBodyLimit      = 64 << 10
 	browserRegistrationPostLimit      = 2048
 )
@@ -107,7 +104,11 @@ func NewBrowserRegistrationPage(options BrowserRegistrationPageOptions) (*Browse
 	if err != nil {
 		return nil, ErrInvalidBrowserRegistrationPage
 	}
-	choicesPage, err := template.New("registration-choices").Parse(browserRegistrationChoicesHTML)
+	choicesPage, err := template.New("registration-choices").Funcs(template.FuncMap{
+		"siblingRow": func(page browserRegistrationChoiceView, row browserRegistrationSiblingView) browserRegistrationSiblingRow {
+			return browserRegistrationSiblingRow{Page: page, Row: row}
+		},
+	}).Parse(browserRegistrationChoicesHTML)
 	if err != nil {
 		return nil, ErrInvalidBrowserRegistrationPage
 	}
@@ -145,6 +146,8 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		return
 	}
 	encodedToken, _ := strings.CutPrefix(request.URL.Path, browserRegistrationPagePrefix)
+	// validRequest admitted only a canonical selection.
+	selection, _ := parseBrowserRegistrationSelection(request.URL.RawQuery)
 	select {
 	case page.slots <- struct{}{}:
 		defer func() { <-page.slots }()
@@ -173,7 +176,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		return
 	}
 	for _, digest := range digests {
-		landing, view, found, err := page.readChoices(ctx, digest, encodedToken)
+		landing, view, found, err := page.readPage(ctx, digest, encodedToken, selection)
 		if err != nil {
 			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -181,10 +184,6 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		if found {
 			if landing.State == "approved" {
 				page.render(response, page.approvedPage, nil)
-				return
-			}
-			if err := page.readMachine(ctx, digest, encodedToken, &view); err != nil {
-				http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
 			view.Hostname = landing.Hostname
@@ -250,62 +249,10 @@ func (page *BrowserRegistrationPage) sessionEnded(ctx context.Context, token acc
 	return !page.management.activeSession(token, session, page.management.clock.Now()), nil
 }
 
-type browserRegistrationNetworkView struct {
-	ID   string
-	Name string
-	// Taken names the person's Device on this machine already in this
-	// Network under another account: the choice is shown but not offered.
-	Taken string
-}
-
-type browserRegistrationWorkspaceView struct {
-	ID           string
-	Name         string
-	Initial      string
-	Networks     []browserRegistrationNetworkView
-	MoreNetworks bool
-}
-
-type browserRegistrationChoiceView struct {
-	Hostname       string
-	Path           string
-	Workspaces     []browserRegistrationWorkspaceView
-	NetworkCount   int
-	MoreWorkspaces bool
-	CSRF           string
-	Action         string
-	SwitchAccount  bool
-	// Move describes the person's own Device this machine already is, which
-	// the page preselects; choosing another Network needs MoveConfirm.
-	Move        browserRegistrationMoveView
-	Resume      browserRegistrationMoveView
-	MoveOther   bool
-	MoveMissing bool
-	// Siblings are the person's Devices on this machine under other
-	// accounts in the app (duplicate-device design §7).
-	Siblings        []browserRegistrationSiblingView
-	SiblingConflict bool
-}
-
-type browserRegistrationMoveView struct {
-	DeviceID, Hostname, NetworkID, NetworkName string
-}
-
 // mover is the page's approver when it can move machines.
 func (page *BrowserRegistrationPage) mover() (BrowserRegistrationMover, bool) {
 	mover, ok := page.approval.(BrowserRegistrationMover)
 	return mover, ok
-}
-
-// readMachine adds what the machine already is, under this account and
-// under its other accounts in the app, to the view.
-func (page *BrowserRegistrationPage) readMachine(ctx context.Context, digest accountsession.Digest,
-	encodedToken string, view *browserRegistrationChoiceView,
-) error {
-	if err := page.readMove(ctx, digest, encodedToken, view); err != nil {
-		return err
-	}
-	return page.readSiblings(ctx, digest, encodedToken, view)
 }
 
 // formProof seals a fresh CSRF proof for the page's forms; a non-zero
@@ -341,67 +288,16 @@ func (page *BrowserRegistrationPage) readMove(ctx context.Context, digest accoun
 	switch source.Kind {
 	case "own":
 		view.Move = browserRegistrationMoveView{DeviceID: source.DeviceID, Hostname: source.Hostname,
-			NetworkID: source.NetworkID, NetworkName: source.NetworkName}
+			WorkspaceID: source.WorkspaceID, NetworkID: source.NetworkID, NetworkName: source.NetworkName}
 	case "resume":
 		// Handed over to the person, or theirs but not movable: it signs back
 		// in only in its own Network, which the page preselects (review H1).
 		view.Resume = browserRegistrationMoveView{Hostname: source.Hostname,
-			NetworkID: source.NetworkID, NetworkName: source.NetworkName}
+			WorkspaceID: source.WorkspaceID, NetworkID: source.NetworkID, NetworkName: source.NetworkName}
 	case "other":
 		view.MoveOther = true
 	}
 	return nil
-}
-
-// readChoices lists every Workspace the Session may enroll into together with
-// its joinable Networks, so one landing offers both choices at once.
-func (page *BrowserRegistrationPage) readChoices(ctx context.Context, digest accountsession.Digest,
-	encodedToken string,
-) (enrollment.BrowserIntentLanding, browserRegistrationChoiceView, bool, error) {
-	workspaces, found, err := page.choices.ReadWorkspaces(ctx, digest, encodedToken,
-		workspace.ID{}, browserRegistrationPageLimit)
-	if err != nil || !found {
-		return enrollment.BrowserIntentLanding{}, browserRegistrationChoiceView{}, false, err
-	}
-	view := browserRegistrationChoiceView{MoreWorkspaces: workspaces.HasMore}
-	for index, choice := range workspaces.Choices.Workspaces {
-		if index == browserRegistrationWorkspaceLimit {
-			view.MoreWorkspaces = true
-			break
-		}
-		networks, found, err := page.choices.ReadNetworks(ctx, digest, encodedToken,
-			choice.WorkspaceID, network.ID{}, browserRegistrationPageLimit)
-		if err != nil {
-			return enrollment.BrowserIntentLanding{}, browserRegistrationChoiceView{}, false, err
-		}
-		group := browserRegistrationWorkspaceView{
-			ID: choice.WorkspaceID.String(), Name: choice.DisplayName, Initial: workspaceInitial(choice.DisplayName),
-		}
-		if found {
-			group.Networks = browserRegistrationNetworks(networks)
-			group.MoreNetworks = networks.HasMore
-		}
-		view.NetworkCount += len(group.Networks)
-		view.Workspaces = append(view.Workspaces, group)
-	}
-	return workspaces.Landing, view, true, nil
-}
-
-func workspaceInitial(name string) string {
-	for _, character := range strings.TrimSpace(name) {
-		return strings.ToUpper(string(character))
-	}
-	return "W"
-}
-
-func browserRegistrationNetworks(page control.BrowserChoicePage) []browserRegistrationNetworkView {
-	names := make([]browserRegistrationNetworkView, 0, len(page.Choices.Networks))
-	for _, choice := range page.Choices.Networks {
-		names = append(names, browserRegistrationNetworkView{
-			ID: choice.NetworkID.String(), Name: choice.DisplayName,
-		})
-	}
-	return names
 }
 
 func (page *BrowserRegistrationPage) approve(
@@ -442,7 +338,8 @@ func (page *BrowserRegistrationPage) approve(
 	for _, digest := range digests {
 		approved, retry, err := page.approveOne(ctx, digest, encodedToken, workspaceID, networkID, moveSource)
 		if retry != retryNone {
-			page.renderRetry(ctx, response, request, digest, encodedToken, token, retry)
+			page.renderRetry(ctx, response, request, digest, encodedToken, token, retry,
+				browserRegistrationSelection{workspace: workspaceID})
 			return
 		}
 		if err != nil {
@@ -545,12 +442,9 @@ func (page *BrowserRegistrationPage) approveOne(ctx context.Context, digest acco
 // the move confirmation, or use the account already in that Network.
 func (page *BrowserRegistrationPage) renderRetry(ctx context.Context, response http.ResponseWriter,
 	request *http.Request, digest accountsession.Digest, encodedToken string, token accountsession.Token,
-	retry browserRegistrationRetry,
+	retry browserRegistrationRetry, selection browserRegistrationSelection,
 ) {
-	landing, view, found, err := page.readChoices(ctx, digest, encodedToken)
-	if err == nil && found {
-		err = page.readMachine(ctx, digest, encodedToken, &view)
-	}
+	landing, view, found, err := page.readPage(ctx, digest, encodedToken, selection)
 	if err != nil || !found || landing.State != "pending" {
 		http.Error(response, http.StatusText(http.StatusConflict), http.StatusConflict)
 		return
@@ -619,8 +513,15 @@ func (page *BrowserRegistrationPage) validRequest(request *http.Request) bool {
 	if request.URL.Path == browserRegistrationStylesPath || request.URL.Path == browserRegistrationScriptPath {
 		return request.Method == http.MethodGet && request.URL.RawQuery == ""
 	}
+	// A page read may name the Workspace to show and a page of its Networks;
+	// nothing else, and only as the page writes it.
 	if request.URL.RawQuery != "" {
-		return false
+		if request.Method != http.MethodGet {
+			return false
+		}
+		if _, ok := parseBrowserRegistrationSelection(request.URL.RawQuery); !ok {
+			return false
+		}
 	}
 	encodedToken, ok := strings.CutPrefix(request.URL.Path, browserRegistrationPagePrefix)
 	if !ok || strings.Contains(encodedToken, "/") {
@@ -643,28 +544,38 @@ const browserRegistrationLoginHTML = browserRegistrationHead + `<title>Sign in t
 </section></main></body></html>`
 
 const browserRegistrationChoicesHTML = browserRegistrationHead + `<title>Connect device | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
-<body><main>` + browserRegistrationBrand + `<section class="card"><p class="eyebrow">Connect a device</p><h1>Choose where to connect</h1>
+<body><main>` + browserRegistrationBrand + `<section class="card"><p class="eyebrow">Connect a device</p><h1>Choose a Network for this computer</h1>
 <p class="device"><span class="device__label">Device</span><strong>{{.Hostname}}</strong></p>
 {{if .MoveOther}}<p class="notice">This computer belongs to another account or Workspace. In MeshTransit, choose Add account to connect it as yours.</p>
-{{else}}{{if .Move.DeviceID}}<p class="muted">This computer is <strong>{{.Move.Hostname}}</strong> in <strong>{{.Move.NetworkName}}</strong>. Keep {{.Move.NetworkName}} to sign it back in with its address and rules.</p>{{end}}{{if .Resume.NetworkID}}<p class="muted">This computer is <strong>{{.Resume.Hostname}}</strong> in <strong>{{.Resume.NetworkName}}</strong>; choose that Network to sign it back in.</p>{{end}}
-{{if .Siblings}}<section class="siblings" aria-label="Already on this computer">{{range .Siblings}}<div class="sibling"><p>This computer is already in <strong>{{.NetworkName}}</strong> as <strong>{{.Hostname}}</strong>{{if .Suspended}}, which is suspended. Ask your admin.{{else if .SignedOut}}, signed out.{{else}}, under another account in the app.{{end}}</p>
-{{if and $.CSRF (not .Suspended)}}<form class="sibling__form" method="post" action="{{$.Action}}" data-join="{{.DeviceID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="join" value="{{.DeviceID}}"><button class="button" type="submit">{{if .SignedOut}}Sign back in to {{.Hostname}}{{else}}Use that account{{end}}</button></form>{{end}}</div>{{end}}
-<p id="registration-join-status" role="status" aria-live="polite"></p></section>{{end}}
+{{else}}{{if .Move.DeviceID}}<p class="muted">This computer is <strong>{{.Move.Hostname}}</strong> in <strong>{{.Move.NetworkName}}</strong>{{if .MoveWorkspace}} ({{.MoveWorkspace}}){{end}}. Keep {{.Move.NetworkName}} to sign it back in with its address and rules.{{if .MoveElsewhere}} <a href="{{.MoveElsewhere}}">Show {{.MoveWorkspace}}</a>{{end}}</p>{{end}}{{if .Resume.NetworkID}}<p class="muted">This computer is <strong>{{.Resume.Hostname}}</strong> in <strong>{{.Resume.NetworkName}}</strong>{{if .MoveWorkspace}} ({{.MoveWorkspace}}){{end}}; choose that Network to sign it back in.{{if .MoveElsewhere}} <a href="{{.MoveElsewhere}}">Show {{.MoveWorkspace}}</a>{{end}}</p>{{end}}
+{{if .Siblings}}<section class="siblings" aria-labelledby="siblings-title"><h2 id="siblings-title" class="siblings__title">Already on this computer, under other accounts</h2>
+<ul class="rows">{{range .Siblings}}{{template "sibling" siblingRow $ .}}{{end}}</ul>
+{{if .MoreSiblings}}<details class="more"><summary>Show {{len .MoreSiblings}} more</summary><ul class="rows">{{range .MoreSiblings}}{{template "sibling" siblingRow $ .}}{{end}}</ul></details>{{end}}
+<p id="registration-join-status" class="muted" role="status" aria-live="polite"></p></section>{{end}}
 {{if .SiblingConflict}}<p id="registration-conflict" class="notice" role="alert">This computer is already in that Network under another account. Use that account instead.</p>{{end}}
-{{if .Workspaces}}{{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false"{{if .Move.DeviceID}} data-move-network="{{.Move.NetworkID}}"{{end}}>
-<input type="hidden" name="csrf" value="{{.CSRF}}">
-{{range .Workspaces}}<fieldset class="workspace"><legend><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></legend>
-{{if .Networks}}{{$workspace := .ID}}{{range .Networks}}{{if .Taken}}<label class="choice choice--taken"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" disabled><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}<span class="choice__note">Already on this computer as {{.Taken}}</span></span></label>{{else}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required{{if or (eq .ID $.Move.NetworkID) (eq .ID $.Resume.NetworkID)}} checked{{end}}><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}</span></label>{{end}}{{end}}
-{{if .MoreNetworks}}<p class="muted">More Networks exist; manage them in Mesh Console.</p>{{end}}{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</fieldset>{{end}}
+{{if .Workspaces}}
+{{if gt (len .Workspaces) 1}}<form id="registration-workspace" class="picker" method="get" action="{{.Path}}"><label class="label" for="workspace-select">Workspace</label>
+<div class="picker__row"><select id="workspace-select" name="workspace">{{range .Workspaces}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select><button id="workspace-go" class="button button--quiet" type="submit">Show Networks</button></div>
+{{if .MoreWorkspaces}}<p class="muted hint">Only your first Workspaces are listed.</p>{{end}}</form>
+{{else}}<p class="label">Workspace</p><p class="workspace-one"><span class="avatar" aria-hidden="true">{{.Workspace.Initial}}</span><span>{{.Workspace.Name}}</span></p>{{end}}
+{{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false"{{if .Move.DeviceID}} data-move-network="{{.Move.NetworkID}}"{{end}}>
+<input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="workspace" value="{{.Workspace.ID}}">
+{{if .Networks}}<fieldset class="networks"><legend class="label">Network</legend>
+<input id="network-filter" class="filter" type="search" placeholder="Search Networks" aria-label="Search Networks" aria-controls="network-list" autocomplete="off" hidden>
+<ul id="network-list" class="choices">{{$workspace := .Workspace.ID}}{{range .Networks}}<li><label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required{{if or (eq .ID $.Move.NetworkID) (eq .ID $.Resume.NetworkID)}} checked{{end}}><span class="choice__dot" aria-hidden="true"></span><span class="choice__name">{{.Name}}</span></label></li>{{end}}</ul>
+<p id="network-none" class="muted hint" role="status" hidden>{{if .NextNetworks}}None of the Networks on this page matches: try Next Networks.{{else}}No Network matches.{{end}}</p><button id="network-more" class="link" type="button" hidden>Show more Networks</button>
+</fieldset>{{else}}<p class="label">Network</p><p class="muted">{{if or .NextNetworks .FirstNetworks}}No Network you can join on this page{{else}}No Network you can join in this Workspace{{end}}{{if .LeftOut}} that this computer is not in already{{end}}.</p>{{end}}
+{{template "pages" .}}
 {{if .Move.DeviceID}}<label id="registration-move" class="move{{if .MoveMissing}} move--missing{{end}}"{{if not .MoveMissing}} hidden{{end}}><input type="checkbox" name="move" value="{{.Move.DeviceID}}"><span><strong>Move this computer to the Network you chose</strong><br>It is removed from <strong>{{.Move.NetworkName}}</strong>, like Remove This Device: its address there is released and its rules stop applying. You can add it back later as a new device.</span></label>
 {{if .MoveMissing}}<p class="notice" role="alert">Tick the box above to move this computer to the Network you chose.</p>{{end}}{{end}}
-{{if gt .NetworkCount 0}}<button id="registration-confirm" class="button" type="submit">Connect device</button>{{end}}<p id="registration-status" role="status" aria-live="polite"></p></form>
-{{else}}{{range .Workspaces}}<section class="workspace"><h2><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></h2>
-{{if .Networks}}<ul>{{range .Networks}}<li class="choice">{{.Name}}</li>{{end}}</ul>{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</section>{{end}}{{end}}
-{{if .MoreWorkspaces}}<p class="muted">Only your first Workspaces are shown.</p>{{end}}
+{{if .Networks}}<button id="registration-confirm" class="button" type="submit">Connect device</button>{{end}}<p id="registration-status" role="status" aria-live="polite"></p></form>
+{{else}}{{if .Networks}}<p class="label">Network</p><ul class="choices">{{range .Networks}}<li class="choice">{{.Name}}</li>{{end}}</ul>{{else}}<p class="muted">{{if or .NextNetworks .FirstNetworks}}No Network you can join on this page.{{else}}No Network you can join in this Workspace.{{end}}</p>{{end}}{{template "pages" .}}{{end}}
 {{else}}<p class="muted">No Workspace is available with this sign-in. Ask an owner to invite you, or sign in with another account.</p>{{end}}{{end}}
 {{if .SwitchAccount}}<p class="switch muted">Not the right account? <button id="registration-switch" class="link" type="button">Use another account</button></p><p id="registration-switch-status" class="muted" role="status" aria-live="polite"></p><script src="/register/v1/client.js" defer></script>{{end}}
-</section></main></body></html>`
+</section></main></body></html>
+{{define "pages"}}{{if or .NextNetworks .FirstNetworks}}<p class="pages">{{if .FirstNetworks}}<a href="{{.FirstNetworks}}">First Networks</a>{{end}}{{if .NextNetworks}}<a href="{{.NextNetworks}}">Next Networks</a>{{end}}</p>{{end}}{{end}}
+{{define "sibling"}}{{$page := .Page}}{{with .Row}}<li class="row"><div class="row__text"><strong>{{.NetworkName}}</strong><span class="muted">{{if .WorkspaceName}}{{.WorkspaceName}} · {{end}}{{if .Suspended}}suspended{{else if .SignedOut}}{{.Hostname}}, signed out{{else}}{{.Hostname}}{{end}}</span></div>
+{{if .Suspended}}<span class="tag">Ask your admin</span>{{else if $page.CSRF}}<form class="sibling__form" method="post" action="{{$page.Action}}" data-join="{{.DeviceID}}"><input type="hidden" name="csrf" value="{{$page.CSRF}}"><input type="hidden" name="join" value="{{.DeviceID}}"><button class="button button--quiet" type="submit" aria-label="{{if .SignedOut}}Sign back in, {{.Hostname}} in {{.NetworkName}}{{else}}Use this account, in {{.NetworkName}}{{end}}">{{if .SignedOut}}Sign back in{{else}}Use this account{{end}}</button></form>{{end}}</li>{{end}}{{end}}`
 
 //go:embed browser_registration_page.js
 var browserRegistrationScript string
@@ -674,14 +585,14 @@ const browserRegistrationApprovedHTML = browserRegistrationHead + `<title>Device
 
 // The tokens mirror Mesh Console's dark theme so the hand-off feels like one product.
 const browserRegistrationCSS = `:root{color-scheme:dark;--bg:#09090b;--surface:#141417;--raised:#1c1c21;--line:#27272a;--ink:#f4f4f5;--muted:#a1a1aa;--accent:#e5484d;--accent-ink:#fff;--focus:#f87171}` +
-	`*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:2rem 1rem;background:radial-gradient(60rem 30rem at 50% -10%,rgba(229,72,77,.12),transparent),var(--bg);color:var(--ink);font:1rem/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}` +
+	`*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;min-height:100vh;padding:2rem 1rem;background:radial-gradient(60rem 30rem at 50% -10%,rgba(229,72,77,.12),transparent),var(--bg);color:var(--ink);font:1rem/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}` +
 	`main{max-width:32rem;margin:6vh auto}.brand{display:flex;align-items:center;gap:.6rem;margin-bottom:1.25rem;font-weight:700;font-size:1.05rem}.brand__mark{display:grid;place-items:center;width:1.9rem;height:1.9rem;border-radius:.55rem;background:rgba(229,72,77,.15);border:1px solid rgba(229,72,77,.35);color:var(--accent);font-weight:800}` +
 	`.card{padding:1.75rem;border:1px solid var(--line);border-radius:1rem;background:var(--surface)}.eyebrow{margin:0 0 .35rem;color:var(--accent);font-size:.75rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}h1{margin:0 0 1rem;font-size:1.5rem;line-height:1.25}p{margin:.5rem 0}.muted{color:var(--muted);font-size:.925rem}` +
 	`.device{display:flex;flex-wrap:wrap;gap:.5rem;align-items:baseline;padding:.75rem 1rem;border-radius:.65rem;background:var(--raised);margin:0 0 1.25rem}.device__label{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.08em}` +
 	`.workspace{border:0;padding:0;margin:0 0 1.25rem}.workspace legend,.workspace h2{display:flex;align-items:center;gap:.6rem;margin:0 0 .6rem;padding:0;font-size:.95rem;font-weight:700}.avatar{display:grid;place-items:center;width:1.6rem;height:1.6rem;border-radius:.45rem;background:var(--accent);color:var(--accent-ink);font-size:.8rem;font-weight:800}` +
-	`ul{list-style:none;padding:0;margin:0}.choice{display:flex;align-items:center;gap:.75rem;min-height:48px;padding:.7rem 1rem;margin:.45rem 0;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}` +
+	`ul{list-style:none;padding:0;margin:0}.choice{display:flex;align-items:center;gap:.75rem;min-height:44px;padding:.6rem 1rem;margin:.35rem 0;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}` +
 	`.choice:hover{border-color:#3f3f46}.choice input{position:absolute;opacity:0;width:1px;height:1px}.choice__dot{flex:none;width:1.1rem;height:1.1rem;border:2px solid #52525b;border-radius:50%}.choice:has(input:checked){border-color:var(--accent);background:rgba(229,72,77,.08)}.choice:has(input:checked) .choice__dot{border-color:var(--accent);box-shadow:inset 0 0 0 3px var(--raised);background:var(--accent)}.choice:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}` +
-	`.empty{padding:.25rem 0 0 2.2rem}.button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:46px;margin-top:.5rem;border:0;border-radius:.6rem;padding:.7rem 1rem;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button:disabled{opacity:.6;cursor:default}` +
-	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.switch{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.link{border:0;padding:0;background:none;color:#fca5a5;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.link:disabled{opacity:.6;cursor:default}.link:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.notice{padding:.7rem 1rem;border-radius:.6rem;background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.35)}.move{display:flex;gap:.6rem;align-items:flex-start;margin:.75rem 0;padding:.7rem 1rem;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-size:.925rem;cursor:pointer}.move[hidden]{display:none}.move--missing{border-color:var(--accent)}.move input{margin-top:.3rem}.siblings{margin:0 0 1.25rem}.sibling{padding:.75rem 1rem;margin:.45rem 0;border:1px solid rgba(48,164,108,.45);border-radius:.7rem;background:rgba(48,164,108,.08);font-size:.925rem}.choice--taken{cursor:default;opacity:.6}.choice__note{display:block;color:var(--muted);font-size:.8rem;font-weight:500}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
+	`.empty{padding:.25rem 0 0 2.2rem}.button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:46px;margin-top:.5rem;border:0;border-radius:.6rem;padding:.7rem 1rem;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button:disabled{opacity:.6;cursor:default}#registration-confirm{overflow-wrap:anywhere;text-align:center}` +
+	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.switch{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.link{border:0;padding:0;background:none;color:#fca5a5;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.link:disabled{opacity:.6;cursor:default}.link:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.notice{padding:.7rem 1rem;border-radius:.6rem;background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.35)}.move{display:flex;gap:.6rem;align-items:flex-start;margin:.75rem 0;padding:.7rem 1rem;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-size:.925rem;cursor:pointer}.move[hidden]{display:none}.move--missing{border-color:var(--accent)}.move input{margin-top:.3rem}.label{display:block;margin:1.25rem 0 .5rem;padding:0;font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.picker{margin:0}.picker__row{display:flex;gap:.5rem}select{flex:1;min-width:0;min-height:46px;padding:.6rem .8rem;border:1px solid var(--line);border-radius:.6rem;background:var(--raised);color:var(--ink);font:inherit}select:focus-visible,.filter:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.button--quiet{width:auto;min-height:36px;margin:0;padding:.45rem .9rem;border:1px solid #3f3f46;background:transparent;color:var(--ink);font-size:.875rem;font-weight:600}.button--quiet:hover{border-color:#71717a;background:var(--raised)}.picker__row .button--quiet{min-height:46px}.workspace-one{display:flex;align-items:center;gap:.6rem;margin:0;font-weight:700}.networks{border:0;padding:0;margin:1.25rem 0 0;min-width:0}.networks>legend.label{margin:0 0 .5rem}.choices li{margin:0}.choices li[hidden]{display:none}.filter{width:100%;min-height:44px;margin:0 0 .4rem;padding:.6rem .8rem;border:1px solid var(--line);border-radius:.6rem;background:var(--raised);color:var(--ink);font:inherit}.filter[hidden]{display:none}.hint{margin:.45rem 0;font-size:.85rem}.pages{display:flex;gap:1.25rem;margin:.6rem 0}.siblings{margin:0 0 1rem;border:1px solid var(--line);border-radius:.75rem;overflow:hidden}.siblings__title{margin:0;padding:.65rem 1rem;background:var(--raised);color:var(--muted);font-size:.85rem;font-weight:600}.rows .row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .75rem;padding:.7rem 1rem;border-top:1px solid var(--line)}.row__text{display:flex;flex:1 1 12rem;flex-direction:column;min-width:0}.row__text .muted{font-size:.82rem;overflow-wrap:anywhere}.sibling__form{flex:none;margin:0}.tag{flex:none;padding:.15rem .6rem;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.78rem}details.more summary{padding:.6rem 1rem;border-top:1px solid var(--line);color:#fca5a5;font-size:.875rem;cursor:pointer}details.more summary:focus-visible{outline:3px solid var(--focus);outline-offset:-3px}#registration-join-status{margin:0;padding:0 1rem}#registration-join-status:empty{display:none}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
 
 var _ http.Handler = (*BrowserRegistrationPage)(nil)
