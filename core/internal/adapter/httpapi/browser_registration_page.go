@@ -82,6 +82,7 @@ type BrowserRegistrationPage struct {
 	loginPage    *template.Template
 	choicesPage  *template.Template
 	approvedPage *template.Template
+	joinedPage   *template.Template
 }
 
 // NewBrowserRegistrationPage validates the origin, authority, and request bounds.
@@ -114,11 +115,15 @@ func NewBrowserRegistrationPage(options BrowserRegistrationPageOptions) (*Browse
 	if err != nil {
 		return nil, ErrInvalidBrowserRegistrationPage
 	}
+	joinedPage, err := template.New("registration-joined").Parse(browserRegistrationJoinedHTML)
+	if err != nil {
+		return nil, ErrInvalidBrowserRegistrationPage
+	}
 	return &BrowserRegistrationPage{
 		host: origin.Host, keys: options.SessionKeys, choices: options.Choices,
 		management: options.Management, approval: options.Approval,
 		timeout: options.Timeout, slots: make(chan struct{}, options.Concurrency),
-		loginPage: loginPage, choicesPage: choicesPage, approvedPage: approvedPage,
+		loginPage: loginPage, choicesPage: choicesPage, approvedPage: approvedPage, joinedPage: joinedPage,
 	}, nil
 }
 
@@ -178,7 +183,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 				page.render(response, page.approvedPage, nil)
 				return
 			}
-			if err := page.readMove(ctx, digest, encodedToken, &view); err != nil {
+			if err := page.readMachine(ctx, digest, encodedToken, &view); err != nil {
 				http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
@@ -187,23 +192,13 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 			// The browser may hold another person's or another account's
 			// session; the page always offers signing in with another one.
 			view.SwitchAccount = page.approval != nil
-			if page.approval != nil && view.NetworkCount > 0 {
-				session, err := page.management.management.sessions.Authenticate(ctx, token)
-				if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
-					http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			if page.approval != nil && (view.NetworkCount > 0 || len(view.Siblings) > 0) {
+				proof, status := page.formProof(ctx, token)
+				if status != 0 {
+					http.Error(response, http.StatusText(status), status)
 					return
 				}
-				var nonce [32]byte
-				if _, err := io.ReadFull(page.management.entropy, nonce[:]); err != nil {
-					http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-					return
-				}
-				proof, err := page.management.sealProof(token, session, page.management.clock.Now(), nonce)
-				if err != nil {
-					http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-					return
-				}
-				view.CSRF = proof.encoded
+				view.CSRF = proof
 				view.Action = request.URL.Path
 			}
 			page.render(response, page.choicesPage, view)
@@ -258,6 +253,9 @@ func (page *BrowserRegistrationPage) sessionEnded(ctx context.Context, token acc
 type browserRegistrationNetworkView struct {
 	ID   string
 	Name string
+	// Taken names the person's Device on this machine already in this
+	// Network under another account: the choice is shown but not offered.
+	Taken string
 }
 
 type browserRegistrationWorkspaceView struct {
@@ -283,6 +281,10 @@ type browserRegistrationChoiceView struct {
 	Resume      browserRegistrationMoveView
 	MoveOther   bool
 	MoveMissing bool
+	// Siblings are the person's Devices on this machine under other
+	// accounts in the app (duplicate-device design §7).
+	Siblings        []browserRegistrationSiblingView
+	SiblingConflict bool
 }
 
 type browserRegistrationMoveView struct {
@@ -293,6 +295,35 @@ type browserRegistrationMoveView struct {
 func (page *BrowserRegistrationPage) mover() (BrowserRegistrationMover, bool) {
 	mover, ok := page.approval.(BrowserRegistrationMover)
 	return mover, ok
+}
+
+// readMachine adds what the machine already is, under this account and
+// under its other accounts in the app, to the view.
+func (page *BrowserRegistrationPage) readMachine(ctx context.Context, digest accountsession.Digest,
+	encodedToken string, view *browserRegistrationChoiceView,
+) error {
+	if err := page.readMove(ctx, digest, encodedToken, view); err != nil {
+		return err
+	}
+	return page.readSiblings(ctx, digest, encodedToken, view)
+}
+
+// formProof seals a fresh CSRF proof for the page's forms; a non-zero
+// status is the answer when it cannot.
+func (page *BrowserRegistrationPage) formProof(ctx context.Context, token accountsession.Token) (string, int) {
+	session, err := page.management.management.sessions.Authenticate(ctx, token)
+	if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
+		return "", http.StatusServiceUnavailable
+	}
+	var nonce [32]byte
+	if _, err := io.ReadFull(page.management.entropy, nonce[:]); err != nil {
+		return "", http.StatusServiceUnavailable
+	}
+	proof, err := page.management.sealProof(token, session, page.management.clock.Now(), nonce)
+	if err != nil {
+		return "", http.StatusServiceUnavailable
+	}
+	return proof.encoded, 0
 }
 
 // readMove adds what the machine already is to the view.
@@ -376,26 +407,22 @@ func browserRegistrationNetworks(page control.BrowserChoicePage) []browserRegist
 func (page *BrowserRegistrationPage) approve(
 	ctx context.Context, response http.ResponseWriter, request *http.Request, encodedToken string,
 ) {
-	if page.approval == nil || page.management == nil ||
-		singleHeader(request.Header, "Origin") != page.management.origin ||
-		singleHeader(request.Header, "Content-Type") != "application/x-www-form-urlencoded" ||
-		request.Body == nil || request.ContentLength > browserRegistrationPostLimit {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	form, token, digests, status := page.readApprovalForm(ctx, request)
+	if status != 0 {
+		http.Error(response, http.StatusText(status), status)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(request.Body, browserRegistrationPostLimit+1))
-	if err != nil || len(body) > browserRegistrationPostLimit {
-		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+	if len(form["join"]) > 0 {
+		page.join(ctx, response, form, digests, encodedToken)
 		return
 	}
-	form, err := url.ParseQuery(string(body))
 	moveFields := len(form["move"])
-	if err != nil || len(form) != 3+moveFields || moveFields > 1 || len(form["csrf"]) != 1 ||
-		len(form["workspace"]) != 1 || len(form["network"]) != 1 {
+	if len(form) != 3+moveFields || moveFields > 1 || len(form["workspace"]) != 1 || len(form["network"]) != 1 {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	var moveSource publicid.ID
+	var err error
 	if moveFields == 1 {
 		if moveSource, err = publicid.Parse(form.Get("move")); err != nil {
 			http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -412,29 +439,10 @@ func (page *BrowserRegistrationPage) approve(
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	token, err := readBrowserSessionCookie(request.Header)
-	if err != nil || token.DeploymentID() != page.management.deploymentID {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-	if _, err := page.management.readProof(token, form.Get("csrf"), page.management.clock.Now()); err != nil {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-	session, err := page.management.management.sessions.Authenticate(ctx, token)
-	if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-	digests, err := page.keys.Digests(token)
-	if err != nil {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
 	for _, digest := range digests {
 		approved, retry, err := page.approveOne(ctx, digest, encodedToken, workspaceID, networkID, moveSource)
-		if retry {
-			page.renderMoveMissing(ctx, response, request, digest, encodedToken, token)
+		if retry != retryNone {
+			page.renderRetry(ctx, response, request, digest, encodedToken, token, retry)
 			return
 		}
 		if err != nil {
@@ -449,65 +457,120 @@ func (page *BrowserRegistrationPage) approve(
 	http.Error(response, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
 
-// approveOne approves for one session digest. A machine that already is
-// the person's Device in another Network moves only with the confirmation
-// the page asked for; retry asks the page to show the question again.
-func (page *BrowserRegistrationPage) approveOne(ctx context.Context, digest accountsession.Digest,
-	encodedToken string, workspaceID workspace.ID, networkID network.ID, moveSource publicid.ID,
-) (approved, retry bool, err error) {
-	mover, ok := page.mover()
-	if !ok {
-		approved, err = page.approval.ApproveInWorkspace(ctx, digest, encodedToken, workspaceID, networkID)
-		return approved, false, err
+// readApprovalForm checks a POST's origin, body, CSRF proof and Console
+// Session; a non-zero status is the answer when any does not hold.
+func (page *BrowserRegistrationPage) readApprovalForm(ctx context.Context, request *http.Request,
+) (url.Values, accountsession.Token, []accountsession.Digest, int) {
+	if page.approval == nil || page.management == nil ||
+		singleHeader(request.Header, "Origin") != page.management.origin ||
+		singleHeader(request.Header, "Content-Type") != "application/x-www-form-urlencoded" ||
+		request.Body == nil || request.ContentLength > browserRegistrationPostLimit {
+		return nil, accountsession.Token{}, nil, http.StatusForbidden
 	}
-	source, err := mover.LookupMoveSource(ctx, digest, encodedToken)
+	body, err := io.ReadAll(io.LimitReader(request.Body, browserRegistrationPostLimit+1))
+	if err != nil || len(body) > browserRegistrationPostLimit {
+		return nil, accountsession.Token{}, nil, http.StatusBadRequest
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil || len(form["csrf"]) != 1 {
+		return nil, accountsession.Token{}, nil, http.StatusBadRequest
+	}
+	token, err := readBrowserSessionCookie(request.Header)
+	if err != nil || token.DeploymentID() != page.management.deploymentID {
+		return nil, accountsession.Token{}, nil, http.StatusForbidden
+	}
+	if _, err := page.management.readProof(token, form.Get("csrf"), page.management.clock.Now()); err != nil {
+		return nil, accountsession.Token{}, nil, http.StatusForbidden
+	}
+	session, err := page.management.management.sessions.Authenticate(ctx, token)
+	if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
+		return nil, accountsession.Token{}, nil, http.StatusForbidden
+	}
+	digests, err := page.keys.Digests(token)
 	if err != nil {
-		return false, false, err
+		return nil, accountsession.Token{}, nil, http.StatusForbidden
 	}
-	if source.Kind != "own" || source.NetworkID == networkID.String() {
-		approved, err = page.approval.ApproveInWorkspace(ctx, digest, encodedToken, workspaceID, networkID)
-		return approved, false, err
-	}
-	if !moveSource.IsValid() || moveSource.String() != source.DeviceID {
-		return false, true, nil
-	}
-	approved, err = mover.ApproveMove(ctx, digest, encodedToken, workspaceID, networkID, moveSource)
-	return approved, false, err
+	return form, token, digests, 0
 }
 
-// renderMoveMissing shows the choices again, asking for the move confirmation.
-func (page *BrowserRegistrationPage) renderMoveMissing(ctx context.Context, response http.ResponseWriter,
+// browserRegistrationRetry is why the page asks the person again.
+type browserRegistrationRetry int
+
+const (
+	retryNone browserRegistrationRetry = iota
+	// retryMove: the move confirmation is missing (sign-in-moves-machine §7).
+	retryMove
+	// retrySibling: the person's Device on this machine is already in that
+	// Network under another account (duplicate-device design §8.3).
+	retrySibling
+)
+
+// approveOne approves for one session digest. A machine that already is
+// the person's Device in another Network moves only with the confirmation
+// the page asked for, and never into a Network where it already is the
+// person's Device under another account; retry asks the page again.
+func (page *BrowserRegistrationPage) approveOne(ctx context.Context, digest accountsession.Digest,
+	encodedToken string, workspaceID workspace.ID, networkID network.ID, moveSource publicid.ID,
+) (approved bool, retry browserRegistrationRetry, err error) {
+	var source control.BrowserMoveSource
+	mover, canMove := page.mover()
+	if canMove {
+		if source, err = mover.LookupMoveSource(ctx, digest, encodedToken); err != nil {
+			return false, retryNone, err
+		}
+	}
+	ownNetwork := ""
+	if source.Kind == "own" || source.Kind == "resume" {
+		ownNetwork = source.NetworkID
+	}
+	conflict, err := page.siblingConflict(ctx, digest, encodedToken, networkID, ownNetwork)
+	if err != nil {
+		return false, retryNone, err
+	}
+	if conflict {
+		return false, retrySibling, nil
+	}
+	if !canMove || source.Kind != "own" || source.NetworkID == networkID.String() {
+		approved, err = page.approval.ApproveInWorkspace(ctx, digest, encodedToken, workspaceID, networkID)
+		return approved, retryNone, err
+	}
+	if !moveSource.IsValid() || moveSource.String() != source.DeviceID {
+		return false, retryMove, nil
+	}
+	approved, err = mover.ApproveMove(ctx, digest, encodedToken, workspaceID, networkID, moveSource)
+	return approved, retryNone, err
+}
+
+// renderRetry shows the choices again with what the person must do: tick
+// the move confirmation, or use the account already in that Network.
+func (page *BrowserRegistrationPage) renderRetry(ctx context.Context, response http.ResponseWriter,
 	request *http.Request, digest accountsession.Digest, encodedToken string, token accountsession.Token,
+	retry browserRegistrationRetry,
 ) {
 	landing, view, found, err := page.readChoices(ctx, digest, encodedToken)
 	if err == nil && found {
-		err = page.readMove(ctx, digest, encodedToken, &view)
+		err = page.readMachine(ctx, digest, encodedToken, &view)
 	}
 	if err != nil || !found || landing.State != "pending" {
 		http.Error(response, http.StatusText(http.StatusConflict), http.StatusConflict)
 		return
 	}
-	session, err := page.management.management.sessions.Authenticate(ctx, token)
-	if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
-		http.Error(response, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
+	proof, status := page.formProof(ctx, token)
+	if status == http.StatusServiceUnavailable {
+		// The Session ended between the POST's check and now.
+		status = http.StatusForbidden
 	}
-	var nonce [32]byte
-	if _, err := io.ReadFull(page.management.entropy, nonce[:]); err != nil {
-		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-		return
-	}
-	proof, err := page.management.sealProof(token, session, page.management.clock.Now(), nonce)
-	if err != nil {
-		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+	if status != 0 {
+		http.Error(response, http.StatusText(status), status)
 		return
 	}
 	view.Hostname = landing.Hostname
 	view.Path = request.URL.Path
 	view.SwitchAccount = true
-	view.CSRF = proof.encoded
+	view.CSRF = proof
 	view.Action = request.URL.Path
-	view.MoveMissing = true
+	view.MoveMissing = retry == retryMove
+	view.SiblingConflict = retry == retrySibling
 	page.renderStatus(response, page.choicesPage, view, http.StatusConflict)
 }
 
@@ -584,14 +647,18 @@ const browserRegistrationChoicesHTML = browserRegistrationHead + `<title>Connect
 <p class="device"><span class="device__label">Device</span><strong>{{.Hostname}}</strong></p>
 {{if .MoveOther}}<p class="notice">This computer belongs to another account or Workspace. In MeshTransit, choose Add account to connect it as yours.</p>
 {{else}}{{if .Move.DeviceID}}<p class="muted">This computer is <strong>{{.Move.Hostname}}</strong> in <strong>{{.Move.NetworkName}}</strong>. Keep {{.Move.NetworkName}} to sign it back in with its address and rules.</p>{{end}}{{if .Resume.NetworkID}}<p class="muted">This computer is <strong>{{.Resume.Hostname}}</strong> in <strong>{{.Resume.NetworkName}}</strong>; choose that Network to sign it back in.</p>{{end}}
+{{if .Siblings}}<section class="siblings" aria-label="Already on this computer">{{range .Siblings}}<div class="sibling"><p>This computer is already in <strong>{{.NetworkName}}</strong> as <strong>{{.Hostname}}</strong>{{if .Suspended}}, which is suspended. Ask your admin.{{else if .SignedOut}}, signed out.{{else}}, under another account in the app.{{end}}</p>
+{{if and $.CSRF (not .Suspended)}}<form class="sibling__form" method="post" action="{{$.Action}}" data-join="{{.DeviceID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="join" value="{{.DeviceID}}"><button class="button" type="submit">{{if .SignedOut}}Sign back in to {{.Hostname}}{{else}}Use that account{{end}}</button></form>{{end}}</div>{{end}}
+<p id="registration-join-status" role="status" aria-live="polite"></p></section>{{end}}
+{{if .SiblingConflict}}<p id="registration-conflict" class="notice" role="alert">This computer is already in that Network under another account. Use that account instead.</p>{{end}}
 {{if .Workspaces}}{{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false"{{if .Move.DeviceID}} data-move-network="{{.Move.NetworkID}}"{{end}}>
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 {{range .Workspaces}}<fieldset class="workspace"><legend><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></legend>
-{{if .Networks}}{{$workspace := .ID}}{{range .Networks}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required{{if or (eq .ID $.Move.NetworkID) (eq .ID $.Resume.NetworkID)}} checked{{end}}><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}</span></label>{{end}}
+{{if .Networks}}{{$workspace := .ID}}{{range .Networks}}{{if .Taken}}<label class="choice choice--taken"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" disabled><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}<span class="choice__note">Already on this computer as {{.Taken}}</span></span></label>{{else}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required{{if or (eq .ID $.Move.NetworkID) (eq .ID $.Resume.NetworkID)}} checked{{end}}><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}</span></label>{{end}}{{end}}
 {{if .MoreNetworks}}<p class="muted">More Networks exist; manage them in Mesh Console.</p>{{end}}{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</fieldset>{{end}}
 {{if .Move.DeviceID}}<label id="registration-move" class="move{{if .MoveMissing}} move--missing{{end}}"{{if not .MoveMissing}} hidden{{end}}><input type="checkbox" name="move" value="{{.Move.DeviceID}}"><span><strong>Move this computer to the Network you chose</strong><br>It is removed from <strong>{{.Move.NetworkName}}</strong>, like Remove This Device: its address there is released and its rules stop applying. You can add it back later as a new device.</span></label>
 {{if .MoveMissing}}<p class="notice" role="alert">Tick the box above to move this computer to the Network you chose.</p>{{end}}{{end}}
-<button id="registration-confirm" class="button" type="submit">Connect device</button><p id="registration-status" role="status" aria-live="polite"></p></form>
+{{if gt .NetworkCount 0}}<button id="registration-confirm" class="button" type="submit">Connect device</button>{{end}}<p id="registration-status" role="status" aria-live="polite"></p></form>
 {{else}}{{range .Workspaces}}<section class="workspace"><h2><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></h2>
 {{if .Networks}}<ul>{{range .Networks}}<li class="choice">{{.Name}}</li>{{end}}</ul>{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</section>{{end}}{{end}}
 {{if .MoreWorkspaces}}<p class="muted">Only your first Workspaces are shown.</p>{{end}}
@@ -615,6 +682,6 @@ const browserRegistrationCSS = `:root{color-scheme:dark;--bg:#09090b;--surface:#
 	`ul{list-style:none;padding:0;margin:0}.choice{display:flex;align-items:center;gap:.75rem;min-height:48px;padding:.7rem 1rem;margin:.45rem 0;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}` +
 	`.choice:hover{border-color:#3f3f46}.choice input{position:absolute;opacity:0;width:1px;height:1px}.choice__dot{flex:none;width:1.1rem;height:1.1rem;border:2px solid #52525b;border-radius:50%}.choice:has(input:checked){border-color:var(--accent);background:rgba(229,72,77,.08)}.choice:has(input:checked) .choice__dot{border-color:var(--accent);box-shadow:inset 0 0 0 3px var(--raised);background:var(--accent)}.choice:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}` +
 	`.empty{padding:.25rem 0 0 2.2rem}.button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:46px;margin-top:.5rem;border:0;border-radius:.6rem;padding:.7rem 1rem;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button:disabled{opacity:.6;cursor:default}` +
-	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.switch{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.link{border:0;padding:0;background:none;color:#fca5a5;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.link:disabled{opacity:.6;cursor:default}.link:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.notice{padding:.7rem 1rem;border-radius:.6rem;background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.35)}.move{display:flex;gap:.6rem;align-items:flex-start;margin:.75rem 0;padding:.7rem 1rem;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-size:.925rem;cursor:pointer}.move[hidden]{display:none}.move--missing{border-color:var(--accent)}.move input{margin-top:.3rem}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
+	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.switch{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line)}.link{border:0;padding:0;background:none;color:#fca5a5;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}.link:disabled{opacity:.6;cursor:default}.link:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.notice{padding:.7rem 1rem;border-radius:.6rem;background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.35)}.move{display:flex;gap:.6rem;align-items:flex-start;margin:.75rem 0;padding:.7rem 1rem;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-size:.925rem;cursor:pointer}.move[hidden]{display:none}.move--missing{border-color:var(--accent)}.move input{margin-top:.3rem}.siblings{margin:0 0 1.25rem}.sibling{padding:.75rem 1rem;margin:.45rem 0;border:1px solid rgba(48,164,108,.45);border-radius:.7rem;background:rgba(48,164,108,.08);font-size:.925rem}.choice--taken{cursor:default;opacity:.6}.choice__note{display:block;color:var(--muted);font-size:.8rem;font-weight:500}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
 
 var _ http.Handler = (*BrowserRegistrationPage)(nil)

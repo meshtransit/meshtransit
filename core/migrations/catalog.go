@@ -693,6 +693,7 @@ func Catalog() []Migration {
 		newMigration(288, "A Device's own map shows its account's verified email", accountVerifiedEmailSQL),
 		newMigration(289, "A new browser sign-in ends an approval its keys can never complete", browserIntentHeldElsewhereSQL),
 		newMigration(290, "A browser sign-in moves its machine to the approved Network", browserSignInMovesMachineSQL),
+		newMigration(291, "One Device per person and Network on one machine", browserSiblingDevicesSQL),
 	}
 }
 
@@ -1342,3 +1343,6 @@ var browserIntentHeldElsewhereSQL string
 
 //go:embed 000290_browser_sign_in_moves_machine.up.sql
 var browserSignInMovesMachineSQL string
+
+//go:embed 000291_browser_sibling_devices.up.sql
+var browserSiblingDevicesSQL string

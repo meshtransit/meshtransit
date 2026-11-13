@@ -132,3 +132,6 @@ func composeBrowserRegistrationPage(
 	}
 	return page, nil
 }
+
+// The page names and joins the person's Devices on a machine (schema 291).
+var _ httpapi.BrowserRegistrationSiblings = (*postgresadapter.BrowserApprovalStore)(nil)

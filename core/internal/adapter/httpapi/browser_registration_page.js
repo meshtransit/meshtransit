@@ -69,6 +69,72 @@
     });
   }
 
+  // "Use that account": this computer already is the person's Device in
+  // that Network under another account in the app (duplicate-device §7).
+  // A fresh proof is read first, as for approval; the result replaces the
+  // card, since the ended sign-in has no page to reload.
+  const joinStatus = document.getElementById("registration-join-status");
+  for (const joinForm of document.querySelectorAll("form.sibling__form")) {
+    let joining = false;
+    joinForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (joining) return;
+      const action = joinForm.getAttribute("action");
+      const device = joinForm.getAttribute("data-join") || "";
+      const joinButton = joinForm.querySelector("button");
+      if (!intentPath.test(action) || action !== window.location.pathname || !uuid7.test(device)) {
+        if (joinStatus) joinStatus.textContent = "Restart login from MeshTransit.";
+        return;
+      }
+      joining = true;
+      if (joinButton) joinButton.disabled = true;
+      if (joinStatus) joinStatus.textContent = "Switching to that account. Please wait.";
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const fresh = await fetch(window.location.href, {
+          method: "GET", mode: "same-origin", credentials: "same-origin",
+          redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
+          signal: controller.signal,
+        });
+        if (fresh.status !== 200 || fresh.redirected || fresh.type !== "basic" ||
+            fresh.headers.get("content-type") !== "text/html; charset=utf-8") {
+          throw new Error("fresh proof unavailable");
+        }
+        const page = new DOMParser().parseFromString(await fresh.text(), "text/html");
+        const refreshed = page.querySelector(`form.sibling__form[data-join="${device}"]`);
+        const proof = refreshed?.querySelector('input[name="csrf"]');
+        if (refreshed?.getAttribute("action") !== action || !proof?.value || proof.value.length > 1024) {
+          throw new Error("registration authority changed");
+        }
+        const response = await fetch(action, {
+          method: "POST", mode: "same-origin", credentials: "same-origin",
+          redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ csrf: proof.value, join: device }).toString(),
+          signal: controller.signal,
+        });
+        if (response.status !== 200 || response.redirected || response.type !== "basic" ||
+            response.headers.get("content-type") !== "text/html; charset=utf-8") {
+          throw new Error("join unavailable");
+        }
+        const result = new DOMParser().parseFromString(await response.text(), "text/html")
+          .getElementById("registration-joined");
+        const card = joinForm.closest("section.card");
+        if (!result || !card) throw new Error("join unavailable");
+        card.replaceWith(document.importNode(result, true));
+      } catch {
+        joining = false;
+        if (joinButton) joinButton.disabled = false;
+        if (joinStatus) {
+          joinStatus.textContent = "Could not switch accounts. Reload this page or restart login from MeshTransit.";
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
   const form = document.getElementById("registration-form");
   const button = document.getElementById("registration-confirm");
   const status = document.getElementById("registration-status");
@@ -150,7 +216,10 @@
         signal: controller.signal,
       });
       if (response.status === 409) {
-        throw new Error("move not confirmed");
+        // The page asks again: the move confirmation, or this computer is
+        // already in that Network under another account.
+        const retry = new DOMParser().parseFromString(await response.text(), "text/html");
+        throw new Error(retry.getElementById("registration-conflict") ? "already here" : "move not confirmed");
       }
       if (response.status !== 200 || response.redirected || response.type !== "basic" ||
           response.headers.get("content-type") !== "text/html; charset=utf-8") {
@@ -159,9 +228,12 @@
       if (response.body) await response.body.cancel();
       window.location.reload();
     } catch (error) {
-      status.textContent = error instanceof Error && error.message === "move not confirmed"
+      const reason = error instanceof Error ? error.message : "";
+      status.textContent = reason === "move not confirmed"
         ? "Tick the box to move this computer to the Network you chose."
-        : "Approval could not be confirmed. Reload this page or restart login from MeshTransit.";
+        : reason === "already here"
+          ? "This computer is already in that Network under another account. Reload this page to use that account."
+          : "Approval could not be confirmed. Reload this page or restart login from MeshTransit.";
       started = false;
       button.disabled = false;
     } finally {

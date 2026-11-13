@@ -15,6 +15,10 @@ const (
 	// is set.
 	envControlMTCPNextKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER"
 	envControlMTCPTrustedProxies  = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
+	// envControlMTCPRegisterSiblings offers register.siblings1 (duplicate-
+	// device design §13): turned on only once every replica runs a Core
+	// that knows it.
+	envControlMTCPRegisterSiblings = "MESHTRANSIT_REGISTER_SIBLINGS"
 	// envControlMTCPDeniedEndpoints names the operator's ranges, such as
 	// Core and load balancer addresses, that peers are never told to probe.
 	envControlMTCPDeniedEndpoints = "MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS"
@@ -67,6 +71,9 @@ type ControlMTCPConfig struct {
 	trustedProxyPrefixes []netip.Prefix
 	// deniedEndpointPrefixes are dropped from every endpoint report.
 	deniedEndpointPrefixes []netip.Prefix
+	// RegisterSiblings offers register.siblings1: one Device per person
+	// and Network on one machine (duplicate-device design).
+	RegisterSiblings bool
 }
 
 // TrustedProxyPrefixes returns a defensive copy.
@@ -135,7 +142,12 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	if !nextNotAfter.IsZero() {
 		nextNotAfter = nextNotAfter.UTC()
 	}
-	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
+	siblings, present := lookup(envControlMTCPRegisterSiblings)
+	if present && siblings != "true" && siblings != "false" {
+		return ControlMTCPConfig{}, settingError(envControlMTCPRegisterSiblings)
+	}
+	return ControlMTCPConfig{RegisterSiblings: siblings == "true",
+		KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
 		UnauthenticatedPerSource: unauthenticated, UnprovenLifetime: unprovenLifetime,
 		trustedProxyPrefixes: proxies, deniedEndpointPrefixes: denied}, nil
 }

@@ -47,6 +47,21 @@ func (service *BrowserCompletionService) CompleteBrowser(
 	ctx context.Context, machine AuthenticatedMachine, nodeKey node.Key,
 	hostname node.Hostname, followupURL string,
 ) (registration.Result, bool, error) {
+	if service == nil {
+		return registration.Result{}, false, ErrInvalidBrowserCompletionService
+	}
+	return service.complete(ctx, machine, nodeKey, hostname, followupURL,
+		func(identity node.RegistrationIdentity, encoded string) (registration.Result, bool, error) {
+			return service.store.Complete(ctx, identity, hostname, encoded)
+		})
+}
+
+// complete checks the request, then runs the store's completion.
+func (service *BrowserCompletionService) complete(
+	ctx context.Context, machine AuthenticatedMachine, nodeKey node.Key,
+	hostname node.Hostname, followupURL string,
+	run func(node.RegistrationIdentity, string) (registration.Result, bool, error),
+) (registration.Result, bool, error) {
 	if ctx == nil || service == nil || service.store == nil || service.origin == "" {
 		return registration.Result{}, false, ErrInvalidBrowserCompletionService
 	}
@@ -64,8 +79,12 @@ func (service *BrowserCompletionService) CompleteBrowser(
 	if err != nil {
 		return registration.Result{}, false, ErrInvalidBrowserRegistration
 	}
-	result, found, err := service.store.Complete(ctx, identity, hostname, encoded)
+	result, found, err := run(identity, encoded)
 	if err != nil {
+		var joined *registration.JoinedExistingError
+		if errors.As(err, &joined) || errors.Is(err, registration.ErrSiblingConflict) {
+			return registration.Result{}, false, err
+		}
 		return registration.Result{}, false, errors.Join(ErrBrowserRegistrationUnavailable, err)
 	}
 	if found && !result.IsValid() {

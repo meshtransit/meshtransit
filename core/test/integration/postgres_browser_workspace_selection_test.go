@@ -489,6 +489,8 @@ JOIN mesh.device device ON device.id=node_key.device_id WHERE device.public_id=$
 		returned.NodeID().String()).Scan(&epochs, &current); err != nil || epochs != 2 || current != 2 {
 		t.Fatalf("rotated node keys = %d/%d/%v", epochs, current, err)
 	}
+	assertPostgreSQLBrowserSiblings(ctx, t, admin, intents, approval, completion, deploymentID, epoch, digest,
+		original, hostname, homeWorkspace, homeNetwork, returned.NodeID().String())
 	// An administrator's revocation whose free-text reason reads "moved" is
 	// not a move: the machine stays refused in that Network (review H3).
 	var deviceVersion, homeRevision int64

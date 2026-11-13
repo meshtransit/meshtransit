@@ -174,6 +174,19 @@ func newBrowserCompletionIDs() (browserCompletionIDs, error) {
 func (store *BrowserCompletionStore) Complete(
 	ctx context.Context, identityValue node.RegistrationIdentity,
 	hostname node.Hostname, encodedToken string,
+) (registration.Result, bool, error) {
+	return store.CompleteWithSiblings(ctx, identityValue, hostname, encodedToken, nil)
+}
+
+// CompleteWithSiblings is Complete with the sibling machine keys proven in
+// the completing session (duplicate-device design §8.4, §19 N2). A sign-in
+// the approver ended with "Use that account" answers *registration.
+// JoinedExistingError; one whose approved Network already holds the
+// approver's Device through a sibling key answers registration.
+// ErrSiblingConflict, and makes no Device.
+func (store *BrowserCompletionStore) CompleteWithSiblings(
+	ctx context.Context, identityValue node.RegistrationIdentity,
+	hostname node.Hostname, encodedToken string, siblings [][32]byte,
 ) (_ registration.Result, found bool, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil ||
 		!validRegistrationTransactionOptions(store.options) ||
@@ -230,6 +243,17 @@ func (store *BrowserCompletionStore) Complete(
 		&authority.ephemeralMode, &authority.requestHash,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		joined, joinedErr := store.readJoined(ctx, tx, identityValue, digest)
+		if joinedErr != nil {
+			return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, joinedErr)
+		}
+		if joined != nil {
+			if err := tx.Commit(ctx); err != nil {
+				return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
+			}
+			closed = true
+			return registration.Result{}, false, joined
+		}
 		replayed, replayFound, replayErr := store.readCompleted(ctx, tx,
 			identityValue, hostname, digest)
 		if replayErr != nil {
@@ -244,9 +268,20 @@ func (store *BrowserCompletionStore) Complete(
 	if err != nil {
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
+	// Under the target Network's revision lock (the authority took it), before
+	// any move or Device limit: never a second Device of the approver's in
+	// this Network on this machine.
+	if conflict, err := store.siblingConflict(ctx, tx, identityValue, digest, siblings, authority); err != nil {
+		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
+	} else if conflict {
+		return registration.Result{}, false, registration.ErrSiblingConflict
+	}
 	result, err := completeApprovedBrowserRegistration(ctx, tx, store.options,
 		identityValue, hostname, digest, authority, ids, store.deploymentID, store.recoveryEpoch, move)
 	if err != nil {
+		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
+	}
+	if err := store.clearSiblings(ctx, tx, digest); err != nil {
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
 	if err := tx.Commit(ctx); err != nil {

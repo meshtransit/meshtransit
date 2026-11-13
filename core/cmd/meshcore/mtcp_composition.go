@@ -121,6 +121,15 @@ func kubernetesClusterCapabilities(offered bool) []string {
 	return []string{mtcpadapter.CapabilityKubeCA}
 }
 
+// siblingCapabilities offers register.siblings1 when the deployment turned
+// it on (duplicate-device design §13).
+func siblingCapabilities(offered bool) []string {
+	if !offered {
+		return nil
+	}
+	return []string{mtcpadapter.CapabilitySiblings}
+}
+
 // selfIdentityCapabilities offers self.identity1, a node's account names on
 // its own entry (mtcp-v1 §7.13), when schema 287 was granted at startup.
 func selfIdentityCapabilities(offered bool) []string {
@@ -368,7 +377,8 @@ func composeMTCP(
 			deps.subnetRoutes), exitCapabilities(deps.exitNodes)...), append(captiveCapabilities(deps.captiveWindows),
 			append(append(dnsCapabilities(deps.dnsZones), kubernetesCapabilities(deps.kubernetesAccess, deps.kubernetesProfiles)...),
 				append(append(kubeCertCapabilities(deps.kubeCertificates),
-					append(kubernetesClusterCapabilities(deps.kubernetesClusters), selfIdentityCapabilities(deps.selfIdentity)...)...),
+					append(kubernetesClusterCapabilities(deps.kubernetesClusters), append(selfIdentityCapabilities(deps.selfIdentity),
+						siblingCapabilities(controlConfig.MTCP.RegisterSiblings)...)...)...),
 					append(append(kubeAuditCapabilities(deps.kubeAudit), gatewayTokenCapabilities(deps.gatewayTokens)...),
 						append(append(gatewayGroupCapabilities(deps.gatewayGroups),
 							gatewayCeilingCapabilities(deps.gatewayCeilings)...),

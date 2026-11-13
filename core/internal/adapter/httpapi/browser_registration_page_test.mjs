@@ -19,8 +19,13 @@ function harness(reply = {}, options = {}) {
   const status = { textContent: "" };
   const form = {
     busy: "false",
-    getAttribute(name) { assert.equal(name, "action"); return options.action ?? action; },
+    getAttribute(name) {
+      if (name === "data-move-network") return null;
+      assert.equal(name, "action");
+      return options.action ?? action;
+    },
     querySelector(selector) {
+      if (selector === 'input[name="move"]') return null;
       assert.equal(selector, 'input[name="network"]:checked');
       if (options.noSelection) return null;
       const chosenWorkspace = options.noWorkspace ? null : workspace;
@@ -29,9 +34,12 @@ function harness(reply = {}, options = {}) {
     setAttribute(name, value) { assert.equal(name, "aria-busy"); this.busy = value; },
     addEventListener(name, handler) { events.set(name, handler); },
   };
-  const document = { getElementById(id) {
-    return { "registration-form": form, "registration-confirm": button, "registration-status": status }[id] ?? null;
-  } };
+  const document = {
+    getElementById(id) {
+      return { "registration-form": form, "registration-confirm": button, "registration-status": status }[id] ?? null;
+    },
+    querySelectorAll(selector) { assert.equal(selector, "form.sibling__form"); return []; },
+  };
   Object.defineProperty(document, "cookie", { get() { assert.fail("cookie access"); } });
   for (const element of [status, form]) {
     Object.defineProperty(element, "innerHTML", { set() { assert.fail("HTML injection"); } });
@@ -45,10 +53,12 @@ function harness(reply = {}, options = {}) {
   };
   const sandbox = { document, window, AbortController, URLSearchParams,
     DOMParser: class { parseFromString() { return { getElementById(id) {
+      if (id === "registration-conflict") return options.conflict ? {} : null;
       assert.equal(id, "registration-form");
       return {
-        getAttribute() { return options.freshAction ?? action; },
+        getAttribute(name) { return name === "action" ? options.freshAction ?? action : null; },
         querySelector(selector) {
+          if (selector === 'input[name="move"]') return null;
           assert.equal(selector, 'input[name="csrf"]');
           return { value: options.freshProof ?? "fresh-proof" };
         },
@@ -122,10 +132,12 @@ for (const [name, reply] of [
   ["unexpected response", { contentType: "application/json" }], ["network failure", { reject: true }],
 ]) {
   test(`${name} never claims approval or automatically retries`, async () => {
+    // One activation is one attempt; the button comes back so the person
+    // may try again themselves (schema 290: after ticking the move box).
     const instance = harness(reply);
     await instance.activate();
-    await instance.activate();
     assert.equal(instance.calls.length, reply.reject ? 1 : 2);
+    assert.equal(instance.button.disabled, false);
     assert.equal(instance.reloads, 0);
     assert.match(instance.status.textContent, /^Approval could not be confirmed/);
     assert.equal(instance.status.textContent.includes("private"), false);
@@ -133,6 +145,14 @@ for (const [name, reply] of [
     assert.equal(instance.pageEvents.size, 0);
   });
 }
+
+test("a computer already in that Network says so instead of the move hint", async () => {
+  const instance = harness({ status: 409 }, { conflict: true });
+  await instance.activate();
+  assert.equal(instance.calls.length, 2);
+  assert.equal(instance.reloads, 0);
+  assert.match(instance.status.textContent, /^This computer is already in that Network under another account/);
+});
 
 test("missing selection and foreign action never send", async () => {
   for (const options of [{ noSelection: true }, { noWorkspace: true }, { action: "https://evil.example.test/" },
@@ -205,9 +225,12 @@ function switchHarness(replies, options = {}) {
   const stored = [];
   const switcher = { disabled: false, addEventListener(name, listener) { assert.equal(name, "click"); handler = listener; } };
   const note = { textContent: "" };
-  const document = { getElementById(id) {
-    return { "registration-switch": switcher, "registration-switch-status": note }[id] ?? null;
-  } };
+  const document = {
+    getElementById(id) {
+      return { "registration-switch": switcher, "registration-switch-status": note }[id] ?? null;
+    },
+    querySelectorAll() { return []; },
+  };
   Object.defineProperty(document, "cookie", { get() { assert.fail("cookie access"); } });
   const window = {
     location: { pathname: options.path ?? action, replace(destination) { replaced = destination; } },
@@ -279,4 +302,109 @@ test("use another account ignores a page outside a registration request", async 
   await instance.click();
   assert.equal(instance.calls.length, 0);
   assert.equal(instance.replaced, null);
+});
+
+const device = "01890f00-0000-7000-8000-000000000301";
+
+function joinHarness(replies = [], options = {}) {
+  const calls = [];
+  const timers = new Map();
+  let submit;
+  let replacedWith = null;
+  const button = { disabled: false };
+  const joinStatus = { textContent: "" };
+  const card = { replaceWith(node) { replacedWith = node; } };
+  const joinForm = {
+    getAttribute(name) {
+      if (name === "action") return options.action ?? action;
+      assert.equal(name, "data-join");
+      return options.device ?? device;
+    },
+    querySelector(selector) { assert.equal(selector, "button"); return button; },
+    closest(selector) { assert.equal(selector, "section.card"); return card; },
+    addEventListener(name, listener) { assert.equal(name, "submit"); submit = listener; },
+  };
+  const joined = { id: "registration-joined" };
+  const document = {
+    getElementById(id) { return id === "registration-join-status" ? joinStatus : null; },
+    querySelectorAll(selector) { assert.equal(selector, "form.sibling__form"); return [joinForm]; },
+    importNode(node, deep) { assert.equal(deep, true); return { imported: node }; },
+  };
+  Object.defineProperty(document, "cookie", { get() { assert.fail("cookie access"); } });
+  const window = { location: { pathname: action, href: `https://app.example.test${action}`,
+    reload() { assert.fail("a joined sign-in has no page to reload"); } } };
+  let parsed = 0;
+  const sandbox = { document, window, AbortController, URLSearchParams,
+    DOMParser: class { parseFromString() {
+      parsed++;
+      if (parsed === 1) {
+        return { querySelector(selector) {
+          assert.equal(selector, `form.sibling__form[data-join="${device}"]`);
+          if (options.noFreshForm) return null;
+          return { getAttribute(name) { assert.equal(name, "action"); return action; },
+            querySelector(field) { assert.equal(field, 'input[name="csrf"]'); return { value: "fresh-proof" }; } };
+        } };
+      }
+      return { getElementById(id) {
+        assert.equal(id, "registration-joined");
+        return options.noResult ? null : joined;
+      } };
+    } },
+    setTimeout(listener, delay) { assert.equal(delay, 15000); timers.set(1, listener); return 1; },
+    clearTimeout(id) { timers.delete(id); },
+    async fetch(destination, init) {
+      calls.push({ destination, init });
+      const reply = replies[calls.length - 1] ?? {};
+      if (reply.reject) throw new Error("private diagnostic");
+      return { status: reply.status ?? 200, redirected: reply.redirected ?? false, type: reply.type ?? "basic",
+        headers: { get(name) { assert.equal(name, "content-type"); return reply.contentType ?? "text/html; charset=utf-8"; } },
+        async text() { return "same-origin page"; } };
+    },
+  };
+  vm.runInNewContext(script, sandbox, { timeout: 1000 });
+  return { calls, timers, button, joinStatus, joined,
+    get replacedWith() { return replacedWith; },
+    submit() { return submit({ preventDefault() {} }); },
+  };
+}
+
+test("use that account refreshes proof, joins once and shows the result in place", async () => {
+  const instance = joinHarness();
+  await instance.submit();
+  assert.equal(instance.calls.length, 2);
+  assert.equal(instance.calls[0].init.method, "GET");
+  const post = instance.calls[1];
+  assert.equal(post.destination, action);
+  assert.equal(post.init.method, "POST");
+  assert.equal(post.init.mode, "same-origin");
+  assert.equal(post.init.redirect, "error");
+  assert.deepEqual([...new URLSearchParams(post.init.body)], [["csrf", "fresh-proof"], ["join", device]]);
+  assert.deepEqual(instance.replacedWith, { imported: instance.joined });
+  assert.equal(instance.timers.size, 0);
+});
+
+for (const [name, replies, options] of [
+  ["refused", [{}, { status: 404 }], {}], ["unavailable", [{}, { status: 503 }], {}],
+  ["redirected", [{}, { redirected: true }], {}], ["not a page", [{}, { contentType: "application/json" }], {}],
+  ["network failure", [{ reject: true }], {}], ["gone from the fresh page", [{}], { noFreshForm: true }],
+  ["no result", [{}, {}], { noResult: true }],
+]) {
+  test(`use that account stays put when ${name}`, async () => {
+    const instance = joinHarness(replies, options);
+    await instance.submit();
+    assert.equal(instance.replacedWith, null);
+    assert.equal(instance.button.disabled, false);
+    assert.match(instance.joinStatus.textContent, /^Could not switch accounts/);
+    assert.equal(instance.joinStatus.textContent.includes("private"), false);
+    assert.equal(instance.timers.size, 0);
+  });
+}
+
+test("use that account never sends for a foreign path or device", async () => {
+  for (const options of [{ action: "https://evil.example.test/" }, { device: "x\"] , form" }]) {
+    const instance = joinHarness([], options);
+    await instance.submit();
+    assert.equal(instance.calls.length, 0);
+    assert.match(instance.joinStatus.textContent, /^Restart login/);
+  }
 });

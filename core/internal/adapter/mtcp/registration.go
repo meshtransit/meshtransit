@@ -81,7 +81,10 @@ type approval struct {
 	keys          provenKeys
 	hostname      node.Hostname
 	url           string
-	expires       time.Time
+	// siblings are the machine's other profiles' keys proven in this
+	// session (register.siblings1).
+	siblings [][32]byte
+	expires  time.Time
 	// join, when set, is a Kubernetes cluster join's request, which an
 	// administrator approves instead of a browser (mtcp-v1 §6.6).
 	join *clusterJoinWait
@@ -103,8 +106,10 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 	conversation.wait(approval{}) // a new request replaces any pending approval
 	if conversation.isGateway() {
 		// A gateway's Device exists; it only rotates its keys (mtcp-v1 §6.7).
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
-			message: "a Kubernetes gateway does not register again"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "a Kubernetes gateway does not register again",
+		})
 	}
 	keys, hostname, rejected := conversation.validateRegistration(request)
 	if rejected != nil {
@@ -120,26 +125,35 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 	case *mtcpv1.RegisterRequest_Auth_EnrollmentKey:
 		return conversation.registerWithCredential(ctx, machine, keys, hostname, method.EnrollmentKey)
 	case *mtcpv1.RegisterRequest_Auth_Interactive:
+		siblings, refused := conversation.provenSiblings(request)
+		if refused != nil {
+			return conversation.reject(*refused)
+		}
 		return conversation.registerInteractively(ctx, machine, keys, hostname,
-			method.Interactive.GetResumeHandle())
+			method.Interactive.GetResumeHandle(), siblings)
 	case *mtcpv1.RegisterRequest_Auth_ClusterJoin:
 		return conversation.registerWithClusterJoin(ctx, machine, keys, hostname, method.ClusterJoin)
 	case *mtcpv1.RegisterRequest_Auth_Resume:
 		// Renewal without a person would let a machine key keep a Device
 		// alive indefinitely; until a Network policy allows it, renewal
 		// goes through an approval.
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_EXPIRED,
-			message: "renewal needs an interactive approval"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_EXPIRED,
+			message: "renewal needs an interactive approval",
+		})
 	default:
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
-			message: "no authentication method"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "no authentication method",
+		})
 	}
 }
 
 // validateRegistration checks the keys, their proofs of possession and the
 // hostname (mtcp-v1 §6.1, §6.4).
 func (conversation *conversation) validateRegistration(request *mtcpv1.RegisterRequest) (provenKeys, node.Hostname,
-	*rejection) {
+	*rejection,
+) {
 	invalid := func(message string) (provenKeys, node.Hostname, *rejection) {
 		return provenKeys{}, node.Hostname{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
 	}
@@ -178,16 +192,21 @@ type provenKeys struct {
 }
 
 func (conversation *conversation) registerWithCredential(ctx context.Context, machine control.AuthenticatedMachine,
-	keys provenKeys, hostname node.Hostname, presented string) error {
+	keys provenKeys, hostname node.Hostname, presented string,
+) error {
 	options := conversation.application.options
 	if options.Registrations == nil {
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
-			message: "enrollment keys are not accepted here"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "enrollment keys are not accepted here",
+		})
 	}
 	credential, err := enrollment.ParseCredentialPresentation(presented)
 	if err != nil {
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID,
-			message: "the enrollment key is not valid"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID,
+			message: "the enrollment key is not valid",
+		})
 	}
 	registrationID, err := options.RegistrationIDs.NewRegistrationID()
 	if err != nil {
@@ -197,8 +216,10 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 		RegistrationID: registrationID, Credential: credential, NodeKey: keys.node, Hostname: hostname,
 	})
 	if err != nil {
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
-			message: "invalid registration"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "invalid registration",
+		})
 	}
 	result, err := options.Registrations.Register(ctx, machine, request)
 	if err != nil {
@@ -214,16 +235,22 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 func (conversation *conversation) registrationFailed(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, intake.ErrAuthenticationFailed):
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID,
-			message: "the enrollment key is not valid"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID,
+			message: "the enrollment key is not valid",
+		})
 	case errors.Is(err, control.ErrInvalidRegistrationRequest):
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
-			message: "invalid registration"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "invalid registration",
+		})
 	case errors.Is(err, registration.ErrIntentConflict), errors.Is(err, keyrotation.ErrConflict):
 		// Also a repeat of a registration with another hostname, such as
 		// after the computer was renamed: name it so the user can act.
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
-			message: "the keys or the Device name conflict with an earlier registration"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+			message: "the keys or the Device name conflict with an earlier registration",
+		})
 	case errors.Is(err, ipam.ErrAddressExhausted):
 		// Permanent until an admin adds an address range; retrying would
 		// only load Core.
@@ -240,16 +267,21 @@ func (conversation *conversation) registrationFailed(ctx context.Context, err er
 // registerInteractively answers with an approval URL, or completes an
 // approval the node resumes after a reconnect (mtcp-v1 §6.2).
 func (conversation *conversation) registerInteractively(ctx context.Context, machine control.AuthenticatedMachine,
-	keys provenKeys, hostname node.Hostname, handle string) error {
+	keys provenKeys, hostname node.Hostname, handle string, siblings [][32]byte,
+) error {
 	nodeKey := keys.node
 	options := conversation.application.options
 	if options.BrowserIssuer == nil {
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
-			message: "interactive registration is not enabled"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "interactive registration is not enabled",
+		})
 	}
 	if handle != "" && (len(handle) > maxResumeHandle || strings.ContainsAny(handle, "/?#")) {
-		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
-			message: "invalid resume handle"})
+		return conversation.reject(rejection{
+			code:    mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "invalid resume handle",
+		})
 	}
 	// Issuing or resuming an approval reads and writes the database; a node
 	// asks once per sign-in and once per reconnect while it waits.
@@ -261,7 +293,10 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 	var followup string
 	if handle != "" {
 		followup = prefix + handle
-		result, found, err := options.BrowserApproval.CompleteBrowser(ctx, machine, nodeKey, hostname, followup)
+		result, found, err := conversation.completeBrowser(ctx, machine, nodeKey, hostname, followup, siblings)
+		if handled, sendErr := conversation.joinedExisting(err); handled {
+			return sendErr
+		}
 		switch {
 		case errors.Is(err, control.ErrInvalidBrowserRegistration):
 			options.Metrics.browserCompletion(completionRefused)
@@ -273,7 +308,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 			options.Metrics.browserCompletion(completionRefused)
 			return conversation.reject(newDeviceLimit)
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):
-			conversation.keysHeldElsewhere(ctx)
+			conversation.keysHeldElsewhere(ctx, err)
 			return conversation.reject(keysHeldRejection(err))
 		case err != nil:
 			if ctx.Err() == nil {
@@ -301,6 +336,9 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 	}
 	expires := conversation.application.now().Add(options.ApprovalTTL)
+	// Kept before the node can open the page, so the page already names the
+	// person's Devices on this machine (review L4).
+	conversation.recordSiblings(ctx, machine, nodeKey, approvalURL, siblings)
 	// The resume handle is the URL token: completing an approval also needs
 	// this session's machine key and node key, so the URL alone authorizes
 	// nothing (mtcp-v1 §6.2).
@@ -311,40 +349,63 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 	}); err != nil {
 		return err
 	}
-	conversation.wait(approval{machine: machine, keys: keys, hostname: hostname, url: approvalURL,
-		expires: expires})
+	conversation.wait(approval{
+		machine: machine, keys: keys, hostname: hostname, url: approvalURL,
+		expires: expires, siblings: siblings,
+	})
 	return nil
 }
 
 // networkFull leaves out adding an address range: no API does that yet.
-var networkFull = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+var networkFull = rejection{
+	code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
 	message: "the Network has no free address; an administrator can remove Devices that are no longer used, " +
-		"whose addresses become free a day later"}
+		"whose addresses become free a day later",
+}
 
-var newDeviceLimit = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
-	message: "you added too many new Devices to this Network in the last day; try again later"}
+var newDeviceLimit = rejection{
+	code:    mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+	message: "you added too many new Devices to this Network in the last day; try again later",
+}
 
-var expiredApproval = rejection{code: mtcpv1.RegisterResponse_Rejected_EXPIRED,
-	message: "the approval is unknown or has expired; start a new one"}
+var siblingConflict = rejection{
+	code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+	message: "this computer is already in that Network under another account; use that account in the app",
+}
+
+var expiredApproval = rejection{
+	code:    mtcpv1.RegisterResponse_Rejected_EXPIRED,
+	message: "the approval is unknown or has expired; start a new one",
+}
 
 // keysHeldElsewhere answers an approval for another Network (or account) than
 // the Device this node's keys already hold: retrying would wait forever.
-var keysHeldElsewhere = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+var keysHeldElsewhere = rejection{
+	code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
 	message: "this device's keys already belong to another Device (in another Network, or of another account): " +
 		"sign in again choosing that Device's Network, or remove this account in the app and add it again " +
-		"to get new keys"}
+		"to get new keys",
+}
 
 // The reasons a sign-in cannot move its machine (sign-in-moves-machine §8).
 var (
-	machineOfAnotherAccount = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
-		message: "This computer is another account's device. In the app, choose Add account to connect it as yours."}
-	machineNotMovable = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+	machineOfAnotherAccount = rejection{
+		code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "This computer is another account's device. In the app, choose Add account to connect it as yours.",
+	}
+	machineNotMovable = rejection{
+		code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
 		message: "This computer belongs to a Workspace or is suspended in its Network. Ask its admin to remove it, " +
-			"then sign in again."}
-	moveNotConfirmed = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
-		message: "This computer is already in another Network. Sign in again and confirm the move."}
-	moveNeedsNewClient = rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
-		message: "Update MeshTransit to move this computer to another Network."}
+			"then sign in again.",
+	}
+	moveNotConfirmed = rejection{
+		code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "This computer is already in another Network. Sign in again and confirm the move.",
+	}
+	moveNeedsNewClient = rejection{
+		code:    mtcpv1.RegisterResponse_Rejected_CONFLICT,
+		message: "Update MeshTransit to move this computer to another Network.",
+	}
 )
 
 // keysHeldRejection names why the keys cannot hold the approved Device, as
@@ -359,13 +420,21 @@ func keysHeldRejection(err error) rejection {
 		return moveNotConfirmed
 	case errors.Is(err, registration.ErrMoveNeedsNewClient):
 		return moveNeedsNewClient
+	case errors.Is(err, registration.ErrSiblingConflict):
+		return siblingConflict
 	}
 	return keysHeldElsewhere
 }
 
 // keysHeldElsewhere records an approval refused because the node's keys hold
 // another Device: an operator sees it, and no key or name is logged.
-func (conversation *conversation) keysHeldElsewhere(ctx context.Context) {
+func (conversation *conversation) keysHeldElsewhere(ctx context.Context, err error) {
+	if errors.Is(err, registration.ErrSiblingConflict) {
+		conversation.application.options.Metrics.browserCompletion(completionSiblingConflict)
+		conversation.application.options.Logger.InfoContext(ctx,
+			"browser registration refused: a sibling profile is already the person's Device in that Network")
+		return
+	}
 	conversation.application.options.Metrics.browserCompletion(completionKeysHeldElsewhere)
 	conversation.application.options.Logger.WarnContext(ctx,
 		"browser registration refused: the machine key holds another Device")
@@ -465,8 +534,11 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending *ap
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
-	result, found, err := conversation.application.options.BrowserApproval.CompleteBrowser(ctx, pending.machine,
-		pending.keys.node, pending.hostname, pending.url)
+	result, found, err := conversation.completeBrowser(ctx, pending.machine, pending.keys.node, pending.hostname,
+		pending.url, pending.siblings)
+	if handled, _ := conversation.joinedExisting(err); handled {
+		return true
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, control.ErrInvalidBrowserRegistration):
@@ -484,7 +556,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending *ap
 			_ = conversation.reject(newDeviceLimit)
 			return true
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):
-			conversation.keysHeldElsewhere(ctx)
+			conversation.keysHeldElsewhere(ctx, err)
 			_ = conversation.reject(keysHeldRejection(err))
 			return true
 		}
@@ -609,7 +681,8 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 // ownsKey reports whether nodeKey is the current key of this machine's
 // Device.
 func (conversation *conversation) ownsKey(ctx context.Context, machine control.AuthenticatedMachine,
-	nodeKey node.Key) (mapsession.Snapshot, bool) {
+	nodeKey node.Key,
+) (mapsession.Snapshot, bool) {
 	request, err := mapsession.NewRequest(nodeKey)
 	if err == nil && conversation.session.Supports("device-alias.v1") {
 		// Open records the client's alias support; report the same as the stream.
@@ -669,8 +742,10 @@ func (conversation *conversation) reject(rejected rejection) error {
 
 // sendError sends a non-fatal Error; the session continues.
 func (conversation *conversation) sendError(code mtcpv1.Error_Code, message string, retryAfterMS uint32) error {
-	return conversation.session.Send(sharedmtcp.MessageError, &mtcpv1.Error{Code: code, Message: message,
-		RetryAfterMs: retryAfterMS})
+	return conversation.session.Send(sharedmtcp.MessageError, &mtcpv1.Error{
+		Code: code, Message: message,
+		RetryAfterMs: retryAfterMS,
+	})
 }
 
 // logout answers Logout: the Device is revoked, the node is told LOGGED_OUT

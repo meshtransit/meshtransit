@@ -289,6 +289,21 @@ func (store *BrowserApprovalStore) approveWith(ctx context.Context, sessionDiges
 			return false, errors.Join(ErrBrowserApprovalUnavailable, err)
 		}
 	}
+	// Never approve a second Device of the person's in this Network on this
+	// machine (duplicate-device design §8.3); the page tells it first.
+	if selectedWorkspace.IsValid() {
+		conflict, err := approvalSiblingConflict(ctx, transaction, store, intentBytes[:], principalID,
+			selectedWorkspace, selectedNetwork)
+		if err != nil {
+			return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+		}
+		if conflict {
+			return false, nil
+		}
+	}
+	if err := minimizeApprovalSiblings(ctx, transaction, store, intentBytes[:], principalID); err != nil {
+		return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+	}
 	if err := appendBrowserApprovalEvidence(ctx, transaction, browserApprovalEvidence{
 		registrationID: registrationID, changeID: changeID,
 		eventID: eventID, outboxID: outboxID, intentID: intentID,

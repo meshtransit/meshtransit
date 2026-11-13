@@ -55,6 +55,9 @@ type Metrics struct {
 	// browserCompletions counts approved browser registrations Core tried to
 	// finish, by outcome (TD-CORE-150).
 	browserCompletions *prometheus.CounterVec
+	// siblingProofs counts sibling machine keys of browser sign-ins by
+	// result (duplicate-device design §16).
+	siblingProofs *prometheus.CounterVec
 	// kubeCerts and kubeCertWait count gateway.cert1 answers (mtcp-v1 §6.9).
 	kubeCerts    *prometheus.CounterVec
 	kubeCertWait prometheus.Histogram
@@ -181,7 +184,8 @@ var gatewaySessionTokenReasons = []kubecluster.KeyEventReason{
 // gatewayTokenLimit names the limit of a token refusal reason.
 func gatewayTokenLimit(reason kubetoken.Reason) string { return "gateway_" + string(reason) }
 
-var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitResync, limitEnforcement, limitBrowser, limitIdentity,
+var sessionLimits = []string{
+	limitInbound, limitAudit, limitAuditCeiling, limitResync, limitEnforcement, limitBrowser, limitIdentity,
 	limitRouteOffer, limitRouteHealth, limitDNSHealth, limitRouteSelection, limitSendDeadline,
 	limitGatewayPresenceElsewhere, limitGatewayPresencePending, limitGatewayPresenceUnknown,
 	limitClusterJoinToken, limitGatewayTrustMissing, limitGatewayTrustUnavailable, limitGatewayTokenStore,
@@ -193,7 +197,8 @@ var sessionLimits = []string{limitInbound, limitAudit, limitAuditCeiling, limitR
 	gatewayTokenLimit(kubetoken.ReasonMissing), gatewayTokenLimit(kubetoken.ReasonMalformed),
 	gatewayTokenLimit(kubetoken.ReasonUnknownKey), gatewayTokenLimit(kubetoken.ReasonSignature),
 	gatewayTokenLimit(kubetoken.ReasonExpired), gatewayTokenLimit(kubetoken.ReasonAudience),
-	gatewayTokenLimit(kubetoken.ReasonIdentity)}
+	gatewayTokenLimit(kubetoken.ReasonIdentity),
+}
 
 // streamEndReasons is the closed set of map stream end causes.
 var streamEndReasons = []string{
@@ -370,6 +375,10 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_browser_completions_total",
 			Help: "Browser registration completions by outcome: completed and refused per approval, failed per attempt.",
 		}, []string{"outcome"}),
+		siblingProofs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_sibling_proofs_total",
+			Help: "Sibling machine keys of browser sign-ins by result: valid, invalid proof, dropped (malformed, repeated or own key).",
+		}, []string{"result"}),
 		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
 			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
@@ -378,8 +387,14 @@ func NewMetrics() *Metrics {
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
 	}
-	for _, outcome := range []string{completionCompleted, completionKeysHeldElsewhere, completionRefused, completionFailed} {
+	for _, outcome := range []string{
+		completionCompleted, completionKeysHeldElsewhere, completionRefused, completionFailed,
+		completionAlreadyInNetwork, completionSiblingConflict,
+	} {
 		metrics.browserCompletions.WithLabelValues(outcome)
+	}
+	for _, result := range []string{siblingValid, siblingInvalid, siblingDropped} {
+		metrics.siblingProofs.WithLabelValues(result)
 	}
 	for _, limit := range sessionLimits {
 		metrics.limits.WithLabelValues(limit)
@@ -405,9 +420,11 @@ func NewMetrics() *Metrics {
 	}
 	metrics.kubeCerts.WithLabelValues("issued", "")
 	metrics.kubeAudits.WithLabelValues("accepted", "")
-	for _, outcome := range []kubeaudit.Outcome{kubeaudit.OutcomeConflict, kubeaudit.OutcomeInvalid,
+	for _, outcome := range []kubeaudit.Outcome{
+		kubeaudit.OutcomeConflict, kubeaudit.OutcomeInvalid,
 		kubeaudit.OutcomeGateway, kubeaudit.OutcomeDevice, kubeaudit.OutcomeNotGranted, kubeaudit.OutcomeStale,
-		kubeaudit.OutcomeLimited, kubeaudit.OutcomeOverloaded, kubeaudit.OutcomeUnavailable} {
+		kubeaudit.OutcomeLimited, kubeaudit.OutcomeOverloaded, kubeaudit.OutcomeUnavailable,
+	} {
 		metrics.kubeAudits.WithLabelValues("refused", string(outcome))
 	}
 	for _, kind := range []string{"outcome", "denial", "dropped", "sample_dropped"} {
@@ -418,13 +435,16 @@ func NewMetrics() *Metrics {
 
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
-	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
+	return []prometheus.Collector{
+		metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
 		metrics.browserCompletions,
+		metrics.siblingProofs,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
 		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, metrics.gatewayTokenOffset,
 		metrics.gatewayTokenRemaining, metrics.gatewayTokenMode, routedFilterOmitted,
-		exitFilterOmitted}
+		exitFilterOmitted,
+	}
 }
 
 // routedFilterOmitted reports the routed traffic groups left out of router
@@ -478,7 +498,24 @@ const (
 	completionKeysHeldElsewhere = "keys_held_elsewhere"
 	completionRefused           = "refused"
 	completionFailed            = "failed"
+	completionAlreadyInNetwork  = "already_in_network"
+	completionSiblingConflict   = "sibling_conflict"
 )
+
+// Results of meshtransit_mtcp_sibling_proofs_total: valid, invalid (a proof
+// that fails) and dropped (malformed, repeated or the session's own key).
+const (
+	siblingValid   = "valid"
+	siblingInvalid = "invalid"
+	siblingDropped = "dropped"
+)
+
+func (metrics *Metrics) siblingProof(result string) {
+	if metrics == nil {
+		return
+	}
+	metrics.siblingProofs.WithLabelValues(result).Inc()
+}
 
 func (metrics *Metrics) browserCompletion(outcome string) {
 	if metrics == nil {

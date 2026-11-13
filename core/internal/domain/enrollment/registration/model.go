@@ -49,7 +49,24 @@ var (
 		ErrKeysHeldElsewhere)
 	ErrMoveNeedsNewClient = fmt.Errorf("registration: an older client cannot move its machine: %w",
 		ErrKeysHeldElsewhere)
+	// ErrSiblingConflict reports that another profile on this machine already
+	// holds the approver's Device in the approved Network (duplicate-device
+	// design §8.3–§8.4): no second Device is made, and asking again never
+	// changes it.
+	ErrSiblingConflict = fmt.Errorf("registration: this machine is already in that Network under another account: %w",
+		ErrKeysHeldElsewhere)
 )
+
+// JoinedExistingError is a sign-in the approver ended with "Use that
+// account" (duplicate-device design §8.2): no Device was made, and the node
+// switches to the profile whose machine key SiblingMachineKey is.
+type JoinedExistingError struct {
+	SiblingMachineKey [32]byte
+}
+
+func (*JoinedExistingError) Error() string {
+	return "registration: the approver chose the Device another profile on this machine holds"
+}
 
 // Command is an authenticated, server-scoped credential registration request.
 // It contains no plaintext bearer token; the credential proof is verified at
