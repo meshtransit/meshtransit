@@ -485,3 +485,144 @@ test("Networks: a short list has no search box and no Show more", () => {
   assert.equal(page.more.hidden, true);
   assert.equal(page.connect.textContent, "Connect device");
 });
+
+function workspaceHarness({ path = action, shown = workspace, kept = null, withList = false } = {}) {
+  const events = new Map();
+  const timers = [];
+  const replaced = [];
+  const stored = new Map(kept ? [["meshtransit.registration.focus", JSON.stringify(kept)]] : []);
+  const go = { hidden: false };
+  const select = {
+    value: shown, focused: false,
+    addEventListener(name, handler) { events.set(name, handler); },
+    focus() { this.focused = true; },
+  };
+  let focused = true;
+  let busy = "false";
+  const radio = { focus() { radio.focused = true; } };
+  const list = {
+    querySelector(selector) { return selector === "input" ? radio : null; },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+  };
+  const form = { getAttribute(name) { assert.equal(name, "aria-busy"); return busy; } };
+  const document = {
+    getElementById(id) {
+      return { "workspace-select": select, "workspace-go": go, "network-list": withList ? list : null,
+        "registration-form": form }[id] ?? null;
+    },
+    querySelectorAll(selector) { assert.equal(selector, "form.sibling__form"); return []; },
+    hasFocus() { return focused; },
+  };
+  const window = {
+    location: { pathname: path, replace(destination) { replaced.push(destination); } },
+    sessionStorage: {
+      setItem(key, value) { stored.set(key, value); },
+      getItem(key) { return stored.get(key) ?? null; },
+      removeItem(key) { stored.delete(key); },
+    },
+  };
+  const sandbox = { document, window, URLSearchParams, JSON, Date: { now: () => 5000 },
+    setTimeout(handler, delay) { assert.equal(delay, 0); timers.push(handler); return timers.length; },
+  };
+  vm.runInNewContext(script, sandbox, { timeout: 1000 });
+  return { go, select, replaced, stored, radio,
+    set windowFocused(value) { focused = value; },
+    set busy(value) { busy = value; },
+    fire(name, event = {}) { events.get(name)({ key: "", ...event }); },
+    flush() { for (const timer of timers.splice(0)) timer(); },
+  };
+}
+
+const otherWorkspace = "01890f00-0000-7000-8000-000000000102";
+
+test("Workspace: a pointer pick shows its Networks at once and keeps the focus", () => {
+  const page = workspaceHarness();
+  assert.equal(page.go.hidden, true);
+  page.select.value = otherWorkspace;
+  page.fire("pointerdown");
+  page.fire("change");
+  assert.deepEqual(page.replaced, [`${action}?workspace=${otherWorkspace}`]);
+  assert.deepEqual(JSON.parse(page.stored.get("meshtransit.registration.focus")),
+    { path: action, workspace: otherWorkspace, focus: "workspace", at: 5000 });
+  page.fire("blur");
+  page.flush();
+  assert.equal(page.replaced.length, 1); // once, even when blur follows
+});
+
+test("Workspace: arrowing never reloads; Enter or leaving the select does, once it changed", () => {
+  const page = workspaceHarness();
+  page.fire("keydown", { key: "ArrowDown" });
+  page.select.value = otherWorkspace;
+  page.fire("change");
+  assert.deepEqual(page.replaced, []);
+  page.fire("keydown", { key: "Enter" });
+  assert.deepEqual(page.replaced, []); // after the browser commits the option
+  page.flush();
+  assert.deepEqual(page.replaced, [`${action}?workspace=${otherWorkspace}`]);
+  const left = workspaceHarness();
+  left.fire("keydown", { key: "ArrowDown" });
+  left.select.value = otherWorkspace;
+  left.fire("change");
+  left.fire("blur");
+  left.flush();
+  assert.equal(left.replaced.length, 1);
+  assert.equal(JSON.parse(left.stored.get("meshtransit.registration.focus")).focus, "networks");
+  const away = workspaceHarness();
+  away.fire("keydown", { key: "ArrowDown" });
+  away.select.value = otherWorkspace;
+  away.fire("change");
+  away.windowFocused = false;
+  away.fire("blur");
+  away.flush();
+  assert.deepEqual(away.replaced, []); // another window or tab took the focus
+  const approving = workspaceHarness();
+  approving.select.value = otherWorkspace;
+  approving.busy = "true";
+  approving.fire("pointerdown");
+  approving.fire("change");
+  assert.deepEqual(approving.replaced, []);
+});
+
+test("Workspace: a touch picker that blurs before its change still loads at once", () => {
+  const page = workspaceHarness();
+  page.fire("pointerdown");
+  page.fire("blur");
+  page.flush();
+  page.select.value = otherWorkspace;
+  page.fire("change");
+  assert.deepEqual(page.replaced, [`${action}?workspace=${otherWorkspace}`]);
+});
+
+test("Workspace: the shown one, a foreign value or a foreign path never reloads", () => {
+  const same = workspaceHarness();
+  same.fire("pointerdown");
+  same.fire("change");
+  same.fire("blur");
+  same.flush();
+  assert.deepEqual(same.replaced, []);
+  const foreign = workspaceHarness({ path: "/elsewhere" });
+  foreign.select.value = otherWorkspace;
+  foreign.fire("pointerdown");
+  foreign.fire("change");
+  assert.deepEqual(foreign.replaced, []);
+  const bad = workspaceHarness();
+  bad.select.value = "../x";
+  bad.fire("blur");
+  bad.flush();
+  assert.deepEqual(bad.replaced, []);
+});
+
+test("Workspace: the kept focus comes back only on its page, and is used once", () => {
+  const back = workspaceHarness({ kept: { path: action, workspace, at: 1000 } });
+  assert.equal(back.select.focused, true);
+  assert.equal(back.stored.size, 0);
+  const stale = workspaceHarness({ kept: { path: action, workspace, at: -20000 } });
+  assert.equal(stale.select.focused, false);
+  const other = workspaceHarness({ kept: { path: action, workspace: otherWorkspace, at: 1000 } });
+  assert.equal(other.select.focused, false);
+  assert.equal(other.stored.size, 0);
+  const networks = workspaceHarness({ kept: { path: action, workspace, focus: "networks", at: 1000 }, withList: true });
+  assert.equal(networks.radio.focused, true);
+  assert.equal(networks.select.focused, false);
+});

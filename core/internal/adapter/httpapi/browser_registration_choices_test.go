@@ -138,7 +138,7 @@ func TestBrowserRegistrationPageShowsOneWorkspace(t *testing.T) {
 	path := browserRegistrationPagePrefix + browserPageTestToken
 	first := serveBrowserRegistrationPage(page, path, cookie)
 	body := first.Body.String()
-	if first.Code != http.StatusOK || !strings.Contains(body, `<select id="workspace-select" name="workspace">`) ||
+	if first.Code != http.StatusOK || !strings.Contains(body, `<select id="workspace-select" name="workspace" aria-describedby="workspace-hint">`) ||
 		!strings.Contains(body, `value="01890f00-0000-7000-8000-000000000a01" selected>Home</option>`) ||
 		!strings.Contains(body, ">Work</option>") || !strings.Contains(body, "Lab") ||
 		strings.Contains(body, "Prod") || len(fake.reads) != 1 {

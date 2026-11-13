@@ -3,6 +3,25 @@
   const intentPath = /^\/register\/v1\/[A-Za-z0-9_-]{43}$/;
   const uuid7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+  // A Workspace pick reloads the page and keeps the focus on the select:
+  // read once, removed at once, honoured only for this page (see below).
+  const focusKey = "meshtransit.registration.focus";
+  let keptFocus = null;
+  // Set once the page is leaving for another Workspace: no approval starts.
+  // A load the person stopped (Esc) leaves the page usable again.
+  let navigating = false;
+  window.onpageshow = () => { navigating = false; };
+  document.addEventListener?.("keydown", (event) => { if (event.key === "Escape") navigating = false; });
+  try {
+    const kept = window.sessionStorage?.getItem?.(focusKey);
+    if (kept) {
+      window.sessionStorage.removeItem(focusKey);
+      keptFocus = JSON.parse(kept);
+    }
+  } catch {
+    keptFocus = null;
+  }
+
   // Signed out: remember this request in the tab and start Console sign-in.
   // Console returns here after sign-in only for an exact, fresh intent path.
   const signin = document.getElementById("registration-signin");
@@ -28,7 +47,7 @@
     let switching = false;
     switcher.addEventListener("click", async () => {
       const path = window.location.pathname;
-      if (switching || !intentPath.test(path)) return;
+      if (switching || navigating || !intentPath.test(path)) return;
       switching = true;
       switcher.disabled = true;
       if (note) note.textContent = "Signing out of this browser.";
@@ -78,7 +97,7 @@
     let joining = false;
     joinForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (joining) return;
+      if (joining || navigating) return;
       const action = joinForm.getAttribute("action");
       const device = joinForm.getAttribute("data-join") || "";
       const joinButton = joinForm.querySelector("button");
@@ -135,10 +154,58 @@
     });
   }
 
+  // Workspace: choosing one shows its Networks. A pick with the pointer
+  // loads them at once; with the keyboard, Enter or leaving the select does,
+  // so arrowing (or a screen reader reading options) never reloads the page
+  // midway. Only a Workspace other than the one shown reloads. The focus
+  // comes back to the select. replace(): Back leaves the page rather than
+  // walking through Workspaces. The button stays only without script.
+  const workspaceSelect = document.getElementById("workspace-select");
+  if (workspaceSelect) {
+    const workspaceGo = document.getElementById("workspace-go");
+    if (workspaceGo) workspaceGo.hidden = true;
+    const shown = workspaceSelect.value;
+    // A pointer pick: a pointerdown with no key pressed since (a click in an
+    // open list reaches the select as no pointerdown, so it is kept a while).
+    let pointerAt = -Infinity;
+    const open = (focus) => {
+      const path = window.location.pathname;
+      const chosen = workspaceSelect.value;
+      const approving = document.getElementById("registration-form")?.getAttribute("aria-busy") === "true";
+      if (navigating || approving || chosen === shown || !intentPath.test(path) || !uuid7.test(chosen)) return;
+      navigating = true;
+      try {
+        window.sessionStorage.setItem(focusKey, JSON.stringify({ path, workspace: chosen, focus, at: Date.now() }));
+      } catch {
+        // The focus just stays where the browser puts it.
+      }
+      window.location.replace(`${path}?workspace=${chosen}`);
+    };
+    workspaceSelect.addEventListener("pointerdown", () => { pointerAt = Date.now(); });
+    workspaceSelect.addEventListener("keydown", (event) => {
+      pointerAt = -Infinity;
+      // After the browser commits an option the list may still show.
+      if (event.key === "Enter") setTimeout(() => open("workspace"), 0);
+    });
+    workspaceSelect.addEventListener("change", () => {
+      if (Date.now() - pointerAt < 60000) open("workspace");
+    });
+    // Leaving for the rest of the page, not for another window or tab.
+    workspaceSelect.addEventListener("blur", () => {
+      setTimeout(() => { if (document.hasFocus?.()) open("networks"); }, 0);
+    });
+    if (keptFocus && keptFocus.path === window.location.pathname && keptFocus.workspace === shown &&
+        Date.now() - keptFocus.at < 10000) {
+      const list = document.getElementById("network-list");
+      const radio = keptFocus.focus === "networks"
+        ? list?.querySelector("input:checked") ?? list?.querySelector("input")
+        : null;
+      (radio ?? workspaceSelect).focus();
+    }
+  }
+
   // Networks: the first ten, then Show more; a search box once there are
-  // more than ten. Without a search, the chosen one stays in view. (The
-  // Workspace select changes page only with its button: arrowing through
-  // it must not reload the page.)
+  // more than ten. Without a search, the chosen one stays in view.
   const networkList = document.getElementById("network-list");
   if (networkList) {
     const filter = document.getElementById("network-filter");
@@ -193,6 +260,10 @@
   let started = false;
   const approve = async (event) => {
     event.preventDefault();
+    if (navigating) {
+      status.textContent = "Loading that Workspace's Networks.";
+      return;
+    }
     if (started) return;
     const action = form.getAttribute("action");
     const selected = form.querySelector('input[name="network"]:checked');

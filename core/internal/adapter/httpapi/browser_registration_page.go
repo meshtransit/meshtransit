@@ -555,8 +555,8 @@ const browserRegistrationChoicesHTML = browserRegistrationHead + `<title>Connect
 {{if .SiblingConflict}}<p id="registration-conflict" class="notice" role="alert">This computer is already in that Network under another account. Use that account instead.</p>{{end}}
 {{if .Workspaces}}
 {{if gt (len .Workspaces) 1}}<form id="registration-workspace" class="picker" method="get" action="{{.Path}}"><label class="label" for="workspace-select">Workspace</label>
-<div class="picker__row"><select id="workspace-select" name="workspace">{{range .Workspaces}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select><button id="workspace-go" class="button button--quiet" type="submit">Show Networks</button></div>
-{{if .MoreWorkspaces}}<p class="muted hint">Only your first Workspaces are listed.</p>{{end}}</form>
+<div class="picker__row"><select id="workspace-select" name="workspace" aria-describedby="workspace-hint">{{range .Workspaces}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select><button id="workspace-go" class="button button--quiet" type="submit">Show Networks</button></div>
+<p id="workspace-hint" class="muted hint">Choosing a Workspace shows its Networks.</p>{{if .MoreWorkspaces}}<p class="muted hint">Only your first Workspaces are listed.</p>{{end}}</form>
 {{else}}<p class="label">Workspace</p><p class="workspace-one"><span class="avatar" aria-hidden="true">{{.Workspace.Initial}}</span><span>{{.Workspace.Name}}</span></p>{{end}}
 {{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false"{{if .Move.DeviceID}} data-move-network="{{.Move.NetworkID}}"{{end}}>
 <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="workspace" value="{{.Workspace.ID}}">
