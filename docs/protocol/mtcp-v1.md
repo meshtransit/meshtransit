@@ -320,7 +320,8 @@ approved.
 
 Core MUST reject (`CONFLICT`) a node key or disco key that belongs to another
 Device, or that any Device has used before; retired keys are remembered. Core
-MUST reject a request whose proofs do not verify (`INVALID`).
+MUST reject a request whose node or disco key proofs do not verify
+(`INVALID`); sibling proofs are dropped instead (6.2).
 
 ### 6.2 Responses
 
@@ -336,6 +337,30 @@ it (reason `moved`) and creates the new Device in the same transaction. Any
 other Device holding the machine key is refused with `rejected{CONFLICT}` and
 a message saying why. Without the capability the node keeps its profile's
 node key, which Core never accepts for a move (node keys are never reused).
+
+**Sibling machine keys (`register.siblings1`).** A machine with several
+profiles on the same server holds one machine key per profile. With this
+capability a browser sign-in MAY list, in `siblings` (at most 16, else
+`rejected{INVALID}`), the other profiles' machine keys that may hold a
+Device, each with a proof made in this session:
+
+    proof = BLAKE2s-256(key = X25519(sibling_machine_private, control_public),
+                        "meshtransit/mtcp-sibling-machine-key/v1" || 0x00 || h || sibling_machine_key)
+
+Core drops entries that are malformed, repeated, equal to the session's
+machine key or whose proof fails, and keeps the rest only while the sign-in
+lives. When the approving person picks a Network where one of those keys
+holds their own Device, Core makes no Device and answers `already_in_network`
+with that sibling's machine key; the node switches to that profile
+(duplicate-device design). On every follow-up `RegisterRequest` of the same
+sign-in the node SHOULD repeat `siblings` with proofs made in that session;
+Core uses the stored entries together with those proven in the completing
+session. Core ignores `siblings` on a session that did not negotiate
+`register.siblings1` and with any `auth` other than `interactive`. Core
+sends `already_in_network` only on sessions that negotiated the capability;
+on any other session the same case is `rejected{CONFLICT}`. The node MUST
+check that `sibling_machine_key` is one it listed in this sign-in; otherwise
+it treats the answer as an error and does not switch profile.
 
 `RegisterResponse` has exactly one outcome:
 
@@ -364,6 +389,9 @@ node key, which Core never accepts for a move (node keys are never reused).
 - `rejected`: a code (`INVALID`, `CREDENTIAL_INVALID`, `CREDENTIAL_EXHAUSTED`,
   `NOT_PERMITTED`, `CONFLICT`, `EXPIRED`) and a human-readable message that
   reveals nothing about other tenants.
+- `already_in_network` (`register.siblings1` only): the approver chose the
+  Device a sibling profile already holds; carries that sibling's machine key.
+  A final answer: the node drops the sign-in's node key and switches profile.
 
 The browser flow lets the user choose the Workspace and Network; Core never
 selects one on the user's behalf.
@@ -2079,6 +2107,7 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `map.large1` | Node applies maps of up to 10,000 peers; without it Core sends at most 256 |
 | `session.proof1` | Core accepts `NodeKeyProof` as a session's first record (6.7) and `RotateMachineKey` from gateways (6.8); a Kubernetes gateway requires it |
 | `device.signout1` | `Logout.keep_device` signs the Device out and keeps it, and Core answers `Logout` with `LogoutResponse` (6.5) |
+| `register.siblings1` | A browser sign-in may list the machine's other profiles' machine keys with proofs; Core answers `already_in_network` instead of making a second Device for the same person in the same Network (6.2) |
 | `register.freshnodekey1` | A browser sign-in may carry a new node key: Core rotates the resumed Device's key, or moves the machine's own member Device to the approved Network once the person confirmed it on the approval page (6.2) |
 | `routes.subnet.v1` | Node applies `routes` (7.6) |
 | `router.subnet.v1` | Node can forward into Sites: it applies `served` (7.6) and reports `route_digest` (8.4) |
@@ -2191,14 +2220,16 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C20 | A Device announces endpoints that point its peers' probes at a victim: the overlay, a relay, Core | Core drops overlay, special-purpose, relay and operator-denied addresses, also through NAT64, when a report arrives and when it sends a map; nodes refuse overlay and relay addresses as candidates; each node's pings to a peer's unanswered candidates are bounded by a backoff and a per-Device budget: at most 144 at once and 0.4/s in the long run, so a victim named by M Devices receives at most 0.4 × M pings/s from each node that has them in its map (section 8.1, disco-v2 §4.4) |
 | C21 | One session makes Core work in a loop with cheap messages: map resyncs that each encode the whole map, enforcement reports that each write Redis, browser approvals that each write the database, or a flood of any message | Per-session budgets for each, and one for all messages and bytes (section 14); a node that follows the protocol stays well inside them, and reconnecting is bounded by the per-source handshake rate |
 | C22 | A leaked cluster join key makes its holder a Kubernetes gateway, which sees who connects and carries kubectl traffic | The key opens only a request with no Device; an administrator approves it by a code bound to the replica's own keys, read from the real pod's log and checked by Core and its database; five wrong codes cancel; at most twice the key's uses wait; the key lives an hour at most (6.6) |
+| C24 | A node lists machine keys to learn whether the approver's Devices hold them, or Core links one machine's profiles across accounts and Workspaces | Each sibling key needs a proof of possession bound to the handshake hash (6.2); at most 16 per request; Core compares them only with the approving person's own Devices, keeps them only while the sign-in lives and never in audit or the Console |
 | C23 | A copy of a Kubernetes gateway's Secret, or an older Core, serves, logs out or re-keys the gateway | A gateway proves its node key as its session's first record; until then nothing is established or replaced and its timestamp is not recorded; the database resolves a gateway only for a transaction marked proven, which older Core never marks; gateways cannot log out or register again; former machine keys are kept and refused, and a gateway moves to a new machine key at every start (6.7, 6.8); a gateway session that pushes out a live one on the same replica contests the key, and no session of it rotates for 15 seconds (6.8). A copy of the current Secret remains a gateway until an administrator removes it, and on another replica than the real pod's, or by starving the handshakes of the pod's source address, it can rotate the keys and lock the pod out; with `gateway.token1` a ratcheted gateway's sessions need a valid pod token of its pod too, so a copy of the Secret alone gets nothing (6.7) |
 
 ## 17. Test vectors
 
 `shared/mtcp/testdata/vectors.json` holds a complete handshake with fixed
 machine, control and ephemeral keys (INIT, RESPONSE, handshake hash), three
-transport records in both directions, node and disco key proofs bound to that
-handshake, the control key ID and the control key fingerprint.
+transport records in both directions, node, disco and sibling machine key
+proofs bound to that handshake, the control key ID and the control key
+fingerprint.
 `shared/mtcp/testdata/crosscheck.py` recomputes all of them with an
 independent Noise IK implementation (Python, `cryptography` package):
 `make mtcp-crosscheck`. Fragmentation, ZSTD limits and the protobuf encoding

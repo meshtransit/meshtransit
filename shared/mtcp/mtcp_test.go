@@ -356,6 +356,71 @@ func TestSessionAndMachineRotationProofs(t *testing.T) {
 	}
 }
 
+// A sibling proof is good for its key in its session only, and never passes
+// as a rotation, session or key proof, nor they as it (duplicate-device
+// design §4.1).
+func TestSiblingMachineKeyProof(t *testing.T) {
+	machine, control := fixedKeys(t)
+	sibling := mustMachine(t, 0x66)
+	hash := [32]byte{0x99}
+	proof, err := SiblingMachineKeyProof(sibling, control.Public(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !VerifySiblingMachineKeyProof(control, hash, sibling.Public(), proof[:]) {
+		t.Fatal("valid sibling proof refused")
+	}
+	tampered := proof
+	tampered[0] ^= 1
+	if VerifySiblingMachineKeyProof(control, hash, machine.Public(), proof[:]) ||
+		VerifySiblingMachineKeyProof(control, [32]byte{0x9a}, sibling.Public(), proof[:]) ||
+		VerifySiblingMachineKeyProof(control, hash, sibling.Public(), proof[:31]) ||
+		VerifySiblingMachineKeyProof(control, hash, sibling.Public(), append(proof[:], 0)) ||
+		VerifySiblingMachineKeyProof(control, hash, sibling.Public(), tampered[:]) {
+		t.Fatal("sibling proof accepted for another key, session, length or content")
+	}
+	otherControl, err := key.ControlPrivateFromBytes(bytes.Repeat([]byte{0x23}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if VerifySiblingMachineKeyProof(otherControl, hash, sibling.Public(), proof[:]) {
+		t.Fatal("sibling proof accepted by another control key")
+	}
+	if VerifyMachineKeyRotationProof(control, hash, sibling.Public(), proof[:]) ||
+		VerifyNodeKeySessionProof(control, hash, sibling.Public(), proof[:]) ||
+		VerifyKeyProof(control, hash, sibling.Public(), proof[:]) {
+		t.Fatal("a sibling proof passes as a rotation, session or key proof")
+	}
+	for _, domain := range []string{rotationDomain, sessionDomain, proofDomain} {
+		other := domainProofFor(t, domain, sibling, control, hash)
+		if VerifySiblingMachineKeyProof(control, hash, sibling.Public(), other[:]) {
+			t.Fatalf("a %s proof passes as a sibling proof", domain)
+		}
+	}
+}
+
+func mustMachine(t *testing.T, fill byte) key.MachinePrivate {
+	t.Helper()
+	machine, err := key.MachinePrivateFromBytes(bytes.Repeat([]byte{fill}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return machine
+}
+
+// domainProofFor makes a proof of another domain with a machine key's
+// secret, for the cross-domain checks above.
+func domainProofFor(t *testing.T, domain string, machine key.MachinePrivate, control key.ControlPrivate,
+	hash [32]byte,
+) [ProofSize]byte {
+	t.Helper()
+	secret, err := machine.SharedWithControl(control.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domainProof(domain, secret, hash, machine.Public())
+}
+
 type vectors struct {
 	MachinePrivate     string            `json:"machine_private"`
 	ControlPrivate     string            `json:"control_private"`
@@ -438,6 +503,14 @@ func buildVectors(t *testing.T) vectors {
 	v.Proofs["disco_private"] = hex.EncodeToString(bytes.Repeat([]byte{0x88}, 32))
 	v.Proofs["disco_public"] = disco.Public().String()
 	v.Proofs["disco_proof"] = hex.EncodeToString(discoProof[:])
+	sibling := mustMachine(t, 0x66)
+	siblingProof, err := SiblingMachineKeyProof(sibling, control.Public(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Proofs["sibling_machine_private"] = hex.EncodeToString(bytes.Repeat([]byte{0x66}, 32))
+	v.Proofs["sibling_machine_public"] = sibling.Public().String()
+	v.Proofs["sibling_machine_proof"] = hex.EncodeToString(siblingProof[:])
 	v.Fragments["ping"] = hex.EncodeToString(ping[0])
 	v.Fragments["lifecycle"] = hex.EncodeToString(lifecycle[0])
 	return v

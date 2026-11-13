@@ -52,6 +52,7 @@ followed by a zero byte. Registered domains:
 | `meshtransit/mtcp-key-proof/v1` | MTCP proof of possession of node and disco keys |
 | `meshtransit/mtcp-node-key-session/v1` | MTCP `NodeKeyProof`: the node holds its ClientHello node key in this session (mtcp-v1 §6.7) |
 | `meshtransit/mtcp-machine-key-rotation/v1` | MTCP `RotateMachineKey`: a gateway holds the machine key it rotates to (mtcp-v1 §6.8) |
+| `meshtransit/mtcp-sibling-machine-key/v1` | MTCP `RegisterRequest.siblings`: the machine also holds another profile's machine key (mtcp-v1 §6.2, `register.siblings1`) |
 | `meshtransit/mtcp-control-fp/v1` | MTCP control key fingerprint in enrollment links |
 | `meshtransit/mtrp-mac1/v1`, `meshtransit/mtrp-cookie/v1` | MTRP handshake DoS MACs |
 

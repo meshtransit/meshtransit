@@ -90,6 +90,16 @@ message RegisterRequest {
   Auth auth = 4;
   bytes node_key_proof = 5; // mtcp-v1 §6.4
   bytes disco_key_proof = 6;
+  // Other profiles' machine keys this machine holds on the same server, each
+  // with its proof (register.siblings1, duplicate-device design §4–§5).
+  // At most 16; Core answers rejected{INVALID} above that. Repeated on every
+  // follow-up of the same sign-in with proofs made in that session.
+  repeated Sibling siblings = 7;
+
+  message Sibling {
+    bytes machine_key = 1;
+    bytes proof = 2; // SiblingMachineKeyProof in this session
+  }
 
   message Auth {
     oneof method {
@@ -125,6 +135,13 @@ message RegisterResponse {
     Authorized authorized = 1;
     Pending pending = 2;
     Rejected rejected = 3;
+    // The approver chose the Device another profile on this machine already
+    // holds in that Network: no Device was made (register.siblings1).
+    AlreadyInNetwork already_in_network = 4;
+  }
+
+  message AlreadyInNetwork {
+    bytes sibling_machine_key = 1; // one of RegisterRequest.siblings
   }
 
   message Authorized {

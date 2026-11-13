@@ -195,7 +195,7 @@ func (x RegisterResponse_Rejected_Code) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RegisterResponse_Rejected_Code.Descriptor instead.
 func (RegisterResponse_Rejected_Code) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 3, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 4, 0}
 }
 
 type LogoutResponse_Outcome int32
@@ -2156,13 +2156,14 @@ func (x *Pong) GetNonce() []byte {
 }
 
 type RegisterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeKey       []byte                 `protobuf:"bytes,1,opt,name=node_key,json=nodeKey,proto3" json:"node_key,omitempty"`
-	DiscoKey      []byte                 `protobuf:"bytes,2,opt,name=disco_key,json=discoKey,proto3" json:"disco_key,omitempty"`
-	Hostinfo      *Hostinfo              `protobuf:"bytes,3,opt,name=hostinfo,proto3" json:"hostinfo,omitempty"`
-	Auth          *RegisterRequest_Auth  `protobuf:"bytes,4,opt,name=auth,proto3" json:"auth,omitempty"`
-	NodeKeyProof  []byte                 `protobuf:"bytes,5,opt,name=node_key_proof,json=nodeKeyProof,proto3" json:"node_key_proof,omitempty"`
-	DiscoKeyProof []byte                 `protobuf:"bytes,6,opt,name=disco_key_proof,json=discoKeyProof,proto3" json:"disco_key_proof,omitempty"`
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	NodeKey       []byte                     `protobuf:"bytes,1,opt,name=node_key,json=nodeKey,proto3" json:"node_key,omitempty"`
+	DiscoKey      []byte                     `protobuf:"bytes,2,opt,name=disco_key,json=discoKey,proto3" json:"disco_key,omitempty"`
+	Hostinfo      *Hostinfo                  `protobuf:"bytes,3,opt,name=hostinfo,proto3" json:"hostinfo,omitempty"`
+	Auth          *RegisterRequest_Auth      `protobuf:"bytes,4,opt,name=auth,proto3" json:"auth,omitempty"`
+	NodeKeyProof  []byte                     `protobuf:"bytes,5,opt,name=node_key_proof,json=nodeKeyProof,proto3" json:"node_key_proof,omitempty"`
+	DiscoKeyProof []byte                     `protobuf:"bytes,6,opt,name=disco_key_proof,json=discoKeyProof,proto3" json:"disco_key_proof,omitempty"`
+	Siblings      []*RegisterRequest_Sibling `protobuf:"bytes,7,rep,name=siblings,proto3" json:"siblings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2239,6 +2240,13 @@ func (x *RegisterRequest) GetDiscoKeyProof() []byte {
 	return nil
 }
 
+func (x *RegisterRequest) GetSiblings() []*RegisterRequest_Sibling {
+	if x != nil {
+		return x.Siblings
+	}
+	return nil
+}
+
 type RegisterResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Outcome:
@@ -2246,6 +2254,7 @@ type RegisterResponse struct {
 	//	*RegisterResponse_Authorized_
 	//	*RegisterResponse_Pending_
 	//	*RegisterResponse_Rejected_
+	//	*RegisterResponse_AlreadyInNetwork_
 	Outcome       isRegisterResponse_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2315,6 +2324,15 @@ func (x *RegisterResponse) GetRejected() *RegisterResponse_Rejected {
 	return nil
 }
 
+func (x *RegisterResponse) GetAlreadyInNetwork() *RegisterResponse_AlreadyInNetwork {
+	if x != nil {
+		if x, ok := x.Outcome.(*RegisterResponse_AlreadyInNetwork_); ok {
+			return x.AlreadyInNetwork
+		}
+	}
+	return nil
+}
+
 type isRegisterResponse_Outcome interface {
 	isRegisterResponse_Outcome()
 }
@@ -2331,11 +2349,17 @@ type RegisterResponse_Rejected_ struct {
 	Rejected *RegisterResponse_Rejected `protobuf:"bytes,3,opt,name=rejected,proto3,oneof"`
 }
 
+type RegisterResponse_AlreadyInNetwork_ struct {
+	AlreadyInNetwork *RegisterResponse_AlreadyInNetwork `protobuf:"bytes,4,opt,name=already_in_network,json=alreadyInNetwork,proto3,oneof"`
+}
+
 func (*RegisterResponse_Authorized_) isRegisterResponse_Outcome() {}
 
 func (*RegisterResponse_Pending_) isRegisterResponse_Outcome() {}
 
 func (*RegisterResponse_Rejected_) isRegisterResponse_Outcome() {}
+
+func (*RegisterResponse_AlreadyInNetwork_) isRegisterResponse_Outcome() {}
 
 type RotateNodeKey struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
@@ -8577,6 +8601,58 @@ func (x *Notice) GetUrl() string {
 	return ""
 }
 
+type RegisterRequest_Sibling struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MachineKey    []byte                 `protobuf:"bytes,1,opt,name=machine_key,json=machineKey,proto3" json:"machine_key,omitempty"`
+	Proof         []byte                 `protobuf:"bytes,2,opt,name=proof,proto3" json:"proof,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterRequest_Sibling) Reset() {
+	*x = RegisterRequest_Sibling{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[99]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterRequest_Sibling) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterRequest_Sibling) ProtoMessage() {}
+
+func (x *RegisterRequest_Sibling) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[99]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterRequest_Sibling.ProtoReflect.Descriptor instead.
+func (*RegisterRequest_Sibling) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 0}
+}
+
+func (x *RegisterRequest_Sibling) GetMachineKey() []byte {
+	if x != nil {
+		return x.MachineKey
+	}
+	return nil
+}
+
+func (x *RegisterRequest_Sibling) GetProof() []byte {
+	if x != nil {
+		return x.Proof
+	}
+	return nil
+}
+
 type RegisterRequest_Auth struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Method:
@@ -8592,7 +8668,7 @@ type RegisterRequest_Auth struct {
 
 func (x *RegisterRequest_Auth) Reset() {
 	*x = RegisterRequest_Auth{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[99]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8604,7 +8680,7 @@ func (x *RegisterRequest_Auth) String() string {
 func (*RegisterRequest_Auth) ProtoMessage() {}
 
 func (x *RegisterRequest_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[99]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8617,7 +8693,7 @@ func (x *RegisterRequest_Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest_Auth.ProtoReflect.Descriptor instead.
 func (*RegisterRequest_Auth) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 1}
 }
 
 func (x *RegisterRequest_Auth) GetMethod() isRegisterRequest_Auth_Method {
@@ -8704,7 +8780,7 @@ type RegisterRequest_ClusterJoin struct {
 
 func (x *RegisterRequest_ClusterJoin) Reset() {
 	*x = RegisterRequest_ClusterJoin{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[100]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8716,7 +8792,7 @@ func (x *RegisterRequest_ClusterJoin) String() string {
 func (*RegisterRequest_ClusterJoin) ProtoMessage() {}
 
 func (x *RegisterRequest_ClusterJoin) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[100]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8729,7 +8805,7 @@ func (x *RegisterRequest_ClusterJoin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest_ClusterJoin.ProtoReflect.Descriptor instead.
 func (*RegisterRequest_ClusterJoin) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 1}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 2}
 }
 
 func (x *RegisterRequest_ClusterJoin) GetJoinKey() string {
@@ -8776,7 +8852,7 @@ type RegisterRequest_Interactive struct {
 
 func (x *RegisterRequest_Interactive) Reset() {
 	*x = RegisterRequest_Interactive{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[101]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8788,7 +8864,7 @@ func (x *RegisterRequest_Interactive) String() string {
 func (*RegisterRequest_Interactive) ProtoMessage() {}
 
 func (x *RegisterRequest_Interactive) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[101]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8801,7 +8877,7 @@ func (x *RegisterRequest_Interactive) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest_Interactive.ProtoReflect.Descriptor instead.
 func (*RegisterRequest_Interactive) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 2}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 3}
 }
 
 func (x *RegisterRequest_Interactive) GetResumeHandle() string {
@@ -8819,7 +8895,7 @@ type RegisterRequest_Resume struct {
 
 func (x *RegisterRequest_Resume) Reset() {
 	*x = RegisterRequest_Resume{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[102]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8831,7 +8907,7 @@ func (x *RegisterRequest_Resume) String() string {
 func (*RegisterRequest_Resume) ProtoMessage() {}
 
 func (x *RegisterRequest_Resume) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[102]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8844,7 +8920,51 @@ func (x *RegisterRequest_Resume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterRequest_Resume.ProtoReflect.Descriptor instead.
 func (*RegisterRequest_Resume) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 3}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{7, 4}
+}
+
+type RegisterResponse_AlreadyInNetwork struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SiblingMachineKey []byte                 `protobuf:"bytes,1,opt,name=sibling_machine_key,json=siblingMachineKey,proto3" json:"sibling_machine_key,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RegisterResponse_AlreadyInNetwork) Reset() {
+	*x = RegisterResponse_AlreadyInNetwork{}
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[104]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterResponse_AlreadyInNetwork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterResponse_AlreadyInNetwork) ProtoMessage() {}
+
+func (x *RegisterResponse_AlreadyInNetwork) ProtoReflect() protoreflect.Message {
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[104]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterResponse_AlreadyInNetwork.ProtoReflect.Descriptor instead.
+func (*RegisterResponse_AlreadyInNetwork) Descriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 0}
+}
+
+func (x *RegisterResponse_AlreadyInNetwork) GetSiblingMachineKey() []byte {
+	if x != nil {
+		return x.SiblingMachineKey
+	}
+	return nil
 }
 
 type RegisterResponse_Authorized struct {
@@ -8859,7 +8979,7 @@ type RegisterResponse_Authorized struct {
 
 func (x *RegisterResponse_Authorized) Reset() {
 	*x = RegisterResponse_Authorized{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[103]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8871,7 +8991,7 @@ func (x *RegisterResponse_Authorized) String() string {
 func (*RegisterResponse_Authorized) ProtoMessage() {}
 
 func (x *RegisterResponse_Authorized) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[103]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8884,7 +9004,7 @@ func (x *RegisterResponse_Authorized) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse_Authorized.ProtoReflect.Descriptor instead.
 func (*RegisterResponse_Authorized) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 1}
 }
 
 func (x *RegisterResponse_Authorized) GetDeviceId() string {
@@ -8927,7 +9047,7 @@ type RegisterResponse_Pending struct {
 
 func (x *RegisterResponse_Pending) Reset() {
 	*x = RegisterResponse_Pending{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[104]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8939,7 +9059,7 @@ func (x *RegisterResponse_Pending) String() string {
 func (*RegisterResponse_Pending) ProtoMessage() {}
 
 func (x *RegisterResponse_Pending) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[104]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8952,7 +9072,7 @@ func (x *RegisterResponse_Pending) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse_Pending.ProtoReflect.Descriptor instead.
 func (*RegisterResponse_Pending) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 1}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 2}
 }
 
 func (x *RegisterResponse_Pending) GetApprovalUrl() string {
@@ -8994,7 +9114,7 @@ type RegisterResponse_AdminApproval struct {
 
 func (x *RegisterResponse_AdminApproval) Reset() {
 	*x = RegisterResponse_AdminApproval{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[105]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9006,7 +9126,7 @@ func (x *RegisterResponse_AdminApproval) String() string {
 func (*RegisterResponse_AdminApproval) ProtoMessage() {}
 
 func (x *RegisterResponse_AdminApproval) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[105]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9019,7 +9139,7 @@ func (x *RegisterResponse_AdminApproval) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse_AdminApproval.ProtoReflect.Descriptor instead.
 func (*RegisterResponse_AdminApproval) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 2}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 3}
 }
 
 func (x *RegisterResponse_AdminApproval) GetClusterId() string {
@@ -9054,7 +9174,7 @@ type RegisterResponse_Rejected struct {
 
 func (x *RegisterResponse_Rejected) Reset() {
 	*x = RegisterResponse_Rejected{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[106]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9066,7 +9186,7 @@ func (x *RegisterResponse_Rejected) String() string {
 func (*RegisterResponse_Rejected) ProtoMessage() {}
 
 func (x *RegisterResponse_Rejected) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[106]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9079,7 +9199,7 @@ func (x *RegisterResponse_Rejected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse_Rejected.ProtoReflect.Descriptor instead.
 func (*RegisterResponse_Rejected) Descriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 3}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{8, 4}
 }
 
 func (x *RegisterResponse_Rejected) GetCode() RegisterResponse_Rejected_Code {
@@ -9114,7 +9234,7 @@ type HealthReport_Component struct {
 
 func (x *HealthReport_Component) Reset() {
 	*x = HealthReport_Component{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[107]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9126,7 +9246,7 @@ func (x *HealthReport_Component) String() string {
 func (*HealthReport_Component) ProtoMessage() {}
 
 func (x *HealthReport_Component) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[107]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9175,7 +9295,7 @@ type RouteHealthReport_ExitHealth struct {
 
 func (x *RouteHealthReport_ExitHealth) Reset() {
 	*x = RouteHealthReport_ExitHealth{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[108]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9187,7 +9307,7 @@ func (x *RouteHealthReport_ExitHealth) String() string {
 func (*RouteHealthReport_ExitHealth) ProtoMessage() {}
 
 func (x *RouteHealthReport_ExitHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[108]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9242,7 +9362,7 @@ type RouteHealthReport_SiteHealth struct {
 
 func (x *RouteHealthReport_SiteHealth) Reset() {
 	*x = RouteHealthReport_SiteHealth{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[109]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9254,7 +9374,7 @@ func (x *RouteHealthReport_SiteHealth) String() string {
 func (*RouteHealthReport_SiteHealth) ProtoMessage() {}
 
 func (x *RouteHealthReport_SiteHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[109]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9302,7 +9422,7 @@ type RouteSelectionReport_ExitSelection struct {
 
 func (x *RouteSelectionReport_ExitSelection) Reset() {
 	*x = RouteSelectionReport_ExitSelection{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[110]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9314,7 +9434,7 @@ func (x *RouteSelectionReport_ExitSelection) String() string {
 func (*RouteSelectionReport_ExitSelection) ProtoMessage() {}
 
 func (x *RouteSelectionReport_ExitSelection) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[110]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9362,7 +9482,7 @@ type RouteSelectionReport_SiteSelection struct {
 
 func (x *RouteSelectionReport_SiteSelection) Reset() {
 	*x = RouteSelectionReport_SiteSelection{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[111]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9374,7 +9494,7 @@ func (x *RouteSelectionReport_SiteSelection) String() string {
 func (*RouteSelectionReport_SiteSelection) ProtoMessage() {}
 
 func (x *RouteSelectionReport_SiteSelection) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[111]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9421,7 +9541,7 @@ type KeyUpdate_ControlKey struct {
 
 func (x *KeyUpdate_ControlKey) Reset() {
 	*x = KeyUpdate_ControlKey{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[112]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9433,7 +9553,7 @@ func (x *KeyUpdate_ControlKey) String() string {
 func (*KeyUpdate_ControlKey) ProtoMessage() {}
 
 func (x *KeyUpdate_ControlKey) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[112]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9474,7 +9594,7 @@ type KeyUpdate_SigningKey struct {
 
 func (x *KeyUpdate_SigningKey) Reset() {
 	*x = KeyUpdate_SigningKey{}
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[113]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9486,7 +9606,7 @@ func (x *KeyUpdate_SigningKey) String() string {
 func (*KeyUpdate_SigningKey) ProtoMessage() {}
 
 func (x *KeyUpdate_SigningKey) ProtoReflect() protoreflect.Message {
-	mi := &file_mtcp_v1_mtcp_proto_msgTypes[113]
+	mi := &file_mtcp_v1_mtcp_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9580,14 +9700,19 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x04Ping\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\x1c\n" +
 	"\x04Pong\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\xe7\x06\n" +
+	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"\xf3\a\n" +
 	"\x0fRegisterRequest\x12\x19\n" +
 	"\bnode_key\x18\x01 \x01(\fR\anodeKey\x12\x1b\n" +
 	"\tdisco_key\x18\x02 \x01(\fR\bdiscoKey\x129\n" +
 	"\bhostinfo\x18\x03 \x01(\v2\x1d.meshtransit.mtcp.v1.HostinfoR\bhostinfo\x12=\n" +
 	"\x04auth\x18\x04 \x01(\v2).meshtransit.mtcp.v1.RegisterRequest.AuthR\x04auth\x12$\n" +
 	"\x0enode_key_proof\x18\x05 \x01(\fR\fnodeKeyProof\x12&\n" +
-	"\x0fdisco_key_proof\x18\x06 \x01(\fR\rdiscoKeyProof\x1a\xad\x02\n" +
+	"\x0fdisco_key_proof\x18\x06 \x01(\fR\rdiscoKeyProof\x12H\n" +
+	"\bsiblings\x18\a \x03(\v2,.meshtransit.mtcp.v1.RegisterRequest.SiblingR\bsiblings\x1a@\n" +
+	"\aSibling\x12\x1f\n" +
+	"\vmachine_key\x18\x01 \x01(\fR\n" +
+	"machineKey\x12\x14\n" +
+	"\x05proof\x18\x02 \x01(\fR\x05proof\x1a\xad\x02\n" +
 	"\x04Auth\x12'\n" +
 	"\x0eenrollment_key\x18\x01 \x01(\tH\x00R\renrollmentKey\x12T\n" +
 	"\vinteractive\x18\x02 \x01(\v20.meshtransit.mtcp.v1.RegisterRequest.InteractiveH\x00R\vinteractive\x12E\n" +
@@ -9602,13 +9727,16 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x14service_account_jwks\x18\x05 \x01(\fR\x12serviceAccountJwks\x1a2\n" +
 	"\vInteractive\x12#\n" +
 	"\rresume_handle\x18\x01 \x01(\tR\fresumeHandle\x1a\b\n" +
-	"\x06Resume\"\xb2\b\n" +
+	"\x06Resume\"\xde\t\n" +
 	"\x10RegisterResponse\x12R\n" +
 	"\n" +
 	"authorized\x18\x01 \x01(\v20.meshtransit.mtcp.v1.RegisterResponse.AuthorizedH\x00R\n" +
 	"authorized\x12I\n" +
 	"\apending\x18\x02 \x01(\v2-.meshtransit.mtcp.v1.RegisterResponse.PendingH\x00R\apending\x12L\n" +
-	"\brejected\x18\x03 \x01(\v2..meshtransit.mtcp.v1.RegisterResponse.RejectedH\x00R\brejected\x1a\x8a\x01\n" +
+	"\brejected\x18\x03 \x01(\v2..meshtransit.mtcp.v1.RegisterResponse.RejectedH\x00R\brejected\x12f\n" +
+	"\x12already_in_network\x18\x04 \x01(\v26.meshtransit.mtcp.v1.RegisterResponse.AlreadyInNetworkH\x00R\x10alreadyInNetwork\x1aB\n" +
+	"\x10AlreadyInNetwork\x12.\n" +
+	"\x13sibling_machine_key\x18\x01 \x01(\fR\x11siblingMachineKey\x1a\x8a\x01\n" +
 	"\n" +
 	"Authorized\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12\x1d\n" +
@@ -10410,7 +10538,7 @@ func file_mtcp_v1_mtcp_proto_rawDescGZIP() []byte {
 }
 
 var file_mtcp_v1_mtcp_proto_enumTypes = make([]protoimpl.EnumInfo, 31)
-var file_mtcp_v1_mtcp_proto_msgTypes = make([]protoimpl.MessageInfo, 114)
+var file_mtcp_v1_mtcp_proto_msgTypes = make([]protoimpl.MessageInfo, 116)
 var file_mtcp_v1_mtcp_proto_goTypes = []any{
 	(ServerHello_Reject)(0),                        // 0: meshtransit.mtcp.v1.ServerHello.Reject
 	(Error_Code)(0),                                // 1: meshtransit.mtcp.v1.Error.Code
@@ -10542,21 +10670,23 @@ var file_mtcp_v1_mtcp_proto_goTypes = []any{
 	(*Lifecycle)(nil),                              // 127: meshtransit.mtcp.v1.Lifecycle
 	(*KeyUpdate)(nil),                              // 128: meshtransit.mtcp.v1.KeyUpdate
 	(*Notice)(nil),                                 // 129: meshtransit.mtcp.v1.Notice
-	(*RegisterRequest_Auth)(nil),                   // 130: meshtransit.mtcp.v1.RegisterRequest.Auth
-	(*RegisterRequest_ClusterJoin)(nil),            // 131: meshtransit.mtcp.v1.RegisterRequest.ClusterJoin
-	(*RegisterRequest_Interactive)(nil),            // 132: meshtransit.mtcp.v1.RegisterRequest.Interactive
-	(*RegisterRequest_Resume)(nil),                 // 133: meshtransit.mtcp.v1.RegisterRequest.Resume
-	(*RegisterResponse_Authorized)(nil),            // 134: meshtransit.mtcp.v1.RegisterResponse.Authorized
-	(*RegisterResponse_Pending)(nil),               // 135: meshtransit.mtcp.v1.RegisterResponse.Pending
-	(*RegisterResponse_AdminApproval)(nil),         // 136: meshtransit.mtcp.v1.RegisterResponse.AdminApproval
-	(*RegisterResponse_Rejected)(nil),              // 137: meshtransit.mtcp.v1.RegisterResponse.Rejected
-	(*HealthReport_Component)(nil),                 // 138: meshtransit.mtcp.v1.HealthReport.Component
-	(*RouteHealthReport_ExitHealth)(nil),           // 139: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth
-	(*RouteHealthReport_SiteHealth)(nil),           // 140: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth
-	(*RouteSelectionReport_ExitSelection)(nil),     // 141: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection
-	(*RouteSelectionReport_SiteSelection)(nil),     // 142: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection
-	(*KeyUpdate_ControlKey)(nil),                   // 143: meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	(*KeyUpdate_SigningKey)(nil),                   // 144: meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	(*RegisterRequest_Sibling)(nil),                // 130: meshtransit.mtcp.v1.RegisterRequest.Sibling
+	(*RegisterRequest_Auth)(nil),                   // 131: meshtransit.mtcp.v1.RegisterRequest.Auth
+	(*RegisterRequest_ClusterJoin)(nil),            // 132: meshtransit.mtcp.v1.RegisterRequest.ClusterJoin
+	(*RegisterRequest_Interactive)(nil),            // 133: meshtransit.mtcp.v1.RegisterRequest.Interactive
+	(*RegisterRequest_Resume)(nil),                 // 134: meshtransit.mtcp.v1.RegisterRequest.Resume
+	(*RegisterResponse_AlreadyInNetwork)(nil),      // 135: meshtransit.mtcp.v1.RegisterResponse.AlreadyInNetwork
+	(*RegisterResponse_Authorized)(nil),            // 136: meshtransit.mtcp.v1.RegisterResponse.Authorized
+	(*RegisterResponse_Pending)(nil),               // 137: meshtransit.mtcp.v1.RegisterResponse.Pending
+	(*RegisterResponse_AdminApproval)(nil),         // 138: meshtransit.mtcp.v1.RegisterResponse.AdminApproval
+	(*RegisterResponse_Rejected)(nil),              // 139: meshtransit.mtcp.v1.RegisterResponse.Rejected
+	(*HealthReport_Component)(nil),                 // 140: meshtransit.mtcp.v1.HealthReport.Component
+	(*RouteHealthReport_ExitHealth)(nil),           // 141: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth
+	(*RouteHealthReport_SiteHealth)(nil),           // 142: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth
+	(*RouteSelectionReport_ExitSelection)(nil),     // 143: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection
+	(*RouteSelectionReport_SiteSelection)(nil),     // 144: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection
+	(*KeyUpdate_ControlKey)(nil),                   // 145: meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	(*KeyUpdate_SigningKey)(nil),                   // 146: meshtransit.mtcp.v1.KeyUpdate.SigningKey
 }
 var file_mtcp_v1_mtcp_proto_depIdxs = []int32{
 	32,  // 0: meshtransit.mtcp.v1.ClientHello.client:type_name -> meshtransit.mtcp.v1.ClientInfo
@@ -10564,148 +10694,150 @@ var file_mtcp_v1_mtcp_proto_depIdxs = []int32{
 	0,   // 2: meshtransit.mtcp.v1.ServerHello.reject:type_name -> meshtransit.mtcp.v1.ServerHello.Reject
 	1,   // 3: meshtransit.mtcp.v1.Error.code:type_name -> meshtransit.mtcp.v1.Error.Code
 	113, // 4: meshtransit.mtcp.v1.RegisterRequest.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	130, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
-	134, // 6: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
-	135, // 7: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
-	137, // 8: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
-	3,   // 9: meshtransit.mtcp.v1.LogoutResponse.outcome:type_name -> meshtransit.mtcp.v1.LogoutResponse.Outcome
-	47,  // 10: meshtransit.mtcp.v1.GatewayGroupReport.groups:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus
-	4,   // 11: meshtransit.mtcp.v1.GatewayGroupStatus.state:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus.State
-	5,   // 12: meshtransit.mtcp.v1.GatewayGroupStatus.reason:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus.Reason
-	49,  // 13: meshtransit.mtcp.v1.GatewayGroupCeiling.groups:type_name -> meshtransit.mtcp.v1.GatewayCeilingGroup
-	50,  // 14: meshtransit.mtcp.v1.GatewayCeilingGroup.everywhere:type_name -> meshtransit.mtcp.v1.GatewayCeilingScope
-	50,  // 15: meshtransit.mtcp.v1.GatewayCeilingGroup.namespaces:type_name -> meshtransit.mtcp.v1.GatewayCeilingScope
-	80,  // 16: meshtransit.mtcp.v1.GatewayCeilingScope.rules:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
-	6,   // 17: meshtransit.mtcp.v1.KubeCertResult.outcome:type_name -> meshtransit.mtcp.v1.KubeCertResult.Outcome
-	56,  // 18: meshtransit.mtcp.v1.KubeAuditIntents.intents:type_name -> meshtransit.mtcp.v1.KubeAuditIntent
-	7,   // 19: meshtransit.mtcp.v1.KubeAuditIntent.class:type_name -> meshtransit.mtcp.v1.KubeAuditIntent.Class
-	58,  // 20: meshtransit.mtcp.v1.KubeAuditAck.results:type_name -> meshtransit.mtcp.v1.KubeAuditResult
-	60,  // 21: meshtransit.mtcp.v1.KubeAuditOutcomes.outcomes:type_name -> meshtransit.mtcp.v1.KubeAuditOutcome
-	61,  // 22: meshtransit.mtcp.v1.KubeAuditOutcomes.denials:type_name -> meshtransit.mtcp.v1.KubeAuditDenials
-	62,  // 23: meshtransit.mtcp.v1.KubeAuditDenials.sample:type_name -> meshtransit.mtcp.v1.KubeAuditDenialSample
-	63,  // 24: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
-	64,  // 25: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	70,  // 26: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
-	70,  // 27: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
-	90,  // 28: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	106, // 29: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	110, // 30: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
-	101, // 31: meshtransit.mtcp.v1.MapSnapshot.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
-	103, // 32: meshtransit.mtcp.v1.MapSnapshot.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
-	94,  // 33: meshtransit.mtcp.v1.MapSnapshot.exits:type_name -> meshtransit.mtcp.v1.ExitConfig
-	97,  // 34: meshtransit.mtcp.v1.MapSnapshot.served_exits:type_name -> meshtransit.mtcp.v1.ServedExits
-	73,  // 35: meshtransit.mtcp.v1.MapSnapshot.kubernetes_clusters:type_name -> meshtransit.mtcp.v1.KubernetesClusters
-	78,  // 36: meshtransit.mtcp.v1.MapSnapshot.kubernetes_scopes:type_name -> meshtransit.mtcp.v1.KubernetesScopeTable
-	63,  // 37: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
-	64,  // 38: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	70,  // 39: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
-	70,  // 40: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
-	82,  // 41: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
-	90,  // 42: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	106, // 43: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	110, // 44: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
-	101, // 45: meshtransit.mtcp.v1.MapDelta.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
-	103, // 46: meshtransit.mtcp.v1.MapDelta.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
-	94,  // 47: meshtransit.mtcp.v1.MapDelta.exits:type_name -> meshtransit.mtcp.v1.ExitConfig
-	97,  // 48: meshtransit.mtcp.v1.MapDelta.served_exits:type_name -> meshtransit.mtcp.v1.ServedExits
-	73,  // 49: meshtransit.mtcp.v1.MapDelta.kubernetes_clusters:type_name -> meshtransit.mtcp.v1.KubernetesClusters
-	78,  // 50: meshtransit.mtcp.v1.MapDelta.kubernetes_scopes:type_name -> meshtransit.mtcp.v1.KubernetesScopeTable
-	63,  // 51: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
-	63,  // 52: meshtransit.mtcp.v1.MapFresh.view:type_name -> meshtransit.mtcp.v1.View
-	64,  // 53: meshtransit.mtcp.v1.MapFresh.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	63,  // 54: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
-	85,  // 55: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	86,  // 56: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	87,  // 57: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	84,  // 58: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
-	88,  // 59: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
-	75,  // 60: meshtransit.mtcp.v1.Device.kubernetes:type_name -> meshtransit.mtcp.v1.KubernetesAccess
-	72,  // 61: meshtransit.mtcp.v1.Device.kubernetes_ca:type_name -> meshtransit.mtcp.v1.KubernetesCA
-	71,  // 62: meshtransit.mtcp.v1.Device.identity:type_name -> meshtransit.mtcp.v1.SelfIdentity
-	8,   // 63: meshtransit.mtcp.v1.SelfIdentity.ownership:type_name -> meshtransit.mtcp.v1.SelfIdentity.Ownership
-	74,  // 64: meshtransit.mtcp.v1.KubernetesClusters.clusters:type_name -> meshtransit.mtcp.v1.KubernetesCluster
-	9,   // 65: meshtransit.mtcp.v1.KubernetesClusters.availability:type_name -> meshtransit.mtcp.v1.KubernetesClusters.Availability
-	76,  // 66: meshtransit.mtcp.v1.KubernetesAccess.grants:type_name -> meshtransit.mtcp.v1.KubernetesGrant
-	77,  // 67: meshtransit.mtcp.v1.KubernetesAccess.scoped_grants:type_name -> meshtransit.mtcp.v1.KubernetesScopedGrant
-	10,  // 68: meshtransit.mtcp.v1.KubernetesScopedGrant.mode:type_name -> meshtransit.mtcp.v1.KubernetesScopedGrant.Mode
-	79,  // 69: meshtransit.mtcp.v1.KubernetesScopeTable.profiles:type_name -> meshtransit.mtcp.v1.KubernetesProfile
-	81,  // 70: meshtransit.mtcp.v1.KubernetesScopeTable.scopes:type_name -> meshtransit.mtcp.v1.KubernetesScope
-	80,  // 71: meshtransit.mtcp.v1.KubernetesProfile.namespaced:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
-	80,  // 72: meshtransit.mtcp.v1.KubernetesProfile.cluster:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
-	83,  // 73: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
-	87,  // 74: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	86,  // 75: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
-	11,  // 76: meshtransit.mtcp.v1.Endpoint.kind:type_name -> meshtransit.mtcp.v1.Endpoint.Kind
-	12,  // 77: meshtransit.mtcp.v1.AliasGrant.role:type_name -> meshtransit.mtcp.v1.AliasGrant.Role
-	89,  // 78: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
-	91,  // 79: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
-	85,  // 80: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
-	92,  // 81: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
-	85,  // 82: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
-	93,  // 83: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
-	95,  // 84: meshtransit.mtcp.v1.ExitConfig.pools:type_name -> meshtransit.mtcp.v1.ExitPool
-	96,  // 85: meshtransit.mtcp.v1.ExitPool.candidates:type_name -> meshtransit.mtcp.v1.ExitCandidate
-	13,  // 86: meshtransit.mtcp.v1.ExitPool.status:type_name -> meshtransit.mtcp.v1.ExitPool.Status
-	14,  // 87: meshtransit.mtcp.v1.ExitPool.mode:type_name -> meshtransit.mtcp.v1.ExitPool.Mode
-	15,  // 88: meshtransit.mtcp.v1.ExitCandidate.state:type_name -> meshtransit.mtcp.v1.ExitCandidate.State
-	16,  // 89: meshtransit.mtcp.v1.ExitCandidate.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
-	98,  // 90: meshtransit.mtcp.v1.ServedExits.pools:type_name -> meshtransit.mtcp.v1.ServedExit
-	100, // 91: meshtransit.mtcp.v1.ServedExit.probes:type_name -> meshtransit.mtcp.v1.ExitProbe
-	91,  // 92: meshtransit.mtcp.v1.ServedExit.rules:type_name -> meshtransit.mtcp.v1.FilterRule
-	99,  // 93: meshtransit.mtcp.v1.ServedExit.dns_relay_scopes:type_name -> meshtransit.mtcp.v1.DNSRelayScope
-	85,  // 94: meshtransit.mtcp.v1.DNSRelayScope.sources:type_name -> meshtransit.mtcp.v1.Prefix
-	102, // 95: meshtransit.mtcp.v1.RouteConfig.sites:type_name -> meshtransit.mtcp.v1.SiteRoute
-	85,  // 96: meshtransit.mtcp.v1.SiteRoute.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	17,  // 97: meshtransit.mtcp.v1.SiteRoute.status:type_name -> meshtransit.mtcp.v1.SiteRoute.Status
-	104, // 98: meshtransit.mtcp.v1.ServedRoutes.sites:type_name -> meshtransit.mtcp.v1.ServedSite
-	85,  // 99: meshtransit.mtcp.v1.ServedSite.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	105, // 100: meshtransit.mtcp.v1.ServedSite.probes:type_name -> meshtransit.mtcp.v1.RouteProbe
-	18,  // 101: meshtransit.mtcp.v1.RouteProbe.kind:type_name -> meshtransit.mtcp.v1.RouteProbe.Kind
-	107, // 102: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
-	108, // 103: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	109, // 104: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
-	19,  // 105: meshtransit.mtcp.v1.DnsRecord.type:type_name -> meshtransit.mtcp.v1.DnsRecord.Type
-	108, // 106: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	86,  // 107: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	87,  // 108: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	112, // 109: meshtransit.mtcp.v1.EndpointReport.port_mapping:type_name -> meshtransit.mtcp.v1.PortMapping
-	85,  // 110: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	113, // 111: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	138, // 112: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
-	140, // 113: meshtransit.mtcp.v1.RouteHealthReport.sites:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth
-	139, // 114: meshtransit.mtcp.v1.RouteHealthReport.exit:type_name -> meshtransit.mtcp.v1.RouteHealthReport.ExitHealth
-	142, // 115: meshtransit.mtcp.v1.RouteSelectionReport.sites:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection
-	141, // 116: meshtransit.mtcp.v1.RouteSelectionReport.exit:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection
-	119, // 117: meshtransit.mtcp.v1.CaptiveWindowReport.windows:type_name -> meshtransit.mtcp.v1.CaptiveWindow
-	25,  // 118: meshtransit.mtcp.v1.CaptiveWindow.end:type_name -> meshtransit.mtcp.v1.CaptiveWindow.End
-	63,  // 119: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
-	122, // 120: meshtransit.mtcp.v1.DnsHealthReport.resolvers:type_name -> meshtransit.mtcp.v1.ResolverHealth
-	26,  // 121: meshtransit.mtcp.v1.ResolverHealth.state:type_name -> meshtransit.mtcp.v1.ResolverHealth.State
-	124, // 122: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
-	28,  // 123: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
-	27,  // 124: meshtransit.mtcp.v1.PeerPathStats.relay_reason:type_name -> meshtransit.mtcp.v1.PeerPathStats.RelayReason
-	29,  // 125: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
-	143, // 126: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	144, // 127: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
-	30,  // 128: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
-	132, // 129: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
-	133, // 130: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
-	131, // 131: meshtransit.mtcp.v1.RegisterRequest.Auth.cluster_join:type_name -> meshtransit.mtcp.v1.RegisterRequest.ClusterJoin
-	136, // 132: meshtransit.mtcp.v1.RegisterResponse.Pending.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
-	2,   // 133: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
-	136, // 134: meshtransit.mtcp.v1.RegisterResponse.Rejected.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
-	20,  // 135: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
-	21,  // 136: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
-	22,  // 137: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
-	16,  // 138: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
-	22,  // 139: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
-	23,  // 140: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.Reason
-	24,  // 141: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.Reason
-	142, // [142:142] is the sub-list for method output_type
-	142, // [142:142] is the sub-list for method input_type
-	142, // [142:142] is the sub-list for extension type_name
-	142, // [142:142] is the sub-list for extension extendee
-	0,   // [0:142] is the sub-list for field type_name
+	131, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
+	130, // 6: meshtransit.mtcp.v1.RegisterRequest.siblings:type_name -> meshtransit.mtcp.v1.RegisterRequest.Sibling
+	136, // 7: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
+	137, // 8: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
+	139, // 9: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
+	135, // 10: meshtransit.mtcp.v1.RegisterResponse.already_in_network:type_name -> meshtransit.mtcp.v1.RegisterResponse.AlreadyInNetwork
+	3,   // 11: meshtransit.mtcp.v1.LogoutResponse.outcome:type_name -> meshtransit.mtcp.v1.LogoutResponse.Outcome
+	47,  // 12: meshtransit.mtcp.v1.GatewayGroupReport.groups:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus
+	4,   // 13: meshtransit.mtcp.v1.GatewayGroupStatus.state:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus.State
+	5,   // 14: meshtransit.mtcp.v1.GatewayGroupStatus.reason:type_name -> meshtransit.mtcp.v1.GatewayGroupStatus.Reason
+	49,  // 15: meshtransit.mtcp.v1.GatewayGroupCeiling.groups:type_name -> meshtransit.mtcp.v1.GatewayCeilingGroup
+	50,  // 16: meshtransit.mtcp.v1.GatewayCeilingGroup.everywhere:type_name -> meshtransit.mtcp.v1.GatewayCeilingScope
+	50,  // 17: meshtransit.mtcp.v1.GatewayCeilingGroup.namespaces:type_name -> meshtransit.mtcp.v1.GatewayCeilingScope
+	80,  // 18: meshtransit.mtcp.v1.GatewayCeilingScope.rules:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
+	6,   // 19: meshtransit.mtcp.v1.KubeCertResult.outcome:type_name -> meshtransit.mtcp.v1.KubeCertResult.Outcome
+	56,  // 20: meshtransit.mtcp.v1.KubeAuditIntents.intents:type_name -> meshtransit.mtcp.v1.KubeAuditIntent
+	7,   // 21: meshtransit.mtcp.v1.KubeAuditIntent.class:type_name -> meshtransit.mtcp.v1.KubeAuditIntent.Class
+	58,  // 22: meshtransit.mtcp.v1.KubeAuditAck.results:type_name -> meshtransit.mtcp.v1.KubeAuditResult
+	60,  // 23: meshtransit.mtcp.v1.KubeAuditOutcomes.outcomes:type_name -> meshtransit.mtcp.v1.KubeAuditOutcome
+	61,  // 24: meshtransit.mtcp.v1.KubeAuditOutcomes.denials:type_name -> meshtransit.mtcp.v1.KubeAuditDenials
+	62,  // 25: meshtransit.mtcp.v1.KubeAuditDenials.sample:type_name -> meshtransit.mtcp.v1.KubeAuditDenialSample
+	63,  // 26: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
+	64,  // 27: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	70,  // 28: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
+	70,  // 29: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
+	90,  // 30: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	106, // 31: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	110, // 32: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
+	101, // 33: meshtransit.mtcp.v1.MapSnapshot.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
+	103, // 34: meshtransit.mtcp.v1.MapSnapshot.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
+	94,  // 35: meshtransit.mtcp.v1.MapSnapshot.exits:type_name -> meshtransit.mtcp.v1.ExitConfig
+	97,  // 36: meshtransit.mtcp.v1.MapSnapshot.served_exits:type_name -> meshtransit.mtcp.v1.ServedExits
+	73,  // 37: meshtransit.mtcp.v1.MapSnapshot.kubernetes_clusters:type_name -> meshtransit.mtcp.v1.KubernetesClusters
+	78,  // 38: meshtransit.mtcp.v1.MapSnapshot.kubernetes_scopes:type_name -> meshtransit.mtcp.v1.KubernetesScopeTable
+	63,  // 39: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
+	64,  // 40: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	70,  // 41: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
+	70,  // 42: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
+	82,  // 43: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
+	90,  // 44: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	106, // 45: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	110, // 46: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
+	101, // 47: meshtransit.mtcp.v1.MapDelta.routes:type_name -> meshtransit.mtcp.v1.RouteConfig
+	103, // 48: meshtransit.mtcp.v1.MapDelta.served:type_name -> meshtransit.mtcp.v1.ServedRoutes
+	94,  // 49: meshtransit.mtcp.v1.MapDelta.exits:type_name -> meshtransit.mtcp.v1.ExitConfig
+	97,  // 50: meshtransit.mtcp.v1.MapDelta.served_exits:type_name -> meshtransit.mtcp.v1.ServedExits
+	73,  // 51: meshtransit.mtcp.v1.MapDelta.kubernetes_clusters:type_name -> meshtransit.mtcp.v1.KubernetesClusters
+	78,  // 52: meshtransit.mtcp.v1.MapDelta.kubernetes_scopes:type_name -> meshtransit.mtcp.v1.KubernetesScopeTable
+	63,  // 53: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
+	63,  // 54: meshtransit.mtcp.v1.MapFresh.view:type_name -> meshtransit.mtcp.v1.View
+	64,  // 55: meshtransit.mtcp.v1.MapFresh.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	63,  // 56: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
+	85,  // 57: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	86,  // 58: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	87,  // 59: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	84,  // 60: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
+	88,  // 61: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
+	75,  // 62: meshtransit.mtcp.v1.Device.kubernetes:type_name -> meshtransit.mtcp.v1.KubernetesAccess
+	72,  // 63: meshtransit.mtcp.v1.Device.kubernetes_ca:type_name -> meshtransit.mtcp.v1.KubernetesCA
+	71,  // 64: meshtransit.mtcp.v1.Device.identity:type_name -> meshtransit.mtcp.v1.SelfIdentity
+	8,   // 65: meshtransit.mtcp.v1.SelfIdentity.ownership:type_name -> meshtransit.mtcp.v1.SelfIdentity.Ownership
+	74,  // 66: meshtransit.mtcp.v1.KubernetesClusters.clusters:type_name -> meshtransit.mtcp.v1.KubernetesCluster
+	9,   // 67: meshtransit.mtcp.v1.KubernetesClusters.availability:type_name -> meshtransit.mtcp.v1.KubernetesClusters.Availability
+	76,  // 68: meshtransit.mtcp.v1.KubernetesAccess.grants:type_name -> meshtransit.mtcp.v1.KubernetesGrant
+	77,  // 69: meshtransit.mtcp.v1.KubernetesAccess.scoped_grants:type_name -> meshtransit.mtcp.v1.KubernetesScopedGrant
+	10,  // 70: meshtransit.mtcp.v1.KubernetesScopedGrant.mode:type_name -> meshtransit.mtcp.v1.KubernetesScopedGrant.Mode
+	79,  // 71: meshtransit.mtcp.v1.KubernetesScopeTable.profiles:type_name -> meshtransit.mtcp.v1.KubernetesProfile
+	81,  // 72: meshtransit.mtcp.v1.KubernetesScopeTable.scopes:type_name -> meshtransit.mtcp.v1.KubernetesScope
+	80,  // 73: meshtransit.mtcp.v1.KubernetesProfile.namespaced:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
+	80,  // 74: meshtransit.mtcp.v1.KubernetesProfile.cluster:type_name -> meshtransit.mtcp.v1.KubernetesProfileRule
+	83,  // 75: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
+	87,  // 76: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	86,  // 77: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
+	11,  // 78: meshtransit.mtcp.v1.Endpoint.kind:type_name -> meshtransit.mtcp.v1.Endpoint.Kind
+	12,  // 79: meshtransit.mtcp.v1.AliasGrant.role:type_name -> meshtransit.mtcp.v1.AliasGrant.Role
+	89,  // 80: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
+	91,  // 81: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
+	85,  // 82: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
+	92,  // 83: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
+	85,  // 84: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
+	93,  // 85: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
+	95,  // 86: meshtransit.mtcp.v1.ExitConfig.pools:type_name -> meshtransit.mtcp.v1.ExitPool
+	96,  // 87: meshtransit.mtcp.v1.ExitPool.candidates:type_name -> meshtransit.mtcp.v1.ExitCandidate
+	13,  // 88: meshtransit.mtcp.v1.ExitPool.status:type_name -> meshtransit.mtcp.v1.ExitPool.Status
+	14,  // 89: meshtransit.mtcp.v1.ExitPool.mode:type_name -> meshtransit.mtcp.v1.ExitPool.Mode
+	15,  // 90: meshtransit.mtcp.v1.ExitCandidate.state:type_name -> meshtransit.mtcp.v1.ExitCandidate.State
+	16,  // 91: meshtransit.mtcp.v1.ExitCandidate.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
+	98,  // 92: meshtransit.mtcp.v1.ServedExits.pools:type_name -> meshtransit.mtcp.v1.ServedExit
+	100, // 93: meshtransit.mtcp.v1.ServedExit.probes:type_name -> meshtransit.mtcp.v1.ExitProbe
+	91,  // 94: meshtransit.mtcp.v1.ServedExit.rules:type_name -> meshtransit.mtcp.v1.FilterRule
+	99,  // 95: meshtransit.mtcp.v1.ServedExit.dns_relay_scopes:type_name -> meshtransit.mtcp.v1.DNSRelayScope
+	85,  // 96: meshtransit.mtcp.v1.DNSRelayScope.sources:type_name -> meshtransit.mtcp.v1.Prefix
+	102, // 97: meshtransit.mtcp.v1.RouteConfig.sites:type_name -> meshtransit.mtcp.v1.SiteRoute
+	85,  // 98: meshtransit.mtcp.v1.SiteRoute.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	17,  // 99: meshtransit.mtcp.v1.SiteRoute.status:type_name -> meshtransit.mtcp.v1.SiteRoute.Status
+	104, // 100: meshtransit.mtcp.v1.ServedRoutes.sites:type_name -> meshtransit.mtcp.v1.ServedSite
+	85,  // 101: meshtransit.mtcp.v1.ServedSite.prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	105, // 102: meshtransit.mtcp.v1.ServedSite.probes:type_name -> meshtransit.mtcp.v1.RouteProbe
+	18,  // 103: meshtransit.mtcp.v1.RouteProbe.kind:type_name -> meshtransit.mtcp.v1.RouteProbe.Kind
+	107, // 104: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
+	108, // 105: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	109, // 106: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
+	19,  // 107: meshtransit.mtcp.v1.DnsRecord.type:type_name -> meshtransit.mtcp.v1.DnsRecord.Type
+	108, // 108: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	86,  // 109: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	87,  // 110: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	112, // 111: meshtransit.mtcp.v1.EndpointReport.port_mapping:type_name -> meshtransit.mtcp.v1.PortMapping
+	85,  // 112: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	113, // 113: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
+	140, // 114: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
+	142, // 115: meshtransit.mtcp.v1.RouteHealthReport.sites:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth
+	141, // 116: meshtransit.mtcp.v1.RouteHealthReport.exit:type_name -> meshtransit.mtcp.v1.RouteHealthReport.ExitHealth
+	144, // 117: meshtransit.mtcp.v1.RouteSelectionReport.sites:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection
+	143, // 118: meshtransit.mtcp.v1.RouteSelectionReport.exit:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection
+	119, // 119: meshtransit.mtcp.v1.CaptiveWindowReport.windows:type_name -> meshtransit.mtcp.v1.CaptiveWindow
+	25,  // 120: meshtransit.mtcp.v1.CaptiveWindow.end:type_name -> meshtransit.mtcp.v1.CaptiveWindow.End
+	63,  // 121: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
+	122, // 122: meshtransit.mtcp.v1.DnsHealthReport.resolvers:type_name -> meshtransit.mtcp.v1.ResolverHealth
+	26,  // 123: meshtransit.mtcp.v1.ResolverHealth.state:type_name -> meshtransit.mtcp.v1.ResolverHealth.State
+	124, // 124: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
+	28,  // 125: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
+	27,  // 126: meshtransit.mtcp.v1.PeerPathStats.relay_reason:type_name -> meshtransit.mtcp.v1.PeerPathStats.RelayReason
+	29,  // 127: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
+	145, // 128: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	146, // 129: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	30,  // 130: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
+	133, // 131: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
+	134, // 132: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
+	132, // 133: meshtransit.mtcp.v1.RegisterRequest.Auth.cluster_join:type_name -> meshtransit.mtcp.v1.RegisterRequest.ClusterJoin
+	138, // 134: meshtransit.mtcp.v1.RegisterResponse.Pending.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
+	2,   // 135: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
+	138, // 136: meshtransit.mtcp.v1.RegisterResponse.Rejected.admin_approval:type_name -> meshtransit.mtcp.v1.RegisterResponse.AdminApproval
+	20,  // 137: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
+	21,  // 138: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
+	22,  // 139: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
+	16,  // 140: meshtransit.mtcp.v1.RouteHealthReport.ExitHealth.families:type_name -> meshtransit.mtcp.v1.ExitCandidate.Families
+	22,  // 141: meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.state:type_name -> meshtransit.mtcp.v1.RouteHealthReport.SiteHealth.State
+	23,  // 142: meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.ExitSelection.Reason
+	24,  // 143: meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.reason:type_name -> meshtransit.mtcp.v1.RouteSelectionReport.SiteSelection.Reason
+	144, // [144:144] is the sub-list for method output_type
+	144, // [144:144] is the sub-list for method input_type
+	144, // [144:144] is the sub-list for extension type_name
+	144, // [144:144] is the sub-list for extension extendee
+	0,   // [0:144] is the sub-list for field type_name
 }
 
 func init() { file_mtcp_v1_mtcp_proto_init() }
@@ -10717,11 +10849,12 @@ func file_mtcp_v1_mtcp_proto_init() {
 		(*RegisterResponse_Authorized_)(nil),
 		(*RegisterResponse_Pending_)(nil),
 		(*RegisterResponse_Rejected_)(nil),
+		(*RegisterResponse_AlreadyInNetwork_)(nil),
 	}
 	file_mtcp_v1_mtcp_proto_msgTypes[39].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[40].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[51].OneofWrappers = []any{}
-	file_mtcp_v1_mtcp_proto_msgTypes[99].OneofWrappers = []any{
+	file_mtcp_v1_mtcp_proto_msgTypes[100].OneofWrappers = []any{
 		(*RegisterRequest_Auth_EnrollmentKey)(nil),
 		(*RegisterRequest_Auth_Interactive)(nil),
 		(*RegisterRequest_Auth_Resume)(nil),
@@ -10733,7 +10866,7 @@ func file_mtcp_v1_mtcp_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mtcp_v1_mtcp_proto_rawDesc), len(file_mtcp_v1_mtcp_proto_rawDesc)),
 			NumEnums:      31,
-			NumMessages:   114,
+			NumMessages:   116,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

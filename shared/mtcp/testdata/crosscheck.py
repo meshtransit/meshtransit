@@ -102,9 +102,9 @@ def handshake(v):
     return init, response, state.h, initiator_to_responder, responder_to_initiator
 
 
-def proof(private, control_public, handshake_hash):
+def proof(private, control_public, handshake_hash, domain=b"meshtransit/mtcp-key-proof/v1"):
     secret = dh(private, control_public)
-    data = b"meshtransit/mtcp-key-proof/v1\x00" + handshake_hash + public(private)
+    data = domain + b"\x00" + handshake_hash + public(private)
     return hashlib.blake2s(data, key=secret).digest()
 
 
@@ -144,6 +144,11 @@ def main(path):
           proofs["node_proof"])
     check("disco_proof", proof(bytes.fromhex(proofs["disco_private"]), control_public, handshake_hash).hex(),
           proofs["disco_proof"])
+    sibling = bytes.fromhex(proofs["sibling_machine_private"])
+    check("sibling_machine_public", "mtmachine:" + public(sibling).hex(), proofs["sibling_machine_public"])
+    check("sibling_machine_proof",
+          proof(sibling, control_public, handshake_hash, b"meshtransit/mtcp-sibling-machine-key/v1").hex(),
+          proofs["sibling_machine_proof"])
 
     # Fragment headers: msg_type, flags (no MORE, no ZSTD) for single fragments.
     check("ping fragment header", v["fragments"]["ping"][:4], "0200")
@@ -152,7 +157,7 @@ def main(path):
     if failures:
         print("\n".join(failures))
         return 1
-    print(f"ok: handshake, {len(v['records'])} records, 2 proofs, fingerprint and key ID match")
+    print(f"ok: handshake, {len(v['records'])} records, 3 proofs, fingerprint and key ID match")
     return 0
 
 

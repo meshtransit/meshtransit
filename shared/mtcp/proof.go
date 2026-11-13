@@ -14,6 +14,7 @@ const (
 	proofDomain       = "meshtransit/mtcp-key-proof/v1"
 	sessionDomain     = "meshtransit/mtcp-node-key-session/v1"
 	rotationDomain    = "meshtransit/mtcp-machine-key-rotation/v1"
+	siblingDomain     = "meshtransit/mtcp-sibling-machine-key/v1"
 	fingerprintDomain = "meshtransit/mtcp-control-fp/v1"
 	fingerprintSize   = 16
 )
@@ -82,12 +83,7 @@ func VerifyNodeKeySessionProof(control key.ControlPrivate, handshakeHash [32]byt
 func MachineKeyRotationProof(next key.MachinePrivate, control key.ControlPublic,
 	handshakeHash [32]byte,
 ) ([ProofSize]byte, error) {
-	secret, err := next.SharedWithControl(control)
-	if err != nil {
-		return [ProofSize]byte{}, err
-	}
-	defer clear(secret[:])
-	return domainProof(rotationDomain, secret, handshakeHash, next.Public()), nil
+	return machineKeyDomainProof(rotationDomain, next, control, handshakeHash)
 }
 
 // VerifyMachineKeyRotationProof checks a RotateMachineKey proof on Core.
@@ -95,6 +91,38 @@ func VerifyMachineKeyRotationProof(control key.ControlPrivate, handshakeHash [32
 	got []byte,
 ) bool {
 	return verifyDomainProof(rotationDomain, control, handshakeHash, public, got)
+}
+
+// SiblingMachineKeyProof proves, in this session, that the machine also
+// holds another profile's machine key (duplicate-device design §4.1): Core
+// learns the two keys live on one machine. Its own domain keeps it from
+// passing as a rotation proof, and the handshake hash keeps it to this
+// session.
+func SiblingMachineKeyProof(sibling key.MachinePrivate, control key.ControlPublic,
+	handshakeHash [32]byte,
+) ([ProofSize]byte, error) {
+	return machineKeyDomainProof(siblingDomain, sibling, control, handshakeHash)
+}
+
+// VerifySiblingMachineKeyProof checks a RegisterRequest sibling proof on
+// Core with the session's control key.
+func VerifySiblingMachineKeyProof(control key.ControlPrivate, handshakeHash [32]byte, public [key.Size]byte,
+	got []byte,
+) bool {
+	return verifyDomainProof(siblingDomain, control, handshakeHash, public, got)
+}
+
+// machineKeyDomainProof proves possession of a machine key in this session,
+// in one domain.
+func machineKeyDomainProof(domain string, machine key.MachinePrivate, control key.ControlPublic,
+	handshakeHash [32]byte,
+) ([ProofSize]byte, error) {
+	secret, err := machine.SharedWithControl(control)
+	if err != nil {
+		return [ProofSize]byte{}, err
+	}
+	defer clear(secret[:])
+	return domainProof(domain, secret, handshakeHash, machine.Public()), nil
 }
 
 func verifyDomainProof(domain string, control key.ControlPrivate, handshakeHash [32]byte, public [key.Size]byte,
