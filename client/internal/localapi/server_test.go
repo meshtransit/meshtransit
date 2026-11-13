@@ -601,6 +601,15 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 // display files, returned for the test to write.
 func newTestServerWithDisplay(t *testing.T, options Options) (*Server, *profile.DisplayStore) {
 	t.Helper()
+	return newTestServerWithDaemon(t, options, daemon.Options{})
+}
+
+// newTestServerWithDaemon is newTestServerWithDisplay with more daemon
+// options; it sets the hostname and the display files.
+func newTestServerWithDaemon(t *testing.T, options Options, daemonOptions daemon.Options) (
+	*Server, *profile.DisplayStore,
+) {
+	t.Helper()
 
 	stateDir := t.TempDir()
 	store, err := profile.Open(stateDir)
@@ -632,7 +641,7 @@ func newTestServerWithDisplay(t *testing.T, options Options) (*Server, *profile.
 			Date:    "2026-09-09T00:00:00Z",
 		},
 		fakeProber{},
-		daemon.Options{Hostname: "node-a", Display: display},
+		withTestHost(daemonOptions, display),
 	)
 	if err != nil {
 		t.Fatalf("daemon.New() error = %v", err)
@@ -644,6 +653,11 @@ func newTestServerWithDisplay(t *testing.T, options Options) (*Server, *profile.
 	}
 
 	return server, display
+}
+
+func withTestHost(options daemon.Options, display *profile.DisplayStore) daemon.Options {
+	options.Hostname, options.Display = "node-a", display
+	return options
 }
 
 type fakeProber struct{}

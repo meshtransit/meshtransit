@@ -471,3 +471,28 @@ func (c *Client) CheckCaptiveWindow(ctx context.Context) error {
 	}
 	return nil
 }
+
+// RouteChoices reads the host's own route choices.
+func (c *Client) RouteChoices(ctx context.Context) (RouteChoices, error) {
+	response := RouteChoices{}
+	if err := c.do(ctx, http.MethodGet, "/v1/route-choices", nil, http.StatusOK, &response); err != nil {
+		return RouteChoices{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return RouteChoices{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+	return response, nil
+}
+
+// ChangeRouteChoices changes the named route choices where meshd writes
+// them (Windows) and returns them as saved.
+func (c *Client) ChangeRouteChoices(ctx context.Context, change RouteChoiceChange) (RouteChoices, error) {
+	response := RouteChoices{}
+	if err := c.do(ctx, http.MethodPatch, "/v1/route-choices", change, http.StatusOK, &response); err != nil {
+		return RouteChoices{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return RouteChoices{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+	return response, nil
+}

@@ -33,8 +33,11 @@ const usage = `usage: %[1]s routes [--routes-file PATH] COMMAND
   exit-allow-lan on|off     keep the attached private subnets off the exit node
   exit-allow-managed on|off let the administrator choose the Exit Pool
   exit-captive on|off       allow short windows to sign in to a captive portal
-  operators on|off          let the meshtransit group change exit-use, accept
-                            and exit-allow-lan without root (on by default)
+  operators on|off          let the operators group (meshtransit; on Windows
+                            MeshTransit Users, nested groups such as Domain
+                            Users included) change exit-use, accept and
+                            exit-allow-lan for everyone on this host without
+                            root (on by default; off by default on Windows)
 Changes need %[2]s and apply within seconds, without a restart.
 `
 
@@ -181,7 +184,7 @@ func changeRouteSettings(settings routesettings.Settings, command string, operan
 		case "exit-captive":
 			settings.ExitCaptiveOff = !value
 		case "operators":
-			settings.OperatorsOff = !value
+			settings = routesettings.WithOperators(settings, value)
 		case "dns":
 			settings.DNSOff = !value
 		default:
@@ -227,7 +230,7 @@ func (c Command) print(stdout, stderr io.Writer, settings routesettings.Settings
 		strings.Join(advertised, " "), onOff[settings.ExitMode], onOff[settings.ExitSMTPAllowed],
 		settings.ExitConntrackLimit(0), settings.ExitConsumerLimit(), cmp.Or(settings.ExitUse, "off"),
 		onOff[settings.ExitAllowLAN], onOff[settings.ExitAllowManaged],
-		onOff[!settings.ExitCaptiveOff], onOff[!settings.OperatorsOff], onOff[!settings.DNSOff]); err != nil {
+		onOff[!settings.ExitCaptiveOff], onOff[settings.OperatorsAllowed()], onOff[!settings.DNSOff]); err != nil {
 		_, _ = fmt.Fprintf(stderr, "%s: %v\n", c.Program, err)
 		return 1
 	}

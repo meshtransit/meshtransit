@@ -16,6 +16,19 @@ func Update(path string, change func(Settings, error) (Settings, error)) (Settin
 	return update(path, Load, Save, change)
 }
 
+// UpdateExisting is Update for meshd changing the host's own choices on a
+// caller's behalf: it never creates the settings directory or sets its
+// access list, which a caller could otherwise make SYSTEM do; it changes
+// the settings only inside a directory that exists already, private, no
+// link, below directories nobody else may replace (ErrUnsafeFile).
+func UpdateExisting(path string, change func(Settings, error) (Settings, error)) (Settings, error) {
+	path = filepath.Clean(path)
+	if err := checkExistingDirectory(filepath.Dir(path)); err != nil {
+		return Settings{}, err
+	}
+	return lockedUpdate(path, Load, writeAtomically, change)
+}
+
 // update is Update with the file's reading and writing given.
 func update(
 	path string,
@@ -27,6 +40,16 @@ func update(
 	if err := prepareDirectory(filepath.Dir(path)); err != nil {
 		return Settings{}, fmt.Errorf("routesettings: preparing %s: %w", filepath.Dir(path), err)
 	}
+	return lockedUpdate(path, load, save, change)
+}
+
+// lockedUpdate reads, changes and writes the settings under the lock.
+func lockedUpdate(
+	path string,
+	load func(string) (Settings, error),
+	save func(string, Settings) error,
+	change func(Settings, error) (Settings, error),
+) (Settings, error) {
 	unlock, err := lockSettings(path)
 	if err != nil {
 		return Settings{}, err

@@ -86,8 +86,12 @@ type Settings struct {
 	ExitCaptiveOff bool
 	// OperatorsOff keeps the host's own choices (ExitUse, AcceptRoutes,
 	// ExitAllowLAN) root's: the meshtransit group may no longer change them
-	// through the helper (package operator). A managed host turns it on.
+	// through the helper (package operator) or meshd. A managed host turns
+	// it on.
 	OperatorsOff bool
+	// OperatorsOn lets the operators change those choices where they may
+	// not by default (Windows, OperatorsAllowed); OperatorsOff still wins.
+	OperatorsOn bool
 	// DNSOff turns MeshTransit DNS off on this host (DNS design D5b): the
 	// host keeps its own DNS, and Core sees the Device turned it off. It is
 	// ignored while the host uses an exit node, whose kill switch admits no
@@ -115,6 +119,7 @@ type document struct {
 	ExitAllowManaged            bool     `json:"exit_allow_managed,omitempty"`
 	ExitCaptiveOff              bool     `json:"exit_captive_off,omitempty"`
 	OperatorsOff                bool     `json:"operators_off,omitempty"`
+	OperatorsOn                 bool     `json:"operators_on,omitempty"`
 	DNSOff                      bool     `json:"dns_off,omitempty"`
 }
 
@@ -224,7 +229,8 @@ func Decode(encoded []byte) (Settings, error) {
 		RouterMode: value.RouterMode, ExitMode: value.ExitMode, ExitSMTPAllowed: value.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: value.ExitConntrackPerConsumerMax, ExitMaxConsumers: value.ExitMaxConsumers,
 		ExitUse: value.ExitUse, ExitAllowLAN: value.ExitAllowLAN, ExitAllowManaged: value.ExitAllowManaged,
-		ExitCaptiveOff: value.ExitCaptiveOff, OperatorsOff: value.OperatorsOff, DNSOff: value.DNSOff,
+		ExitCaptiveOff: value.ExitCaptiveOff, OperatorsOff: value.OperatorsOff, OperatorsOn: value.OperatorsOn,
+		DNSOff: value.DNSOff,
 	}
 	for _, text := range value.AdvertiseRoutes {
 		prefix, err := netip.ParsePrefix(text)
@@ -251,7 +257,8 @@ func Encode(settings Settings) ([]byte, error) {
 		ExitMode: settings.ExitMode, ExitSMTPAllowed: settings.ExitSMTPAllowed,
 		ExitConntrackPerConsumerMax: settings.ExitConntrackPerConsumerMax, ExitMaxConsumers: settings.ExitMaxConsumers,
 		ExitUse: settings.ExitUse, ExitAllowLAN: settings.ExitAllowLAN, ExitAllowManaged: settings.ExitAllowManaged,
-		ExitCaptiveOff: settings.ExitCaptiveOff, OperatorsOff: settings.OperatorsOff, DNSOff: settings.DNSOff,
+		ExitCaptiveOff: settings.ExitCaptiveOff, OperatorsOff: settings.OperatorsOff, OperatorsOn: settings.OperatorsOn,
+		DNSOff: settings.DNSOff,
 	}
 	for index, prefix := range settings.AdvertiseRoutes {
 		value.AdvertiseRoutes[index] = prefix.String()
@@ -266,14 +273,21 @@ func Encode(settings Settings) ([]byte, error) {
 // Save writes settings to path atomically, readable by everyone and
 // writable by its owner only. Only root (or SYSTEM) runs it.
 func Save(path string, settings Settings) error {
+	directory := filepath.Dir(path)
+	if err := prepareDirectory(directory); err != nil {
+		return fmt.Errorf("routesettings: preparing %s: %w", directory, err)
+	}
+	return writeAtomically(path, settings)
+}
+
+// writeAtomically replaces the settings at path through a temporary file
+// in their directory, which it neither creates nor re-permissions.
+func writeAtomically(path string, settings Settings) error {
 	encoded, err := Encode(settings)
 	if err != nil {
 		return err
 	}
 	directory := filepath.Dir(path)
-	if err := prepareDirectory(directory); err != nil {
-		return fmt.Errorf("routesettings: preparing %s: %w", directory, err)
-	}
 	temporary, err := os.CreateTemp(directory, ".routes-*.json")
 	if err != nil {
 		return fmt.Errorf("routesettings: writing %s: %w", path, err)
@@ -295,7 +309,7 @@ func Save(path string, settings Settings) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("routesettings: writing %s: %w", path, err)
 	}
-	if err := os.Rename(name, path); err != nil {
+	if err := replaceFile(name, path); err != nil {
 		return fmt.Errorf("routesettings: replacing %s: %w", path, err)
 	}
 	return syncDirectory(directory)

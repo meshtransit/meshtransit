@@ -472,12 +472,17 @@ type Service struct {
 	// node a new session keeps using, and exitPools the candidates of each
 	// pool Core grants, by reference, which approval checks while no exit
 	// node is used.
-	routeSitesMu         sync.Mutex
-	routeSites           []RouteSiteView
-	exit                 *ExitView
-	exitSticky           exitSticky
-	exitPools            map[string][]string
-	loadRouteSettings    func(string) (routesettings.Settings, error)
+	routeSitesMu      sync.Mutex
+	routeSites        []RouteSiteView
+	exit              *ExitView
+	exitSticky        exitSticky
+	exitPools         map[string][]string
+	loadRouteSettings func(string) (routesettings.Settings, error)
+	// updateRouteSettings changes the route settings under their lock
+	// (routesettings.Update) where routeChoicesWritable lets meshd.
+	updateRouteSettings func(string, func(routesettings.Settings, error) (routesettings.Settings, error)) (
+		routesettings.Settings, error)
+	routeChoicesWritable bool
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
@@ -588,6 +593,14 @@ type Options struct {
 	// which requires a file only root can change. A mobile app keeps its
 	// settings in storage private to it.
 	LoadRouteSettings func(string) (routesettings.Settings, error)
+	// RouteChoicesWritable lets the local API change the host's own route
+	// choices (ChangeRouteChoices): only where meshd runs as SYSTEM
+	// (Windows) and no helper writes them.
+	RouteChoicesWritable bool
+	// UpdateRouteSettings changes RouteSettingsPath under its lock for
+	// ChangeRouteChoices; nil uses routesettings.UpdateExisting.
+	UpdateRouteSettings func(string, func(routesettings.Settings, error) (routesettings.Settings, error)) (
+		routesettings.Settings, error)
 	// RestartMarkerPath, when set, is the file a package upgrade writes just
 	// before it restarts meshd: a stopping router then does not tell Core it
 	// is going away, as it comes straight back.
@@ -669,6 +682,9 @@ func New(
 	if options.LoadRouteSettings == nil {
 		options.LoadRouteSettings = routesettings.Load
 	}
+	if options.UpdateRouteSettings == nil {
+		options.UpdateRouteSettings = routesettings.UpdateExisting
+	}
 	var pins *exitPins
 	var captiveRelays *captiveTracker
 	if options.EnableExits {
@@ -740,6 +756,8 @@ func New(
 		routeSettingsPath:     options.RouteSettingsPath,
 		restartMarkerPath:     options.RestartMarkerPath,
 		loadRouteSettings:     options.LoadRouteSettings,
+		updateRouteSettings:   options.UpdateRouteSettings,
+		routeChoicesWritable:  options.RouteChoicesWritable && options.RouteSettingsPath != "",
 		clock:                 options.Clock,
 		runtimeRetryDelay:     jitteredRuntimeRetryDelay,
 		endpointRefreshDelay:  randomEndpointRefreshDelay,

@@ -199,15 +199,15 @@ func (s *Server) run(uid uint32, request Request) Response {
 			refusal = refusedPointer(CodeUnavailable, "the route settings cannot be read")
 			return settings, errRefused
 		}
-		if settings.OperatorsOff && uid != 0 {
+		if !settings.OperatorsAllowed() && uid != 0 {
 			refusal = refusedPointer(CodeOperatorsOff, "root keeps these settings")
 			return settings, errRefused
 		}
-		if code, message, blocked := blockedByRoot(settings, request); blocked {
-			refusal = refusedPointer(code, message)
+		next, applyErr := apply(settings, request)
+		if errors.Is(applyErr, routesettings.ErrRootSetting) {
+			refusal = refusedPointer(CodeRootSetting, "root's accept-public is on: root turns accept on")
 			return settings, errRefused
 		}
-		next, applyErr := apply(settings, request)
 		if applyErr != nil {
 			refusal = refusedPointer(CodeInvalidValue, "the value is not accepted")
 			return settings, errRefused

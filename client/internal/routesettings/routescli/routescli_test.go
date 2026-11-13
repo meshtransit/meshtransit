@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/netip"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -196,8 +197,20 @@ func TestOperatorsSwitchSurvivesTheFile(t *testing.T) {
 	if decoded, err := routesettings.Decode(encoded); err != nil || !decoded.OperatorsOff {
 		t.Fatalf("operators_off did not survive the file: %+v, %v", decoded, err)
 	}
-	if on, err := changeRouteSettings(settings, "operators", []string{"on"}); err != nil || on.OperatorsOff {
+	on, err := changeRouteSettings(settings, "operators", []string{"on"})
+	if err != nil || on.OperatorsOff || !on.OperatorsAllowed() {
 		t.Fatalf("operators on = %+v, %v", on, err)
+	}
+	// Only Windows needs operators_on, which older binaries cannot read.
+	written, err := routesettings.Encode(on)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named := strings.Contains(string(written), "operators_on"); named != (runtime.GOOS == "windows") {
+		t.Fatalf("operators on wrote operators_on = %v on %s:\n%s", named, runtime.GOOS, written)
+	}
+	if settings.OperatorsOn || settings.OperatorsAllowed() {
+		t.Fatalf("operators off kept them on: %+v", settings)
 	}
 	if _, err := changeRouteSettings(settings, "operators", []string{"maybe"}); err == nil {
 		t.Fatal("operators maybe was accepted")

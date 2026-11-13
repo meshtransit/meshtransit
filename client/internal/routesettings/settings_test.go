@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -54,6 +55,10 @@ func TestDecodeAndEncodeRoundTrip(t *testing.T) {
 
 func TestLoadAndSave(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Load refuses a test's temporary directory on Windows: only SYSTEM and Administrators may open the " +
+			"settings directory (lock_windows_test.go covers the writes)")
+	}
 	path := filepath.Join(t.TempDir(), "routes.json")
 	if settings, err := Load(path); err != nil || settings.AcceptRoutes || len(settings.AdvertiseRoutes) != 0 {
 		t.Fatalf("a missing file = %+v, %v", settings, err)

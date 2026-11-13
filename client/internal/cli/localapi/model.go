@@ -477,3 +477,21 @@ type CaptiveStatus struct {
 type captiveCheckResponse struct {
 	APIVersion string `json:"api_version"`
 }
+
+// RouteChoices are the host's own route choices, whether root lets the
+// operators change them, and whether this caller may.
+type RouteChoices struct {
+	APIVersion   string `json:"api_version"`
+	AcceptRoutes bool   `json:"accept_routes"`
+	ExitUse      string `json:"exit_use"`
+	ExitAllowLAN bool   `json:"exit_allow_lan"`
+	Operators    bool   `json:"operators"`
+	CanChange    bool   `json:"can_change"`
+}
+
+// RouteChoiceChange names the route choices to change; nil leaves one.
+type RouteChoiceChange struct {
+	ExitUse      *string `json:"exit_use,omitempty"`
+	AcceptRoutes *bool   `json:"accept_routes,omitempty"`
+	ExitAllowLAN *bool   `json:"exit_allow_lan,omitempty"`
+}

@@ -128,6 +128,10 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 	daemonOptions.EnableExits = cfg.EnableExits
 	daemonOptions.ExitPinsDir = cfg.StateDir
 	daemonOptions.RouteSettingsPath = cfg.RouteSettingsFile
+	// On Windows meshd runs as SYSTEM and no helper writes the route
+	// settings: it changes the host's own choices for the apps
+	// (/v1/route-choices), while root lets the operators.
+	daemonOptions.RouteChoicesWritable = runtime.GOOS == "windows"
 	daemonOptions.KubeCADir = cfg.KubeCADir
 	// What the apps show for each account (S4b §4.1); without it they
 	// show server names only.

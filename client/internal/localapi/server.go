@@ -21,6 +21,7 @@ import (
 	"meshtransit.net/client/internal/flowreport"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/routesettings"
 	"meshtransit.net/client/internal/runtimehealth"
 	"meshtransit.net/shared/disco"
 )
@@ -58,6 +59,8 @@ type service interface {
 	Peers(context.Context) ([]daemon.PeerView, error)
 	PingPeer(context.Context, string) (daemon.PeerPing, error)
 	QueryDNS(context.Context, string, string) (dnsconfig.QueryReport, error)
+	RouteChoices(context.Context, bool) (daemon.RouteChoices, error)
+	ChangeRouteChoices(context.Context, routesettings.ChoiceChange, bool) (daemon.RouteChoices, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -68,6 +71,9 @@ type Server struct {
 	allowedUIDs      map[uint32]struct{}
 	allowSocketPeers bool
 	operatorsSID     string
+	// routeChoiceLimits bound each caller's route choice reads and changes:
+	// each opens the settings file, which an administrator's change replaces.
+	routeChoiceLimits *callerLimits
 }
 
 // Options configures local authorization. AllowedUIDs is copied during
@@ -97,11 +103,12 @@ func New(service service, logger *slog.Logger, options Options) (*Server, error)
 		allowedUIDs[uid] = struct{}{}
 	}
 	server := &Server{
-		service:          service,
-		logger:           logger,
-		allowedUIDs:      allowedUIDs,
-		allowSocketPeers: options.AllowSocketPeers,
-		operatorsSID:     options.OperatorsSID,
+		service:           service,
+		logger:            logger,
+		allowedUIDs:       allowedUIDs,
+		allowSocketPeers:  options.AllowSocketPeers,
+		operatorsSID:      options.OperatorsSID,
+		routeChoiceLimits: newCallerLimits(routeChoiceRate, routeChoiceBurst),
 	}
 	server.handler = server.routes()
 
@@ -190,6 +197,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 	mux.HandleFunc("/v1/exit/approve", s.handleExitApprove)
 	mux.HandleFunc("/v1/exit/captive/check", s.handleCaptiveCheck)
+	mux.HandleFunc("/v1/route-choices", s.handleRouteChoices)
 	mux.HandleFunc("/v1/peers", s.handlePeers)
 	mux.HandleFunc("/v1/peers/{id}/ping", s.handlePeerPing)
 	mux.HandleFunc("/v1/dns/query", s.handleDNSQuery)

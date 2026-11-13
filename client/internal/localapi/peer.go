@@ -14,6 +14,8 @@ type peerIdentity struct {
 	// administrator is root on Unix, and LocalSystem or an elevated
 	// Administrator on Windows.
 	administrator bool
+	// userSID is the Windows caller's user SID, for the audit log only.
+	userSID string
 }
 
 type peerContextKey struct{}
