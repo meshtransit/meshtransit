@@ -21,6 +21,10 @@ var (
 	ErrEntitlementRejected = errors.New("postgres: Deployment entitlement rejected")
 	// ErrEntitlementUnavailable reports an unavailable or uncertain record.
 	ErrEntitlementUnavailable = errors.New("postgres: Deployment entitlement unavailable")
+	// ErrEntitlementGenerationConflict reports another entitlement already
+	// recorded under the same generation (it also matches
+	// ErrEntitlementRejected): a mounted file a self-renewal overtook.
+	ErrEntitlementGenerationConflict = errors.New("postgres: Deployment entitlement generation conflict")
 )
 
 // EntitlementOutcome is what recording one verified generation did.
@@ -69,15 +73,6 @@ func (store *DeploymentEntitlementStore) Record(ctx context.Context, verified en
 	if ctx == nil || store == nil || store.database == nil || !verified.DeploymentID.IsValid() || verified.Generation <= 0 {
 		return "", ErrEntitlementUnavailable
 	}
-	var ids [3]publicid.ID
-	for index := range ids {
-		id, err := publicid.New()
-		if err != nil {
-			return "", ErrEntitlementUnavailable
-		}
-		ids[index] = id
-	}
-	change, event, outbox := ids[0], ids[1], ids[2]
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
 		return "", ErrEntitlementUnavailable
@@ -92,6 +87,31 @@ func (store *DeploymentEntitlementStore) Record(ctx context.Context, verified en
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return "", errors.Join(ErrEntitlementUnavailable, err)
 	}
+	result, err := recordInTransaction(ctx, tx, verified)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		committed = true
+		return "", errors.Join(ErrEntitlementUnavailable, err)
+	}
+	committed = true
+	return result, nil
+}
+
+// recordInTransaction records one verified generation and, when it is new,
+// its audit evidence, inside the caller's transaction.
+func recordInTransaction(ctx context.Context, tx accountSessionTransaction, verified entitlement.Entitlement) (
+	EntitlementOutcome, error) {
+	var ids [3]publicid.ID
+	for index := range ids {
+		id, err := publicid.New()
+		if err != nil {
+			return "", ErrEntitlementUnavailable
+		}
+		ids[index] = id
+	}
+	change, event, outbox := ids[0], ids[1], ids[2]
 	if err := tx.Exec(ctx, setEntitlementChangeSQL, change.String()); err != nil {
 		return "", errors.Join(ErrEntitlementUnavailable, err)
 	}
@@ -129,11 +149,6 @@ func (store *DeploymentEntitlementStore) Record(ctx context.Context, verified en
 	default:
 		return "", ErrEntitlementUnavailable
 	}
-	if err := tx.Commit(ctx); err != nil {
-		committed = true
-		return "", errors.Join(ErrEntitlementUnavailable, err)
-	}
-	committed = true
 	return result, nil
 }
 
@@ -141,7 +156,9 @@ func entitlementError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
-		case "P0002", "42501", "23505", "22023", "23514":
+		case "23505":
+			return errors.Join(ErrEntitlementRejected, ErrEntitlementGenerationConflict, err)
+		case "P0002", "42501", "22023", "23514":
 			return errors.Join(ErrEntitlementRejected, err)
 		}
 	}

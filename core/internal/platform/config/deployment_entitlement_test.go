@@ -77,3 +77,55 @@ func TestLoadDeploymentEntitlementIsAllOrNothing(t *testing.T) {
 		t.Fatal("relative entitlement path accepted")
 	}
 }
+
+func TestLoadDeploymentEntitlementRenewalKey(t *testing.T) {
+	t.Parallel()
+	values := entitlementValues(t, "api")
+	renewal := filepath.Join(t.TempDir(), "renewal.key")
+	seed := make([]byte, 32)
+	seed[0] = 7
+	if err := os.WriteFile(renewal, []byte(base64.RawURLEncoding.EncodeToString(seed)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	with := func(changes map[string]string) map[string]string {
+		copied := make(map[string]string, len(values)+len(changes))
+		for key, value := range values {
+			copied[key] = value
+		}
+		for key, value := range changes {
+			if value == "-" {
+				delete(copied, key)
+				continue
+			}
+			copied[key] = value
+		}
+		return copied
+	}
+
+	loaded, err := Load(mapLookup(values))
+	if err != nil || loaded.DeploymentEntitlement.RenewalKeyID() != "" {
+		t.Fatalf("no renewal key: %v", err)
+	}
+	loaded, err = Load(mapLookup(with(map[string]string{
+		envEntitlementRenewalKeyID: "meshtransit-cloud-renew-2026", envEntitlementRenewalKey: renewal,
+	})))
+	if err != nil || loaded.DeploymentEntitlement.RenewalKeyID() != "meshtransit-cloud-renew-2026" {
+		t.Fatalf("renewal key: %v", err)
+	}
+	if read, err := loaded.DeploymentEntitlement.LoadRenewalKey(t.Context()); err != nil || read[0] != 7 {
+		t.Fatalf("LoadRenewalKey() = %v", err)
+	}
+	for name, changes := range map[string]map[string]string{
+		"ID without key": {envEntitlementRenewalKeyID: "meshtransit-cloud-renew-2026"},
+		"key without ID": {envEntitlementRenewalKey: renewal},
+		"bad ID":         {envEntitlementRenewalKeyID: "Bad ID", envEntitlementRenewalKey: renewal},
+		"without an entitlement": {
+			envEntitlementRenewalKeyID: "meshtransit-cloud-renew-2026", envEntitlementRenewalKey: renewal,
+			envEntitlementDeploymentID: "-", envEntitlementFile: "-", envEntitlementInstallationKey: "-",
+		},
+	} {
+		if _, err := Load(mapLookup(with(changes))); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: Load() = %v", name, err)
+		}
+	}
+}

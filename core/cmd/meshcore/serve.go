@@ -180,9 +180,21 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", code)
 		return 1
 	}
+	entitlementRenewer, renewalMetrics, code, entitlementErr := composeEntitlementRenewer(
+		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger,
+	)
+	if entitlementErr != nil {
+		logger.ErrorContext(ctx, "startup failed", "error_code", code)
+		return 1
+	}
+	additionalMetrics = append(additionalMetrics, renewalMetrics...)
 
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 7)
+	roleServices := make([]app.OwnedService, 0, 8)
+	if entitlementRenewer != nil {
+		roleServices = append(roleServices,
+			app.OwnedService{Name: "deployment-entitlement-renewer", Service: entitlementRenewer})
+	}
 	if processConfig.Identity != nil {
 		identityBroker, composeErr := composeIdentityBroker(
 			ctx,

@@ -1,5 +1,8 @@
-// Package issuer signs Deployment Entitlements. It belongs to the issuance
-// boundary (operator tool and tests) and must never be linked into meshcore.
+// Package issuer signs Deployment Entitlements: for the offline issuance
+// tool, and inside meshcore only through package renewal, with the
+// self-renewal key the allowlist scopes to that Deployment (ADR-050,
+// auto-renewal-design.md §3). An offline issuance key is never mounted into
+// meshcore.
 package issuer
 
 import (

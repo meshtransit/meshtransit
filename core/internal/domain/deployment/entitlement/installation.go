@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 )
 
 // ErrInstallationKey reports an unusable installation private key.
@@ -37,6 +38,12 @@ func NewInstallation(seed [ed25519.SeedSize]byte) (*Installation, error) {
 		return nil, ErrInstallationKey
 	}
 	return &Installation{public: public}, nil
+}
+
+// PublicKey is a copy of the installation public key, which a self-renewal
+// signs into the next generation.
+func (installation *Installation) PublicKey() ed25519.PublicKey {
+	return slices.Clone(installation.public)
 }
 
 func (installation *Installation) fingerprint() [sha256.Size]byte {

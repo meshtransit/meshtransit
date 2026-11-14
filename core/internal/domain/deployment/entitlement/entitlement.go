@@ -1,10 +1,13 @@
 // Package entitlement verifies the signed Deployment Entitlement (ADR-050 D1).
 //
 // An entitlement is issued outside Core by the MeshTransit deployment
-// authority. Core only verifies: the Ed25519 signature under an allowlisted
-// key ID, the Deployment binding, the installation key binding, the time
-// window and the bounded limits. Profiles share one feature set; the
-// entitlement carries only numeric limits and Cloud-only operations.
+// authority, with one exception: a self-renewal key (auto-renewal-design.md
+// §3), allowlisted with a scope of one Deployment and profile, lets that
+// Deployment's own Core sign the next generation of the claims it already
+// holds. Core verifies: the Ed25519 signature under an allowlisted key ID and
+// within the key's scope, the Deployment binding, the installation key
+// binding, the time window and the bounded limits. Profiles share one feature
+// set; the entitlement carries only numeric limits and Cloud-only operations.
 package entitlement
 
 import (
@@ -35,6 +38,12 @@ const (
 	maxGrace         = 90 * 24 * time.Hour
 	maxWorkspaces    = 1_000_000
 	maxOwnedPerAcct  = 1_000
+	// A self-renewal key signs at most a renewal's window and generations far
+	// below the int64 limit, so a leaked one cannot lock out every later
+	// generation (renewal.Lifetime and renewal.Grace fit inside).
+	maxScopedLifetime   = 366 * 24 * time.Hour
+	maxScopedGrace      = 30 * 24 * time.Hour
+	maxScopedGeneration = 1 << 40
 )
 
 var (
@@ -47,6 +56,10 @@ var (
 	ErrForeign = errors.New("entitlement: bound to another installation")
 	// ErrNotYetValid reports an entitlement whose not_before is in the future.
 	ErrNotYetValid = errors.New("entitlement: not yet valid")
+	// ErrRenewalKey reports a self-renewal key the allowlist does not scope to
+	// this Deployment and profile, or a private key that is not the allowlisted
+	// one.
+	ErrRenewalKey = errors.New("entitlement: self-renewal key not allowlisted for this Deployment")
 )
 
 var keyIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -155,24 +168,85 @@ func signingInput(payload []byte) []byte {
 	return append([]byte(Format+"\x00"), payload...)
 }
 
-// Verifier holds the allowlisted public verification keys.
-type Verifier struct {
-	keys map[string]ed25519.PublicKey
+// TrustedKey is one allowlisted verification key. A key with a scope (both
+// Deployment and Profile set) verifies only entitlements for that Deployment
+// and profile: a self-renewal key. A key without one is an offline issuance
+// key and verifies any Deployment.
+type TrustedKey struct {
+	Public     ed25519.PublicKey
+	Deployment deployment.ID
+	Profile    deployment.Profile
 }
 
-// NewVerifier copies a non-empty allowlist of key ID → Ed25519 public key.
+// scoped reports a key with any part of a scope; NewScopedVerifier requires
+// both parts valid.
+func (key TrustedKey) scoped() bool { return key.Deployment != (deployment.ID{}) || key.Profile != "" }
+
+// Verifier holds the allowlisted public verification keys.
+type Verifier struct {
+	keys map[string]TrustedKey
+}
+
+// NewVerifier copies a non-empty allowlist of key ID → Ed25519 public key,
+// none of them scoped.
 func NewVerifier(keys map[string]ed25519.PublicKey) (*Verifier, error) {
+	trusted := make(map[string]TrustedKey, len(keys))
+	for id, key := range keys {
+		trusted[id] = TrustedKey{Public: key}
+	}
+	return NewScopedVerifier(trusted)
+}
+
+// NewScopedVerifier copies a non-empty allowlist. A scope names both a valid
+// Deployment and a valid profile, or neither. Each public key appears once:
+// a self-renewal key listed again without its scope would sign for every
+// Deployment.
+func NewScopedVerifier(keys map[string]TrustedKey) (*Verifier, error) {
 	if len(keys) == 0 {
 		return nil, ErrInvalid
 	}
-	copied := make(map[string]ed25519.PublicKey, len(keys))
+	copied := make(map[string]TrustedKey, len(keys))
+	seen := make(map[string]struct{}, len(keys))
 	for id, key := range keys {
-		if !keyIDPattern.MatchString(id) || len(key) != ed25519.PublicKeySize {
+		if _, duplicate := seen[string(key.Public)]; duplicate {
 			return nil, ErrInvalid
 		}
-		copied[id] = slices.Clone(key)
+		seen[string(key.Public)] = struct{}{}
+		if !keyIDPattern.MatchString(id) || len(key.Public) != ed25519.PublicKeySize ||
+			(key.scoped() && (!key.Deployment.IsValid() || !key.Profile.IsValid())) {
+			return nil, ErrInvalid
+		}
+		copied[id] = TrustedKey{Public: slices.Clone(key.Public), Deployment: key.Deployment, Profile: key.Profile}
 	}
 	return &Verifier{keys: copied}, nil
+}
+
+// IsScoped reports whether keyID is an allowlisted self-renewal key (a key
+// with a scope).
+func (verifier *Verifier) IsScoped(keyID string) bool {
+	if verifier == nil {
+		return false
+	}
+	key, ok := verifier.keys[keyID]
+	return ok && key.scoped()
+}
+
+// CheckRenewalKey reports whether keyID is a self-renewal key this
+// Deployment may sign with: allowlisted with exactly this Deployment and
+// profile as its scope, and public is its allowlisted key. An offline
+// (unscoped) key is never accepted here, so it can never be mounted into
+// Core to sign.
+func (verifier *Verifier) CheckRenewalKey(keyID string, public ed25519.PublicKey, deploymentID deployment.ID,
+	profile deployment.Profile) error {
+	if verifier == nil {
+		return ErrRenewalKey
+	}
+	key, ok := verifier.keys[keyID]
+	if !ok || !key.scoped() || key.Deployment != deploymentID || key.Profile != profile ||
+		!key.Public.Equal(public) {
+		return ErrRenewalKey
+	}
+	return nil
 }
 
 // Verify checks one envelope for this Deployment and installation at now.
@@ -213,12 +287,19 @@ func (verifier *Verifier) Parse(raw []byte, now time.Time) (Entitlement, error) 
 		return Entitlement{}, ErrInvalid
 	}
 	key, trusted := verifier.keys[outer.KeyID]
-	if !trusted || !ed25519.Verify(key, signingInput(payload), signature) {
+	if !trusted || !ed25519.Verify(key.Public, signingInput(payload), signature) {
 		return Entitlement{}, ErrUntrusted
 	}
 	result, err := parseClaims(payload)
 	if err != nil {
 		return Entitlement{}, err
+	}
+	// A scoped key signed outside its scope, or beyond a renewal's window or
+	// a sane generation: its signature is not trusted.
+	if key.scoped() && (result.DeploymentID != key.Deployment || result.Profile != key.Profile ||
+		result.ExpiresAt.Sub(result.NotBefore) > maxScopedLifetime || result.Grace > maxScopedGrace ||
+		result.Generation > maxScopedGeneration) {
+		return Entitlement{}, ErrUntrusted
 	}
 	result.KeyID = outer.KeyID
 	result.ContentSHA256 = sha256.Sum256(payload)

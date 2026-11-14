@@ -694,6 +694,7 @@ func Catalog() []Migration {
 		newMigration(289, "A new browser sign-in ends an approval its keys can never complete", browserIntentHeldElsewhereSQL),
 		newMigration(290, "A browser sign-in moves its machine to the approved Network", browserSignInMovesMachineSQL),
 		newMigration(291, "One Device per person and Network on one machine", browserSiblingDevicesSQL),
+		newMigration(292, "The api role renews its own Cloud entitlement", deploymentEntitlementRenewalSQL),
 	}
 }
 
@@ -1346,3 +1347,6 @@ var browserSignInMovesMachineSQL string
 
 //go:embed 000291_browser_sibling_devices.up.sql
 var browserSiblingDevicesSQL string
+
+//go:embed 000292_deployment_entitlement_renewal.up.sql
+var deploymentEntitlementRenewalSQL string

@@ -437,6 +437,8 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLBootstrap(ctx, t, adminConnection, migrationConfig)
 	assertSessionAuthorityPlanning(ctx, t, adminConnection)
 	assertPostgreSQLWorkspaceCreation(ctx, t, adminConnection, runtimePool)
+	// After Workspace creation, which records its own generations 4 to 6.
+	assertPostgreSQLDeploymentEntitlementRenewal(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkCreation(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkDeletion(ctx, t, adminConnection, runtimePool, workerPool)
 	assertPostgreSQLSessionWorkspace(ctx, t, adminConnection, runtimePool)

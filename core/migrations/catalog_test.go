@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 291 {
-		t.Fatalf("len(Catalog()) = %d, want 291", len(catalog))
+	if len(catalog) != 292 {
+		t.Fatalf("len(Catalog()) = %d, want 292", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 291 {
-		t.Fatalf("LatestVersion() = %d, want 291", LatestVersion())
+	if LatestVersion() != 292 {
+		t.Fatalf("LatestVersion() = %d, want 292", LatestVersion())
 	}
 }
 
@@ -8581,5 +8581,26 @@ func TestBrowserSignInMovesMachineMigration(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 290 SQL contains %q", forbidden)
 		}
+	}
+}
+
+func TestEntitlementRenewalReadsTheCurrentGenerationUnderTheDeploymentLock(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[291]
+	if migration.Version != 292 {
+		t.Fatalf("migration 292 = %d", migration.Version)
+	}
+	for _, want := range []string{
+		"SECURITY DEFINER", "SET search_path = pg_catalog, mesh", "FOR UPDATE",
+		"ORDER BY entitlement.generation DESC",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_current_deployment_entitlement_v1(UUID) TO mesh_runtime;",
+		"FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 292 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "INSERT") {
+		t.Error("migration 292 grants the worker or writes: it only reads")
 	}
 }

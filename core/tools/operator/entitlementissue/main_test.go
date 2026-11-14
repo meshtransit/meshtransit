@@ -102,12 +102,46 @@ func TestSignRejectsClaimsMeshcoreWouldReject(t *testing.T) {
 		"owned above active": {"--max-active", "3", "--max-owned", "5", "--generation", "1", "--days", "30"},
 		"zero generation":    {"--max-active", "3", "--max-owned", "1", "--generation", "0", "--days", "30"},
 		"unknown capability": {"--max-active", "3", "--max-owned", "1", "--generation", "1", "--days", "30", "--capability", "vip"},
+		"both generations": {"--max-active", "3", "--max-owned", "1", "--generation", "2", "--after-generation", "1",
+			"--days", "30"},
+		"negative after": {"--max-active", "3", "--max-owned", "1", "--after-generation", "-1", "--days", "30"},
+		"after zero":     {"--max-active", "3", "--max-owned", "1", "--after-generation", "0", "--days", "30"},
 	} {
 		args := append([]string{"sign", "--signing-key", signingFile, "--key-id", "poc", "--installation-public-key", public,
 			"--deployment", "01890f00-0000-7000-8000-000000000001"}, extra...)
 		if err := run(args, &output, now); err == nil {
 			t.Errorf("%s: signed", name)
 		}
+	}
+}
+
+func TestSignAfterGenerationSignsTheNextOne(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	signingFile := filepath.Join(directory, "signing.key")
+	var output bytes.Buffer
+	if err := run([]string{"signing-key", "--out", signingFile, "--key-id", "poc"}, &output, now); err != nil {
+		t.Fatal(err)
+	}
+	signingPublic, err := base64.StdEncoding.DecodeString(field(t, output.String(), "public_key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	public := base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	if err := run([]string{"sign", "--signing-key", signingFile, "--key-id", "poc", "--installation-public-key", public,
+		"--deployment", "01890f00-0000-7000-8000-000000000001", "--max-active", "3", "--max-owned", "1",
+		"--after-generation", "4", "--days", "30"}, &output, now); err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := entitlement.NewVerifier(map[string]ed25519.PublicKey{"poc": signingPublic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := verifier.Parse(bytes.TrimSuffix(output.Bytes(), []byte("\n")), now)
+	if err != nil || parsed.Generation != 5 {
+		t.Fatalf("Parse() = generation %d, %v; want 5", parsed.Generation, err)
 	}
 }
 

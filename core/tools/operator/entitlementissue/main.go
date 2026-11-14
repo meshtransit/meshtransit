@@ -10,8 +10,11 @@
 //	    prints its public key and fingerprint.
 //	entitlementissue sign --signing-key FILE --key-id ID --installation-public-key B64
 //	    --deployment UUID --profile cloud --max-active N --max-owned N
-//	    --generation N --days N [--grace-days N] [--capability NAME]...
-//	    prints one signed single-line envelope.
+//	    (--generation N | --after-generation N) --days N [--grace-days N]
+//	    [--capability NAME]...
+//	    prints one signed single-line envelope. --after-generation N signs N+1,
+//	    where N is the Deployment's current generation (the api role logs it
+//	    as "generation" when it records or renews one).
 package main
 
 import (
@@ -22,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -148,6 +152,7 @@ func sign(args []string, output io.Writer, now time.Time) error {
 	maxActive := flags.Int64("max-active", 0, "max active Workspaces in the Deployment")
 	maxOwned := flags.Int64("max-owned", 0, "max owned Workspaces per Account")
 	generation := flags.Int64("generation", 0, "strictly increasing generation")
+	after := flags.Int64("after-generation", 0, "sign the generation after this current one")
 	days := flags.Int("days", 0, "validity in days from now")
 	graceDays := flags.Int("grace-days", 14, "grace period in days after expiry")
 	var capabilities capabilityFlags
@@ -157,6 +162,16 @@ func sign(args []string, output io.Writer, now time.Time) error {
 	}
 	if *days < 1 || *graceDays < 0 {
 		return errors.New("--days must be positive and --grace-days not negative")
+	}
+	set := map[string]bool{}
+	flags.Visit(func(given *flag.Flag) { set[given.Name] = true })
+	switch {
+	case set["after-generation"] && set["generation"]:
+		return errors.New("use --generation or --after-generation, not both")
+	case set["after-generation"] && (*after < 1 || *after == math.MaxInt64):
+		return errors.New("--after-generation must name the current generation (1 or more)")
+	case set["after-generation"]:
+		*generation = *after + 1
 	}
 	public, err := base64.StdEncoding.Strict().DecodeString(*installationPublic)
 	if err != nil || len(public) != ed25519.PublicKeySize {
