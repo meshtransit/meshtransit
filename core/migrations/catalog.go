@@ -695,6 +695,8 @@ func Catalog() []Migration {
 		newMigration(290, "A browser sign-in moves its machine to the approved Network", browserSignInMovesMachineSQL),
 		newMigration(291, "One Device per person and Network on one machine", browserSiblingDevicesSQL),
 		newMigration(292, "The api role renews its own Cloud entitlement", deploymentEntitlementRenewalSQL),
+		newMigration(293, "Invitation role ceiling on resend and revoke; resolvers check the sign-in route",
+			securityReviewCeilingAndRouteSQL),
 	}
 }
 
@@ -1350,3 +1352,6 @@ var browserSiblingDevicesSQL string
 
 //go:embed 000292_deployment_entitlement_renewal.up.sql
 var deploymentEntitlementRenewalSQL string
+
+//go:embed 000293_security_review_ceiling_and_route.up.sql
+var securityReviewCeilingAndRouteSQL string

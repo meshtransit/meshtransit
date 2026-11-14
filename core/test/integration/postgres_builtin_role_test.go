@@ -76,6 +76,42 @@ UPDATE mesh.workspace SET owner_principal_id=14,
 	}
 	assertBuiltinConsoleProjection(ctx, t, tx, session, workspaceID.String(), 2, 10)
 
+	// Schema 293 (TD-SEC-78): a Workspace whose sign-in route asks more than
+	// this session proved grants it nothing, at Network or Workspace scope.
+	setRouteAssurance := func(value string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, `UPDATE mesh.workspace_identity_provider
+SET minimum_assurance = NULLIF($1, ''), version = version + 1, updated_at = pg_catalog.transaction_timestamp()
+WHERE workspace_id = 103 AND state = 'active'`, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRouteAssurance("urn:meshtransit:test:stronger")
+	if network(firstNetwork, "policy.publish").found || workspace("member.read").found {
+		t.Fatal("a session the Workspace's sign-in route does not admit was authorized")
+	}
+	setRouteAssurance("")
+	if !network(firstNetwork, "policy.publish").found || !workspace("member.read").found {
+		t.Fatal("restoring the route did not restore the grant")
+	}
+	// A suspended route admits nobody either.
+	setRouteState := func(state string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, `UPDATE mesh.workspace_identity_provider
+SET state = $1, version = version + 1, updated_at = pg_catalog.transaction_timestamp()
+WHERE workspace_id = 103 AND state <> 'deleted'`, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRouteState("suspended")
+	if network(firstNetwork, "policy.publish").found || workspace("member.read").found {
+		t.Fatal("a suspended sign-in route still admitted the session")
+	}
+	setRouteState("active")
+	if !network(firstNetwork, "policy.publish").found {
+		t.Fatal("reactivating the route did not restore the grant")
+	}
+
 	revokeBuiltinAssignment(ctx, t, tx, assignment)
 	if network(firstNetwork, "policy.publish").found {
 		t.Fatal("revoked assignment still authorizes")

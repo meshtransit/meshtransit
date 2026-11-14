@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 292 {
-		t.Fatalf("len(Catalog()) = %d, want 292", len(catalog))
+	if len(catalog) != 293 {
+		t.Fatalf("len(Catalog()) = %d, want 293", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 292 {
-		t.Fatalf("LatestVersion() = %d, want 292", LatestVersion())
+	if LatestVersion() != 293 {
+		t.Fatalf("LatestVersion() = %d, want 293", LatestVersion())
 	}
 }
 
@@ -8602,5 +8602,33 @@ func TestEntitlementRenewalReadsTheCurrentGenerationUnderTheDeploymentLock(t *te
 	}
 	if strings.Contains(migration.SQL, "TO mesh_worker") || strings.Contains(migration.SQL, "INSERT") {
 		t.Error("migration 292 grants the worker or writes: it only reads")
+	}
+}
+
+func TestSecurityReviewMigrationChecksCeilingAndRoute(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[292]
+	if migration.Version != 293 {
+		t.Fatalf("migration 293 = %d", migration.Version)
+	}
+	if strings.Count(migration.SQL, "JOIN mesh.workspace_identity_provider AS route") != 4 {
+		t.Error("every resolver branch must join the sign-in route")
+	}
+	if strings.Count(migration.SQL, "routing.minimum_assurance = (") != 2 {
+		t.Error("switching and listing Workspaces must compare the route's assurance")
+	}
+	for _, want := range []string{
+		"IF p_action IN ('resend', 'revoke') AND v_invitation.role_key IS NOT NULL THEN",
+		"(route.minimum_assurance IS NULL OR route.minimum_assurance = session.acr)",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_network_permission_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_network_permission_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_workspace_permission_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.switch_account_session_workspace_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.list_session_workspaces_v1(",
+		"SET join_collapse_limit = 1 SET from_collapse_limit = 1 SET plan_cache_mode = force_generic_plan;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 293 lacks %q", want)
+		}
 	}
 }

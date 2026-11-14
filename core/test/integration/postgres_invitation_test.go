@@ -94,6 +94,54 @@ func assertPostgreSQLInvitations(ctx context.Context, t *testing.T, admin *pgx.C
 	// its delivery outcome came after.
 	assertInvitationExpiryOnDatabaseClock(ctx, t, admin, sent.Invitation.ID.String(), sent.Invitation.Version+1,
 		invitation.Lifetime)
+	// Schema 293 (TD-SEC-79): an it_admin, who may invite but not grant
+	// admin, can neither resend nor revoke the owner's admin invitation.
+	elevated, err := create(owner, "admin-invitee@example.test", "admin")
+	if err != nil {
+		t.Fatalf("owner admin invitation: %v", err)
+	}
+	removeITAdmin := seedEnrollmentKeyRole(ctx, t, admin, plain, 1997, "it_admin")
+	for name, act := range map[string]func() error{
+		"resend": func() error {
+			_, err := service.Resend(ctx, plain, invitation.ActionRequest{WorkspaceID: workspaceID,
+				InvitationID: elevated.Invitation.ID, ExpectedVersion: elevated.Invitation.Version,
+				CorrelationID: newCorrelationID(t)})
+			return err
+		},
+		"revoke": func() error {
+			_, err := service.Revoke(ctx, plain, invitation.ActionRequest{WorkspaceID: workspaceID,
+				InvitationID: elevated.Invitation.ID, ExpectedVersion: elevated.Invitation.Version,
+				CorrelationID: newCorrelationID(t)})
+			return err
+		},
+	} {
+		if err := act(); !errors.Is(err, invitation.ErrForbidden) {
+			t.Fatalf("it_admin %s of an admin invitation: %v", name, err)
+		}
+	}
+	// Within the ceiling the it_admin still resends and revokes.
+	roleless, err := create(plain, "roleless-invitee@example.test", "")
+	if err != nil {
+		t.Fatalf("it_admin role-less invitation: %v", err)
+	}
+	resentRoleless, err := service.Resend(ctx, plain, invitation.ActionRequest{WorkspaceID: workspaceID,
+		InvitationID: roleless.Invitation.ID, ExpectedVersion: roleless.Invitation.Version,
+		CorrelationID: newCorrelationID(t)})
+	if err != nil {
+		t.Fatalf("it_admin resend of a role-less invitation: %v", err)
+	}
+	if _, err := service.Revoke(ctx, plain, invitation.ActionRequest{WorkspaceID: workspaceID,
+		InvitationID: roleless.Invitation.ID, ExpectedVersion: resentRoleless.Invitation.Version,
+		CorrelationID: newCorrelationID(t)}); err != nil {
+		t.Fatalf("it_admin revoke of a role-less invitation: %v", err)
+	}
+	removeITAdmin()
+	if _, err := service.Revoke(ctx, owner, invitation.ActionRequest{WorkspaceID: workspaceID,
+		InvitationID: elevated.Invitation.ID, ExpectedVersion: elevated.Invitation.Version,
+		CorrelationID: newCorrelationID(t)}); err != nil {
+		t.Fatalf("owner revoke of the admin invitation: %v", err)
+	}
+
 	revoked, err := service.Revoke(ctx, owner, invitation.ActionRequest{
 		WorkspaceID: workspaceID, InvitationID: sent.Invitation.ID, ExpectedVersion: resent.Invitation.Version,
 		CorrelationID: newCorrelationID(t),

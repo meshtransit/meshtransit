@@ -500,7 +500,8 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	resources, err := newPrivateIdentityResourceServices(dependencies.Runtime, managementOptions, dnsZones)
+	resources, err := newPrivateIdentityResourceServices(dependencies.Runtime, managementOptions, dnsZones,
+		keys.idempotency)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}

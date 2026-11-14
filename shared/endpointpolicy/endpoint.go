@@ -49,6 +49,19 @@ func Usable(address netip.Addr) bool {
 	return true
 }
 
+// Public reports whether address is one the Internet already sees: usable
+// and not private (RFC 1918, ULA). Usable already leaves out CGNAT, the
+// overlay, link-local and loopback. A peer of another Network, reached
+// through a share, is told only such addresses, never a LAN one, whatever
+// way it was learned.
+func Public(address netip.Addr) bool {
+	if !Usable(address) || address.IsPrivate() {
+		return false
+	}
+	embedded, ok := EmbeddedIPv4(address)
+	return !ok || !embedded.IsPrivate()
+}
+
 // EmbeddedIPv4 returns the IPv4 address a NAT64 address translates to.
 func EmbeddedIPv4(address netip.Addr) (netip.Addr, bool) {
 	if !address.Is6() || !nat64.Contains(address) {

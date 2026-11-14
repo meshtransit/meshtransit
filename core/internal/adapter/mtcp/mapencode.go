@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/shared/endpointpolicy"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 	"meshtransit.net/shared/mtrp"
 )
@@ -208,7 +209,13 @@ func encodePeer(snapshot mapsession.Snapshot, candidate mapsession.PeerCandidate
 	}
 	encodeAddresses(device, candidate.Addresses())
 	if connectivity, found := snapshot.ConnectivityFor(candidate.NodeID()); found {
-		if err := encodeConnectivity(device, connectivity, false, endpoints, candidate.Addresses()); err != nil {
+		peerEndpoints := endpoints
+		// A peer of another Network is reached only through a share (an
+		// alias peer, which the client tells apart and treats the same way).
+		if candidate.Scope() != snapshot.Scope() {
+			peerEndpoints = endpoints.publicCandidatesOnly()
+		}
+		if err := encodeConnectivity(device, connectivity, false, peerEndpoints, candidate.Addresses()); err != nil {
 			return nil, err
 		}
 	}
@@ -281,7 +288,8 @@ func encodeConnectivity(device *mtcpv1.Device, connectivity mapsession.Connectiv
 		for _, endpoint := range set.Endpoints() {
 			kind, ok := endpointKind(endpoint.Source())
 			address := endpoint.Address()
-			if !ok || !endpoints.allows(address.Addr(), overlay) {
+			if !ok || !endpoints.allows(address.Addr(), overlay) ||
+				(endpoints.publicOnly && !endpointpolicy.Public(address.Addr().Unmap())) {
 				continue
 			}
 			device.Endpoints = append(device.Endpoints, &mtcpv1.Endpoint{

@@ -317,6 +317,7 @@ func composeManagementAPIWithKeys(
 			LockTimeout:      managementLockTimeout,
 			IdleTimeout:      managementTransactionIdle,
 			IdempotencyTTL:   managementIdempotencyTTL,
+			OfferTokens:      keys.idempotency,
 		},
 	)
 	if err != nil {

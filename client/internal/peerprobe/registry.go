@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/shared/disco"
+	"meshtransit.net/shared/endpointpolicy"
 	"meshtransit.net/shared/key"
 )
 
@@ -180,9 +181,12 @@ type peerChannel struct {
 	mapEndpoints map[netip.AddrPort]struct{}
 	learned      map[netip.AddrPort]learnedCandidate
 	probe        bool // eligible for scheduled probing
-	wire         *disco.PeerKey
-	firstSeen    time.Time
-	lastPong     time.Time
+	// alias is a peer of another Network, reached through a share: it is
+	// never sent this Device's LAN or interface addresses (TD-SEC-76).
+	alias     bool
+	wire      *disco.PeerKey
+	firstSeen time.Time
+	lastPong  time.Time
 	// allowance is the peer's probe budget (budget.go), owned by the
 	// registry and shared with the peer's channels of later maps.
 	allowance *peerAllowance
@@ -656,14 +660,17 @@ func (r *Registry) open(packet []byte, generation pathdiscovery.ProbeGeneration)
 }
 
 // acceptCallMeMaybe applies the sequence, freshness and rate rules and
-// records the advertised endpoints as candidates.
+// records the advertised endpoints as candidates; a peer of another Network
+// is held to public addresses.
 func (r *Registry) acceptCallMeMaybe(peer *peerChannel, message disco.CallMeMaybe, now time.Time) (IncomingMessage, error) {
 	if err := r.guard.Accept(peer.discoveryKey, message); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidPacket, err)
 	}
 	endpoints := make([]netip.AddrPort, 0, len(message.Endpoints))
 	for _, endpoint := range message.Endpoints {
-		if validEndpoint(endpoint.Addr) {
+		// A peer of another Network may name only public addresses: it must
+		// not point this Device's probes into its own LAN (TD-SEC-76).
+		if validEndpoint(endpoint.Addr) && (!peer.alias || endpointpolicy.Public(endpoint.Addr.Addr().Unmap())) {
 			endpoints = append(endpoints, endpoint.Addr)
 		}
 	}
@@ -881,6 +888,7 @@ func (r *Registry) PeerCandidates(peerID uint64, now time.Time) []netip.AddrPort
 type peerStatus struct {
 	peerID     uint64
 	probe      bool
+	alias      bool
 	firstSeen  time.Time
 	lastPong   time.Time
 	candidates []netip.AddrPort
@@ -904,7 +912,7 @@ func (r *Registry) peers(now time.Time) []peerStatus {
 			return peer.probeOrder(a, now) - peer.probeOrder(b, now)
 		})
 		out = append(out, peerStatus{
-			peerID: peer.peerID, probe: peer.probe, firstSeen: peer.firstSeen, lastPong: peer.lastPong,
+			peerID: peer.peerID, probe: peer.probe, alias: peer.alias, firstSeen: peer.firstSeen, lastPong: peer.lastPong,
 			candidates: candidates,
 		})
 	}
@@ -1053,6 +1061,7 @@ func buildChannelSet(
 			mapEndpoints: endpoints,
 			learned:      make(map[netip.AddrPort]learnedCandidate),
 			probe:        !node.OnlineKnown || node.Online,
+			alias:        node.Alias != nil,
 			wire:         wire,
 			firstSeen:    now,
 		}

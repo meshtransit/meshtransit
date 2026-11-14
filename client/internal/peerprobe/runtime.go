@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/shared/disco"
+	"meshtransit.net/shared/endpointpolicy"
 	"meshtransit.net/shared/key"
 )
 
@@ -859,13 +860,19 @@ func (r *Runtime) noteReflexive(observed netip.AddrPort, now time.Time) {
 }
 
 // callMeMaybe builds the next CALL_ME_MAYBE from the current candidates.
-func (r *Runtime) callMeMaybe(now time.Time) (disco.CallMeMaybe, bool) {
+// For a peer of another Network (publicOnly) it keeps only addresses the
+// Internet already sees (endpointpolicy.Public), whatever way they were
+// learned: a share reaches across tenants, and Core sends such a peer only
+// public addresses too (TD-SEC-76). A LAN address a same-LAN peer reflected
+// back is left out as well.
+func (r *Runtime) callMeMaybe(now time.Time, publicOnly bool) (disco.CallMeMaybe, bool) {
 	r.localMu.Lock()
 	defer r.localMu.Unlock()
 	endpoints := make([]disco.Endpoint, 0, len(r.localEndpoints)+len(r.reflexive))
 	seen := make(map[netip.AddrPort]struct{}, cap(endpoints))
 	add := func(endpoint disco.Endpoint) {
-		if _, dup := seen[endpoint.Addr]; dup || len(endpoints) >= disco.MaxEndpoints || !validEndpoint(endpoint.Addr) {
+		if _, dup := seen[endpoint.Addr]; dup || len(endpoints) >= disco.MaxEndpoints || !validEndpoint(endpoint.Addr) ||
+			(publicOnly && !endpointpolicy.Public(endpoint.Addr.Addr().Unmap())) {
 			return
 		}
 		seen[endpoint.Addr] = struct{}{}
@@ -1024,9 +1031,9 @@ func (r *Runtime) sendCallMeMaybes(relayed pathdiscovery.RelayDatagramTransport)
 		if budget == 0 {
 			break
 		}
-		message, ok := r.callMeMaybe(now)
+		message, ok := r.callMeMaybe(now, peer.alias)
 		if !ok {
-			return
+			continue
 		}
 		packet, node, err := r.registry.SealCallMeMaybe(peer.peerID, message)
 		if err != nil {

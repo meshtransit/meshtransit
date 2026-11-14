@@ -26,6 +26,18 @@ const maxDeniedEndpointPrefixes = 16
 type endpointFilter struct {
 	relays []netip.Addr
 	denied []netip.Prefix
+	// publicOnly keeps, when a map is sent, only addresses the Internet
+	// already sees (endpointpolicy.Public), whatever their kind: a peer of
+	// another Network, reached through a share, never learns a LAN or
+	// interface address (TD-SEC-76). meshd's CALL_ME_MAYBE to such a peer
+	// follows the same rule.
+	publicOnly bool
+}
+
+// publicCandidatesOnly is filter for a peer of another Network.
+func (filter endpointFilter) publicCandidatesOnly() endpointFilter {
+	filter.publicOnly = true
+	return filter
 }
 
 // newEndpointFilter takes the relays of directory that have an address; a

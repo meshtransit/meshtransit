@@ -24,7 +24,7 @@ const (
 	resourceSharingActivateOperation = "resource_sharing.contract.activate"
 	resourceSharingRevokeOperation   = "resource_sharing.contract.revoke"
 	// #nosec G101 -- this is a public hash domain-separation label, not credential material.
-	resourceSharingTokenDomain = "meshtransit/resource-sharing/offer-token/v1\x00"
+	resourceSharingTokenDomain = "meshtransit/resource-sharing/offer-token/v2"
 )
 
 type resourceSharingMutationIDs struct {
@@ -82,7 +82,7 @@ func (store *ResourceSharingStore) CreateOffer(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
-	token, nonceDigest, err := resourceSharingOfferToken(command.IdempotencyEvidence())
+	token, nonceDigest, err := resourceSharingOfferToken(store.options.OfferTokens, command.IdempotencyEvidence())
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
@@ -1246,14 +1246,21 @@ func newResourceSharingMutationIDs(
 	return ids, nil
 }
 
+// resourceSharingOfferToken derives the offer's acceptance token from its
+// idempotency digest, bound with a key only the api role holds: the same
+// request (a replay) gets the same token, and the stored digest alone
+// rebuilds nothing. The database keeps only SHA-256 of the token.
 func resourceSharingOfferToken(
+	binder OfferTokenBinder,
 	proof idempotency.Proof,
 ) (sharing.OfferToken, [sha256.Size]byte, error) {
-	digest := proof.Digest()
-	material := make([]byte, 0, len(resourceSharingTokenDomain)+len(digest))
-	material = append(material, resourceSharingTokenDomain...)
-	material = append(material, digest[:]...)
-	raw := sha256.Sum256(material)
+	if binder == nil || !proof.IsValid() {
+		return sharing.OfferToken{}, [sha256.Size]byte{}, sharing.ErrUnavailable
+	}
+	raw := binder.Bind(resourceSharingTokenDomain, proof.Digest())
+	if raw == ([sha256.Size]byte{}) {
+		return sharing.OfferToken{}, [sha256.Size]byte{}, sharing.ErrUnavailable
+	}
 	token, err := sharing.NewOfferToken(raw)
 	if err != nil {
 		return sharing.OfferToken{}, [sha256.Size]byte{}, sharing.ErrUnavailable

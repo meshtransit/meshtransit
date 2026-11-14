@@ -29,6 +29,18 @@ type ResourceSharingOptions struct {
 	// offer is accepted (DNS design D3). Without it an accept that approves
 	// one fails; declining every name still accepts.
 	ServiceNames ServiceNamePlanner
+	// OfferTokens derives each offer's acceptance token from its idempotency
+	// digest with a key the database never holds, so a reader of the stored
+	// digest cannot rebuild the token (TD-SEC-77). Required:
+	// NewResourceSharingStore refuses a store without it, so a missing key
+	// fails at startup, not at the first offer.
+	OfferTokens OfferTokenBinder
+}
+
+// OfferTokenBinder binds a stored digest with a process-held key
+// (idempotency.Digester.Bind).
+type OfferTokenBinder interface {
+	Bind(purpose string, digest [32]byte) [32]byte
 }
 
 // ResourceSharingStore owns exact-scope sharing reads and atomic bilateral mutations.
@@ -57,7 +69,8 @@ func validResourceSharingOptions(options ResourceSharingOptions) bool {
 		options.StatementTimeout <= maximumResourceAuthorityStatementTimeout &&
 		options.LockTimeout > 0 && options.LockTimeout <= maximumResourceAuthorityLockTimeout &&
 		options.IdleTimeout > 0 && options.IdleTimeout <= maximumResourceAuthorityIdleTimeout &&
-		options.IdempotencyTTL > 0 && options.IdempotencyTTL <= maximumResourceSharingIdempotencyTTL
+		options.IdempotencyTTL > 0 && options.IdempotencyTTL <= maximumResourceSharingIdempotencyTTL &&
+		options.OfferTokens != nil
 }
 
 // GetOffer returns one current projection after exact-scope share.read authorization.

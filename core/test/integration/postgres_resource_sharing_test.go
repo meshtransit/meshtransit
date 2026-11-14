@@ -30,6 +30,7 @@ import (
 	"meshtransit.net/core/internal/domain/resource"
 	"meshtransit.net/core/internal/domain/sharing"
 	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 func assertCurrentConsumerContractRead(ctx context.Context, t *testing.T, service *sharing.Service, session accountsession.Session, contract sharing.Contract, accessName sharing.AccessName, importedVersion int64) {
@@ -2019,6 +2020,7 @@ func newIntegrationResourceSharingStore(
 			LockTimeout:      2 * time.Second,
 			IdleTimeout:      10 * time.Second,
 			IdempotencyTTL:   time.Hour,
+			OfferTokens:      integrationOfferTokens(t),
 		},
 	)
 	if err != nil {
@@ -2369,4 +2371,18 @@ WHERE public_id = $1::UUID`, endpointID.String(), by)
 	case !errors.As(err, &databaseError) || databaseError.Code != "40001":
 		t.Fatalf("early publication snapshot error = %v, want SQLSTATE 40001", err)
 	}
+}
+
+// integrationOfferTokens is the process-held key that binds offer tokens.
+func integrationOfferTokens(t *testing.T) *idempotency.Digester {
+	t.Helper()
+	keyID, err := idempotency.NewDigestKeyID("integration-offer-tokens")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digester, err := idempotency.NewDigester(keyID, bytes.Repeat([]byte{0x5a}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digester
 }

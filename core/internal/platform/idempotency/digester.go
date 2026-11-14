@@ -12,6 +12,7 @@ const (
 	minimumRawKeyBytes = 16
 	maximumRawKeyBytes = 128
 	digestDomain       = "meshtransit/idempotency-key/v1\x00"
+	bindDomain         = "meshtransit/idempotency-bound/v1\x00"
 )
 
 var (
@@ -75,6 +76,25 @@ func (digester *Digester) Proof(raw string) (Proof, error) {
 	var digest [sha256.Size]byte
 	copy(digest[:], mac.Sum(nil))
 	return NewProof(digester.keyID.String(), digest)
+}
+
+// Bind derives a purpose-separated value from a request digest with this
+// key: a secret only the process holds, never stored, unlike the digest. A
+// value derived from durable state alone (the digest is a stored replay key)
+// could be recomputed by anyone who reads the database.
+// A nil or empty Digester binds nothing (all zero).
+func (digester *Digester) Bind(purpose string, digest [sha256.Size]byte) [sha256.Size]byte {
+	if digester == nil || digester.material == ([digestKeyBytes]byte{}) {
+		return [sha256.Size]byte{}
+	}
+	mac := hmac.New(sha256.New, digester.material[:])
+	_, _ = mac.Write([]byte(bindDomain))
+	_, _ = mac.Write([]byte(purpose))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write(digest[:])
+	var bound [sha256.Size]byte
+	copy(bound[:], mac.Sum(nil))
+	return bound
 }
 
 // String prevents accidental HMAC key disclosure.

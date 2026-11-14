@@ -43,6 +43,7 @@ func assertShareServiceNames(
 	store, err := postgresadapter.NewResourceSharingStore(runtimePool, postgresadapter.ResourceSharingOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: 2 * time.Second, IdleTimeout: 10 * time.Second,
 		IdempotencyTTL: time.Hour, ServiceNames: dnsZones,
+		OfferTokens: integrationOfferTokens(t),
 	})
 	if err != nil {
 		t.Fatal(err)
