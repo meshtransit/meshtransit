@@ -157,7 +157,7 @@ func TestStateHoldsTheDurableIdentities(t *testing.T) {
 	}
 	if state.RecoveryEpoch != 1 || state.ProviderGeneration != 1 || state.ConnectorGeneration != 1 ||
 		state.CoreClientGeneration != 1 || state.IdentityFingerprint != "" ||
-		!state.MTCPKeyNotAfter.Equal(now.AddDate(1, 0, 0)) {
+		!state.MTCPKeyNotAfter.IsZero() { // the control key rolls (auto-renewal design §2.2)
 		t.Fatalf("state = %+v", state)
 	}
 	ids := []string{state.DeploymentID, state.ProviderID, state.ClientID}

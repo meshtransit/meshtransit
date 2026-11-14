@@ -38,9 +38,12 @@ type State struct {
 	// ApprovedIssuer and ApprovedOrigin are the public names the first
 	// approval saw; bootstrap writes them into the database, so they never
 	// change afterwards.
-	ApprovedIssuer  string    `json:"approved_issuer"`
-	ApprovedOrigin  string    `json:"approved_origin"`
-	MTCPKeyNotAfter time.Time `json:"mtcp_key_not_after"`
+	ApprovedIssuer string `json:"approved_issuer"`
+	ApprovedOrigin string `json:"approved_origin"`
+	// MTCPKeyNotAfter is the fixed control key expiry a state written
+	// before auto-renewal named. It is read and kept, never rendered: the
+	// control key now rolls (auto-renewal design §2.2).
+	MTCPKeyNotAfter time.Time `json:"mtcp_key_not_after,omitzero"`
 }
 
 // publicNamesMatch reports whether config still has the issuer and origin
@@ -73,7 +76,7 @@ func (state State) valid() bool {
 		}
 	}
 	return state.RecoveryEpoch > 0 && state.ProviderGeneration > 0 && state.ConnectorGeneration > 0 &&
-		state.CoreClientGeneration > 0 && !state.MTCPKeyNotAfter.IsZero()
+		state.CoreClientGeneration > 0
 }
 
 // ensureState creates state.json when dir has none, and leaves an existing
@@ -96,7 +99,6 @@ func ensureState(dir string, options GenerateOptions) error {
 	state := State{
 		Format: stateFormat, DeploymentID: ids[0], RecoveryEpoch: 1, ProviderID: ids[1], ClientID: ids[2],
 		ProviderGeneration: 1, ConnectorGeneration: 1, CoreClientGeneration: 1,
-		MTCPKeyNotAfter: options.Now.UTC().Truncate(time.Second).AddDate(1, 0, 0),
 	}
 	return writeState(dir, state, options.Owner, false)
 }

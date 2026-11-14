@@ -15,7 +15,6 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 		values  map[string]string
 		wantErr string
 	}{
-		{name: "needs a key expiry", values: map[string]string{}, wantErr: envControlMTCPKeyNotAfter},
 		{name: "cannot be turned off", values: map[string]string{
 			envControlMTCPEnabled: "false", envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
 		}, wantErr: envControlMTCPEnabled},
@@ -86,6 +85,74 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Auto-renewal design §2.2: each control key has a fixed expiry or a
+// rolling lifetime, never both; without either the current key rolls for a
+// year, so a deployment installed once never reaches an expiry.
+func TestLoadControlMTCPKeyExpiry(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name                   string
+		values                 map[string]string
+		hasNext                bool
+		wantErr                string
+		lifetime, nextLifetime time.Duration
+		notAfter, nextNotAfter string
+	}{
+		{name: "rolls a year by default", values: map[string]string{}, lifetime: 365 * 24 * time.Hour},
+		{name: "rolling lifetime", values: map[string]string{envControlMTCPKeyLifetime: "720h"}, lifetime: 720 * time.Hour},
+		{name: "fixed expiry", values: map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z"},
+			notAfter: "2027-10-10T00:00:00Z"},
+		{name: "both for one key", values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPKeyLifetime: "720h",
+		}, wantErr: envControlMTCPKeyLifetime},
+		{name: "lifetime too short", values: map[string]string{envControlMTCPKeyLifetime: "1h"},
+			wantErr: envControlMTCPKeyLifetime},
+		{name: "lifetime too long", values: map[string]string{envControlMTCPKeyLifetime: "50000h"},
+			wantErr: envControlMTCPKeyLifetime},
+		{name: "lifetime not a duration", values: map[string]string{envControlMTCPKeyLifetime: "a year"},
+			wantErr: envControlMTCPKeyLifetime},
+		{name: "next key rolls", hasNext: true, values: map[string]string{envControlMTCPNextKeyLifetime: "8760h"},
+			lifetime: 365 * 24 * time.Hour, nextLifetime: 8760 * time.Hour},
+		{name: "next key fixed", hasNext: true, values: map[string]string{
+			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", envControlMTCPNextKeyNotAfter: "2028-10-10T00:00:00Z",
+		}, notAfter: "2027-10-10T00:00:00Z", nextNotAfter: "2028-10-10T00:00:00Z"},
+		{name: "next key needs an expiry", hasNext: true, values: map[string]string{},
+			wantErr: envControlMTCPNextKeyNotAfter},
+		{name: "next key both", hasNext: true, values: map[string]string{
+			envControlMTCPNextKeyNotAfter: "2028-10-10T00:00:00Z", envControlMTCPNextKeyLifetime: "8760h",
+		}, wantErr: envControlMTCPNextKeyLifetime},
+		{name: "next lifetime without a next key", values: map[string]string{envControlMTCPNextKeyLifetime: "8760h"},
+			wantErr: envControlMTCPNextKeyLifetime},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := loadControlMTCPConfig(mapLookup(test.values), now, test.hasNext)
+			if test.wantErr != "" {
+				if err == nil || !strings.HasSuffix(err.Error(), ": "+test.wantErr) {
+					t.Fatalf("error = %v, want one naming %s", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.KeyLifetime != test.lifetime || got.NextKeyLifetime != test.nextLifetime ||
+				formatOrEmpty(got.KeyNotAfter) != test.notAfter || formatOrEmpty(got.NextKeyNotAfter) != test.nextNotAfter {
+				t.Fatalf("expiry = %v/%v, next %v/%v", got.KeyNotAfter, got.KeyLifetime, got.NextKeyNotAfter,
+					got.NextKeyLifetime)
+			}
+		})
+	}
+}
+
+func formatOrEmpty(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339)
 }
 
 func TestLoadControlMTCPHandshakeLimits(t *testing.T) {

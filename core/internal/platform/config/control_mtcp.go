@@ -8,12 +8,18 @@ import (
 )
 
 const (
-	envControlMTCPEnabled     = "MESHTRANSIT_CONTROL_MTCP_ENABLED"
-	envControlMTCPKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"
-	// envControlMTCPNextKeyNotAfter is the next control key's expiry; it is
-	// required exactly when MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE
-	// is set.
+	envControlMTCPEnabled = "MESHTRANSIT_CONTROL_MTCP_ENABLED"
+	// Each control key has one expiry (auto-renewal design §2.2): a fixed
+	// date (..._NOT_AFTER) or a rolling lifetime (..._LIFETIME) announced
+	// from the moment of every answer. The current key rolls for a year
+	// when neither is set; the next key, set only with
+	// MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE, names one of them.
+	envControlMTCPKeyNotAfter     = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"
+	envControlMTCPKeyLifetime     = "MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME"
 	envControlMTCPNextKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER"
+	envControlMTCPNextKeyLifetime = "MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_LIFETIME"
+	defaultControlMTCPKeyLifetime = 365 * 24 * time.Hour
+	minControlMTCPKeyLifetime     = 7 * 24 * time.Hour
 	envControlMTCPTrustedProxies  = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
 	// envControlMTCPRegisterSiblings offers register.siblings1 (duplicate-
 	// device design §13): turned on only once every replica runs a Core
@@ -53,11 +59,14 @@ const (
 // ControlMTCPConfig configures MTCP v1, the control protocol. The control
 // key is MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE.
 type ControlMTCPConfig struct {
-	// KeyNotAfter is the expiry advertised for the control key in the key
-	// document (mtcp-v1 §2.2).
+	// KeyNotAfter is the control key's fixed expiry in the key document
+	// (mtcp-v1 §2.2); zero when KeyLifetime rolls it instead.
 	KeyNotAfter time.Time
-	// NextKeyNotAfter is the next control key's expiry, zero without one.
+	KeyLifetime time.Duration
+	// NextKeyNotAfter or NextKeyLifetime is the next control key's expiry;
+	// both zero without one.
 	NextKeyNotAfter time.Time
+	NextKeyLifetime time.Duration
 	// HandshakeRate and HandshakeBurst bound new handshakes per source and
 	// second, before any cryptography.
 	HandshakeRate  int
@@ -92,18 +101,22 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	if enabled, present := lookup(envControlMTCPEnabled); present && enabled != "true" {
 		return ControlMTCPConfig{}, settingError(envControlMTCPEnabled)
 	}
-	notAfter, err := time.Parse(time.RFC3339, valueOrDefault(lookup, envControlMTCPKeyNotAfter, ""))
-	if err != nil || !notAfter.After(now) || notAfter.Sub(now) > maxControlMTCPKeyLifetime {
-		return ControlMTCPConfig{}, settingError(envControlMTCPKeyNotAfter)
+	notAfter, lifetime, err := loadControlKeyExpiry(lookup, now, envControlMTCPKeyNotAfter, envControlMTCPKeyLifetime)
+	if err != nil {
+		return ControlMTCPConfig{}, err
 	}
-	var nextNotAfter time.Time
-	if value, present := lookup(envControlMTCPNextKeyNotAfter); present != hasNextKey {
+	if notAfter.IsZero() && lifetime == 0 {
+		lifetime = defaultControlMTCPKeyLifetime
+	}
+	nextNotAfter, nextLifetime, err := loadControlKeyExpiry(lookup, now, envControlMTCPNextKeyNotAfter,
+		envControlMTCPNextKeyLifetime)
+	switch {
+	case err != nil:
+		return ControlMTCPConfig{}, err
+	case !hasNextKey && nextLifetime != 0:
+		return ControlMTCPConfig{}, settingError(envControlMTCPNextKeyLifetime)
+	case hasNextKey != (!nextNotAfter.IsZero() || nextLifetime != 0):
 		return ControlMTCPConfig{}, settingError(envControlMTCPNextKeyNotAfter)
-	} else if present {
-		nextNotAfter, err = time.Parse(time.RFC3339, value)
-		if err != nil || !nextNotAfter.After(now) || nextNotAfter.Sub(now) > maxControlMTCPKeyLifetime {
-			return ControlMTCPConfig{}, settingError(envControlMTCPNextKeyNotAfter)
-		}
 	}
 	proxies, err := parseTrustedProxyPrefixes(valueOrDefault(lookup, envControlMTCPTrustedProxies, ""))
 	if err != nil {
@@ -147,7 +160,41 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 		return ControlMTCPConfig{}, settingError(envControlMTCPRegisterSiblings)
 	}
 	return ControlMTCPConfig{RegisterSiblings: siblings == "true",
-		KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
+		KeyNotAfter: utcOrZero(notAfter), KeyLifetime: lifetime,
+		NextKeyNotAfter: utcOrZero(nextNotAfter), NextKeyLifetime: nextLifetime,
+		HandshakeRate: rate, HandshakeBurst: burst,
 		UnauthenticatedPerSource: unauthenticated, UnprovenLifetime: unprovenLifetime,
 		trustedProxyPrefixes: proxies, deniedEndpointPrefixes: denied}, nil
+}
+
+// loadControlKeyExpiry reads one key's expiry: a fixed date within five
+// years, or a lifetime from seven days to five years; zero values when
+// neither is set, and an error naming the lifetime when both are.
+func loadControlKeyExpiry(lookup LookupFunc, now time.Time, notAfterName, lifetimeName string) (
+	time.Time, time.Duration, error,
+) {
+	var notAfter time.Time
+	if value, present := lookup(notAfterName); present {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil || !parsed.After(now) || parsed.Sub(now) > maxControlMTCPKeyLifetime {
+			return time.Time{}, 0, settingError(notAfterName)
+		}
+		notAfter = parsed
+	}
+	value, present := lookup(lifetimeName)
+	if !present {
+		return notAfter, 0, nil
+	}
+	lifetime, err := time.ParseDuration(value)
+	if err != nil || !notAfter.IsZero() || lifetime < minControlMTCPKeyLifetime || lifetime > maxControlMTCPKeyLifetime {
+		return time.Time{}, 0, settingError(lifetimeName)
+	}
+	return time.Time{}, lifetime, nil
+}
+
+func utcOrZero(at time.Time) time.Time {
+	if at.IsZero() {
+		return at
+	}
+	return at.UTC()
 }

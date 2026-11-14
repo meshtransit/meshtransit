@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var (
@@ -68,6 +67,10 @@ type Rendered struct {
 // identity settings (meshcore identity fingerprint, which needs the
 // dexbroker build): the setup command passes it in.
 type IdentityFingerprint func(settings map[string]string) (string, error)
+
+// controlKeyLifetime rolls the control key a year from every answer, so an
+// install never reaches its expiry (auto-renewal design §2.2).
+const controlKeyLifetime = "8760h"
 
 // Render produces the processes' settings and files from config.yaml, the
 // generated secrets and state.json. It reads nothing and writes nothing:
@@ -236,7 +239,7 @@ func coreSettings(config Config, state State, layout Layout, relayDigest string)
 		"MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE":               secret("control.crt"),
 		"MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE":               secret("control.key"),
 		"MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE":             secret("control-noise.key"),
-		"MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER":                 state.MTCPKeyNotAfter.UTC().Format(time.RFC3339),
+		"MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME":                  controlKeyLifetime,
 		"MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS":           trustedProxy,
 		"MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS":         denied,
 		"MESHTRANSIT_SITE_DENIED_CIDRS":                          denied,

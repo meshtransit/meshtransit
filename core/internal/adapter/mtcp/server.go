@@ -51,10 +51,27 @@ var (
 )
 
 // ControlKey is one control key the deployment answers with. At most two
-// are active: the current one and the next one (mtcp-v1 §2.2).
+// are active: the current one and the next one (mtcp-v1 §2.2). Each has
+// exactly one expiry: a fixed NotAfter, or a Lifetime announced from the
+// moment of every answer, so a rolling key never expires while control runs
+// (auto-renewal design §2).
 type ControlKey struct {
 	Private  key.ControlPrivate
 	NotAfter time.Time
+	Lifetime time.Duration
+}
+
+// notAfterAt is the expiry the key is announced with at now.
+func (controlKey ControlKey) notAfterAt(now time.Time) time.Time {
+	if controlKey.Lifetime > 0 {
+		return now.Add(controlKey.Lifetime)
+	}
+	return controlKey.NotAfter
+}
+
+// hasOneExpiry reports exactly one of a fixed expiry and a positive lifetime.
+func (controlKey ControlKey) hasOneExpiry() bool {
+	return controlKey.Lifetime >= 0 && controlKey.NotAfter.IsZero() == (controlKey.Lifetime > 0)
 }
 
 // TimestampGuard accepts a ClientHello timestamp only when it is greater
@@ -248,7 +265,7 @@ func NewServer(options Options) (*Server, error) {
 	}
 	keys := make(map[key.KeyID]ControlKey, len(options.Keys))
 	for _, controlKey := range options.Keys {
-		if controlKey.Private.IsZero() || controlKey.NotAfter.IsZero() {
+		if controlKey.Private.IsZero() || !controlKey.hasOneExpiry() {
 			return nil, ErrInvalidServer
 		}
 		keys[controlKey.Private.Public().ID()] = controlKey
@@ -256,7 +273,7 @@ func NewServer(options Options) (*Server, error) {
 	if len(keys) != len(options.Keys) {
 		return nil, ErrInvalidServer
 	}
-	options.Metrics.controlKeysExpire(options.Keys)
+	options.Metrics.controlKeysExpire(options.Keys, options.Now)
 	options.Metrics.gatewayTokensHeld(options.GatewayTokens)
 	rate := handshakeLimit(options.HandshakeRate, defaultHandshakeRate)
 	burst := handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst)
@@ -343,10 +360,12 @@ func (server *Server) serveKeys(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	document := keyDocument{Version: sharedmtcp.Version}
+	now := server.options.Now()
 	for _, controlKey := range server.options.Keys {
 		public := controlKey.Private.Public()
 		document.Keys = append(document.Keys, keyDocumentKey{Key: public,
-			NotAfter: controlKey.NotAfter.UTC().Truncate(time.Second), Fingerprint: sharedmtcp.ControlFingerprint(public)})
+			NotAfter:    controlKey.notAfterAt(now).UTC().Truncate(time.Second),
+			Fingerprint: sharedmtcp.ControlFingerprint(public)})
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil || len(encoded) > maxKeyDocument {

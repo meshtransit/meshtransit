@@ -26,8 +26,8 @@ const (
 	browserRegistrationStylesPath = "/register/v1/styles.css"
 	browserRegistrationScriptPath = "/register/v1/client.js"
 	browserRegistrationPageLimit  = 100
-	browserRegistrationBodyLimit      = 64 << 10
-	browserRegistrationPostLimit      = 2048
+	browserRegistrationBodyLimit  = 64 << 10
+	browserRegistrationPostLimit  = 2048
 )
 
 // ErrInvalidBrowserRegistrationPage reports invalid page composition or bounds.

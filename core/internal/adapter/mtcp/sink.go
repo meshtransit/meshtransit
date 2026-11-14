@@ -32,7 +32,7 @@ var errAckTimeout = errors.New("mtcp: map acknowledgement window stayed full")
 type mapSink struct {
 	session     *Session
 	aliases     bool
-	controlKeys []*mtcpv1.KeyUpdate_ControlKey
+	controlKeys []ControlKey
 	// flow signs connection log tickets; nil: Core signs none. flowSent
 	// is set while the node holds a token this sink sent, flowWarned once
 	// a ticket failed to sign.
@@ -111,13 +111,21 @@ type mapSink struct {
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
-	keys := make([]*mtcpv1.KeyUpdate_ControlKey, 0, len(controlKeys))
+	return &mapSink{session: session, aliases: aliases, controlKeys: controlKeys, now: now, suffix: dnsname.Default(),
+		ackSignal: make(chan struct{}, 1), peerIDs: make(map[int64]string)}
+}
+
+// controlKeyUpdates are the control keys as KeyUpdate announces them at
+// now: a rolling key's expiry is taken when the update is sent.
+func controlKeyUpdates(controlKeys []ControlKey, now time.Time) []*mtcpv1.KeyUpdate_ControlKey {
+	updates := make([]*mtcpv1.KeyUpdate_ControlKey, 0, len(controlKeys))
 	for _, controlKey := range controlKeys {
 		public := controlKey.Private.Public()
-		keys = append(keys, &mtcpv1.KeyUpdate_ControlKey{Key: public[:], NotAfterMs: controlKey.NotAfter.UnixMilli()})
+		updates = append(updates, &mtcpv1.KeyUpdate_ControlKey{
+			Key: public[:], NotAfterMs: controlKey.notAfterAt(now).UnixMilli(),
+		})
 	}
-	return &mapSink{session: session, aliases: aliases, controlKeys: keys, now: now, suffix: dnsname.Default(),
-		ackSignal: make(chan struct{}, 1), peerIDs: make(map[int64]string)}
+	return updates
 }
 
 var _ mapsession.StreamSink = (*mapSink)(nil)
@@ -591,7 +599,7 @@ func (sink *mapSink) sendKeysLocked(grant grantParts) error {
 		return err
 	}
 	if err := sink.session.Send(sharedmtcp.MessageKeyUpdate, &mtcpv1.KeyUpdate{
-		ControlKeys: sink.controlKeys, SigningKeys: grant.signingKeys, Nonce: nonce,
+		ControlKeys: controlKeyUpdates(sink.controlKeys, sink.now()), SigningKeys: grant.signingKeys, Nonce: nonce,
 	}); err != nil {
 		return err
 	}

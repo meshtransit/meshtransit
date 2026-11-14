@@ -85,8 +85,14 @@ Content-Length: 0
 `MTCP-Key` tells Core which control private key to use (key IDs as in
 [keys.md](keys.md)), so Core never trial-decrypts. A deployment has at most two
 active control keys (current and next). The node uses the pinned key with the
-latest `not_after` and retries once with the other pinned key when Core
-answers `421 Misdirected Request` (unknown key ID).
+latest `not_after` (on a tie, the one Core lists first: the current key) and
+retries once with the other pinned key when Core answers
+`421 Misdirected Request` (unknown key ID).
+
+A key's `not_after` is either a fixed date or a rolling one: a key with a
+lifetime is announced as valid for that lifetime from the moment of each
+answer, so it never expires while Core runs. Nodes treat both alike: a key
+is usable while its latest announced `not_after` is in the future.
 
 Core answers `101 Switching Protocols` with `Upgrade: mtcp/1` and
 `MTCP-Handshake: <base64url of the RESPONSE record>`. From then on the
@@ -2068,8 +2074,10 @@ message, and again whenever either set changes. It arrives over a session
 authenticated with a currently pinned control key, so no extra signature is
 needed. The node replaces both sets atomically and durably, then answers
 `Pong{nonce}` (`nonce` ≤ 32 bytes). Core keeps accepting an old control key
-until every Device has acknowledged a set without it or the key's `not_after`
-passes.
+until the operator removes it from its configuration (a fixed `not_after` that
+has passed also stops Core from starting with it). The `not_after` in
+`KeyUpdate` is the one at the moment of sending; nodes MUST NOT expire the
+current key from it, and read the dates from `/mtcp/v1/key` (section 2.1).
 
 ## 12. Versioning
 

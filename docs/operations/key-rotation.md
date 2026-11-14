@@ -6,7 +6,7 @@ without breaking nodes, relays or sessions. The key types are defined in
 
 | Key | Lives | Rotation |
 |---|---|---|
-| MTCP control key | Until `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` (at most 5 years) | Planned, with a next key, below |
+| MTCP control key | Rolling: `MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME` (default a year) from every answer, so never while Core runs; or a fixed `…_KEY_NOT_AFTER` | When it leaks, with a next key, below |
 | Relay signing key | Until replaced | Planned, with a next key |
 | A relay's key | Until replaced | New relay map revision |
 | Identity broker signing keys | `MESHTRANSIT_IDENTITY_SIGNING_KEY_ROTATION` (6 h) | Automatic |
@@ -20,25 +20,30 @@ without breaking nodes, relays or sessions. The key types are defined in
 Nodes pin this key when they first trust a deployment, so it cannot simply be
 swapped. Core announces its keys, and nodes keep the announced next key.
 
+A key's expiry is rolling by default: Core announces it as valid for
+`MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME` (default `8760h`) from the moment of
+every answer (`/mtcp/v1/key`, `KeyUpdate`), so it never expires while Core runs
+and needs no renewal. A fixed date (`…_KEY_NOT_AFTER`) is for retiring a key on
+purpose; a key has one or the other, never both. Rotate only when a key leaks.
+
 1. **Generate** a next key and set `MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE`
-   and `MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER` on every control replica.
-   Restart them.
+   and its expiry, `MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_LIFETIME` (or a fixed
+   `…_NEXT_KEY_NOT_AFTER`), on every control replica. Restart them.
 2. **Wait** until every node has connected at least once. Core accepts
    handshakes to both keys and sends each node both public keys
    (`KeyUpdate`, MTCP §11); the node stores the next one. Core does not
    record which nodes have it, so leave enough time for Devices that are often
    offline.
-3. **Promote:** make the next key the current one (and its expiry the current
-   expiry), remove the next key settings, restart. Nodes that never learned the
+3. **Promote:** make the next key the current one with a rolling lifetime
+   (`…_KEY_LIFETIME`, not the fixed date it may have had), remove the next key
+   settings, restart. Nodes that never learned the
    new key must trust the deployment again.
 
-Core logs a warning at start when less than 60 days remain before the current
-key's expiry, and refuses to start once it has passed. Alert on
-`meshtransit_mtcp_control_key_not_after_timestamp_seconds - time() < 60*86400`;
-note that during a rotation the metric shows the next key's expiry, not the
-current key's.
-Extending the expiry without a new key only means changing
-`MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER`: nodes read the expiry from Core.
+With a fixed expiry, Core logs a warning at start when less than 60 days
+remain, and refuses to start once it has passed. The gauge
+`meshtransit_mtcp_control_key_not_after_timestamp_seconds` is computed at
+scrape time (a rolling key stays a lifetime ahead); alert on
+`… - time() < 60*86400`. During a rotation it shows the latest of the two keys.
 
 ## Relay signing key
 

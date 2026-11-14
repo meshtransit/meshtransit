@@ -81,6 +81,31 @@ func TestRenderIsDeterministicAndOwnsEverySettingItWrites(t *testing.T) {
 	}
 }
 
+// Auto-renewal design §2.2: the control key rolls a year from every answer,
+// also for a state written before, which named a fixed expiry; rendering
+// again moves an install to the rolling key.
+func TestRenderRollsTheControlKey(t *testing.T) {
+	t.Parallel()
+	for _, state := range []State{approvedState(), withoutKeyExpiry(approvedState())} {
+		rendered, err := Render(testConfig(t), state, testKeys, testLayout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core := parseEnv(t, rendered.Files["core.env"])
+		if core["MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME"] != "8760h" {
+			t.Errorf("lifetime = %q", core["MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME"])
+		}
+		if value, present := core["MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"]; present {
+			t.Errorf("fixed expiry still rendered: %q", value)
+		}
+	}
+}
+
+func withoutKeyExpiry(state State) State {
+	state.MTCPKeyNotAfter = time.Time{}
+	return state
+}
+
 func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 	t.Parallel()
 	rendered, err := Render(testConfig(t), approvedState(), testKeys, testLayout)

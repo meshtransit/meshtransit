@@ -284,8 +284,9 @@ For `control` and `all`.
 | `MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE`, `…_TLS_PRIVATE_KEY_FILE` | required | paths | TLS |
 | `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | required | secret, `privkey:` + hex | MTCP control key |
 | `MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE` | unset | secret | The next control key, during rotation |
-| `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | required | RFC 3339, in the future, at most 5 years ahead | Expiry announced for the control key |
-| `MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER` | required with the next key | as above | Expiry of the next key |
+| `MESHTRANSIT_CONTROL_MTCP_KEY_LIFETIME` | `8760h` unless a fixed expiry is set | 168h–5 years | Rolling expiry: the key is announced as valid this long from every answer, so it never expires while Core runs |
+| `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | unset | RFC 3339, in the future, at most 5 years ahead; not with `…_KEY_LIFETIME` | Fixed expiry, to retire the key on purpose |
+| `MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_LIFETIME`, `…_NEXT_KEY_NOT_AFTER` | one of them with the next key | as above | Expiry of the next key |
 | `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | 1–16384 | Sessions per process |
 | `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | 100ms–30s | TLS and request header deadline |
 | `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | 100ms–5m | Idle timeout before a connection becomes MTCP |

@@ -285,8 +285,9 @@ type mtcpMapSessions interface {
 // approval itself may outlive it, and mtcp-v1 §6.2 caps the wait at 10 min.
 const mtcpApprovalTTL = 10 * time.Minute
 
-// controlKeyExpiryWarning is how early the control role warns that its key
-// expires (MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER).
+// controlKeyExpiryWarning is how early the control role warns that a fixed
+// key expiry (MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER) comes; a rolling key
+// never expires.
 const controlKeyExpiryWarning = 60 * 24 * time.Hour
 
 // composeMTCP builds the MTCP v1 server the control listener routes to.
@@ -308,7 +309,9 @@ func composeMTCP(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
-	keys := []mtcpadapter.ControlKey{{Private: private, NotAfter: controlConfig.MTCP.KeyNotAfter}}
+	keys := []mtcpadapter.ControlKey{{
+		Private: private, NotAfter: controlConfig.MTCP.KeyNotAfter, Lifetime: controlConfig.MTCP.KeyLifetime,
+	}}
 	if controlConfig.NextNoisePrivateKeyFile != nil {
 		// During a rotation Core announces the next key to every session
 		// (KeyUpdate) and answers handshakes made with it (mtcp-v1 §11).
@@ -320,15 +323,18 @@ func composeMTCP(
 		if err != nil {
 			return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 		}
-		keys = append(keys, mtcpadapter.ControlKey{Private: next, NotAfter: controlConfig.MTCP.NextKeyNotAfter})
+		keys = append(keys, mtcpadapter.ControlKey{
+			Private: next, NotAfter: controlConfig.MTCP.NextKeyNotAfter, Lifetime: controlConfig.MTCP.NextKeyLifetime,
+		})
 		logger.Info("control key rotation in progress: next key announced",
-			"next_not_after", controlConfig.MTCP.NextKeyNotAfter)
+			"next_not_after", controlConfig.MTCP.NextKeyNotAfter, "next_lifetime", controlConfig.MTCP.NextKeyLifetime)
 	}
-	// Past the expiry nodes refuse the key and the control role no longer
-	// starts, so warn while there is time to rotate it.
-	if remaining := time.Until(controlConfig.MTCP.KeyNotAfter); remaining < controlKeyExpiryWarning {
+	// A fixed expiry ends: past it nodes refuse the key and the control role
+	// no longer starts, so warn while there is time to rotate it. A rolling
+	// key never ends (auto-renewal design §2).
+	if fixed := controlConfig.MTCP.KeyNotAfter; !fixed.IsZero() && time.Until(fixed) < controlKeyExpiryWarning {
 		logger.Warn("control key expires soon; rotate it", "not_after", controlConfig.MTCP.KeyNotAfter,
-			"remaining_hours", int(remaining.Hours()))
+			"remaining_hours", int(time.Until(fixed).Hours()))
 	}
 	clients, err := clientip.NewResolver(controlConfig.MTCP.TrustedProxyPrefixes())
 	if err != nil {

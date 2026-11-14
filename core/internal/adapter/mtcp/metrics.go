@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,10 +27,15 @@ type Metrics struct {
 	sheds      prometheus.Counter
 	unproven   prometheus.Counter
 	forwarding prometheus.Counter
-	keyExpiry  prometheus.Gauge
-	limits     *prometheus.CounterVec
-	mapNames   *prometheus.CounterVec
-	expiring   *deviceExpiryCollector
+	keyExpiry  prometheus.GaugeFunc
+	// controlKeys and keyClock are what keyExpiry reads at scrape time: a
+	// rolling key's expiry moves with the clock.
+	controlKeysMu sync.Mutex
+	controlKeys   []ControlKey
+	keyClock      func() time.Time
+	limits        *prometheus.CounterVec
+	mapNames      *prometheus.CounterVec
+	expiring      *deviceExpiryCollector
 	// routeOffers counts stored offers by result; routeOfferDropped the
 	// offered prefixes ignored as unusable (mtcp-v1 §8.2).
 	routeOffers       *prometheus.CounterVec
@@ -379,11 +385,11 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_sibling_proofs_total",
 			Help: "Sibling machine keys of browser sign-ins by result: valid, invalid proof, dropped (malformed, repeated or own key).",
 		}, []string{"result"}),
-		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
-			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
-		}),
 	}
+	metrics.keyExpiry = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
+		Help: "Expiry of the latest control key this replica answers with (Unix seconds), as announced now.",
+	}, metrics.latestKeyExpiry)
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
 	}
@@ -473,19 +479,33 @@ func (metrics *Metrics) namesDegraded(reason string, count int) {
 
 func (metrics *Metrics) handshake(result string) { metrics.handshakes.WithLabelValues(result).Inc() }
 
-// controlKeysExpire records the latest expiry among keys; a nil Metrics
+// controlKeysExpire keeps the keys the expiry gauge reads; a nil Metrics
 // records nothing.
-func (metrics *Metrics) controlKeysExpire(keys []ControlKey) {
-	if metrics == nil || len(keys) == 0 {
+func (metrics *Metrics) controlKeysExpire(keys []ControlKey, now func() time.Time) {
+	if metrics == nil || len(keys) == 0 || now == nil {
 		return
 	}
-	latest := keys[0].NotAfter
-	for _, controlKey := range keys[1:] {
-		if controlKey.NotAfter.After(latest) {
-			latest = controlKey.NotAfter
+	metrics.controlKeysMu.Lock()
+	defer metrics.controlKeysMu.Unlock()
+	metrics.controlKeys, metrics.keyClock = slices.Clone(keys), now
+}
+
+// latestKeyExpiry is the latest expiry among the keys as announced now; 0
+// before a server set them.
+func (metrics *Metrics) latestKeyExpiry() float64 {
+	metrics.controlKeysMu.Lock()
+	defer metrics.controlKeysMu.Unlock()
+	if len(metrics.controlKeys) == 0 {
+		return 0
+	}
+	now := metrics.keyClock()
+	latest := metrics.controlKeys[0].notAfterAt(now)
+	for _, controlKey := range metrics.controlKeys[1:] {
+		if at := controlKey.notAfterAt(now); at.After(latest) {
+			latest = at
 		}
 	}
-	metrics.keyExpiry.Set(float64(latest.Unix()))
+	return float64(latest.Unix())
 }
 func (metrics *Metrics) sessionOpened()  { metrics.sessions.Inc() }
 func (metrics *Metrics) sessionClosed()  { metrics.sessions.Dec() }
