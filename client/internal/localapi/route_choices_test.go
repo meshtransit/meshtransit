@@ -298,3 +298,32 @@ func TestCallerLimitsAreSeparate(t *testing.T) {
 		t.Fatal("the first caller's burst limited the second")
 	}
 }
+
+// TD-CLI-120: a pool the Network does not grant is a conflict the apps
+// can name, not a generic failure.
+func TestRouteChoicesErrorForAPoolNotGranted(t *testing.T) {
+	t.Parallel()
+	server := newRouteChoicesServer(t, &memoryRouteSettings{}, true)
+	response := httptest.NewRecorder()
+	server.writeRouteChoicesError(response, daemon.ErrExitPoolNotGranted)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"exit_pool_not_granted"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+// The granted pools reach status as a list, empty when none is granted,
+// and are left out without a map to tell.
+func TestMapExitPools(t *testing.T) {
+	t.Parallel()
+	if mapExitPools(nil) != nil {
+		t.Fatal("pools without a map are not omitted")
+	}
+	if pools := mapExitPools([]daemon.GrantedExitPool{}); pools == nil || len(*pools) != 0 {
+		t.Fatalf("no pool granted = %v", pools)
+	}
+	pools := mapExitPools([]daemon.GrantedExitPool{{Ref: "r1", Name: "World"}})
+	encoded, err := json.Marshal(pools)
+	if err != nil || string(encoded) != `[{"ref":"r1","name":"World"}]` {
+		t.Fatalf("pools = %s, %v", encoded, err)
+	}
+}

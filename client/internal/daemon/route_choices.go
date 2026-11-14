@@ -19,6 +19,10 @@ var (
 	// ErrOperatorsOff reports an operator's change while root keeps the
 	// choices (routesettings.Settings.OperatorsAllowed).
 	ErrOperatorsOff = errors.New("daemon: root keeps the route choices")
+	// ErrExitPoolNotGranted reports an Exit Pool the Network does not grant
+	// this node: taken, it would drop the host's Internet traffic behind
+	// the kill switch with no exit node to carry it (TD-CLI-120).
+	ErrExitPoolNotGranted = errors.New("daemon: the Network grants no Exit Pool by that name")
 )
 
 // RouteChoices are the host's own route choices and whether the caller may
@@ -83,11 +87,21 @@ func (s *Service) ChangeRouteChoices(
 		if !administrator && !current.OperatorsAllowed() {
 			return current, ErrOperatorsOff
 		}
-		return routesettings.ApplyChoices(current, change)
+		next, err := routesettings.ApplyChoices(current, change)
+		if err != nil {
+			return current, err
+		}
+		// After the operator gate and the value's own checks: a pool the
+		// Network does not grant would drop the host's Internet traffic.
+		if change.ExitUse != nil && !s.exitPoolGranted(next.ExitUse) {
+			return current, ErrExitPoolNotGranted
+		}
+		return next, nil
 	})
 	if err != nil {
 		if !errors.Is(err, ErrRouteChoicesUnavailable) && !errors.Is(err, ErrOperatorsOff) &&
-			!errors.Is(err, routesettings.ErrRootSetting) && !errors.Is(err, routesettings.ErrInvalid) {
+			!errors.Is(err, routesettings.ErrRootSetting) && !errors.Is(err, routesettings.ErrInvalid) &&
+			!errors.Is(err, ErrExitPoolNotGranted) {
 			s.routeLogger().Error("writing the route choices failed", "error", err)
 			return RouteChoices{}, fmt.Errorf("%w: %w", ErrRouteChoicesUnavailable, err)
 		}

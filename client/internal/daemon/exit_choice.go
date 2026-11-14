@@ -801,18 +801,93 @@ func watchExitPreference(ctx context.Context, failover *routeFailover, read func
 	}
 }
 
-func (s *Service) setExit(view *ExitView, sticky exitSticky, pools map[string][]string) {
+// GrantedExitPool is an Exit Pool the Network grants this node, by its
+// reference and name: what a host's choice may name (TD-CLI-120).
+type GrantedExitPool struct {
+	Ref  string
+	Name string
+}
+
+// grantedExitPools lists the pools Core grants in the current map.
+func (failover *routeFailover) grantedExitPools() []GrantedExitPool {
+	failover.mu.Lock()
+	defer failover.mu.Unlock()
+	granted := make([]GrantedExitPool, 0, len(failover.core.Exits))
+	for _, pool := range failover.core.Exits {
+		granted = append(granted, GrantedExitPool{Ref: pool.Ref, Name: pool.Name})
+	}
+	return granted
+}
+
+func (s *Service) setExit(view *ExitView, sticky exitSticky, pools map[string][]string, granted []GrantedExitPool) {
 	s.routeSitesMu.Lock()
 	defer s.routeSitesMu.Unlock()
 	s.exit, s.exitSticky, s.exitPools = view, sticky, pools
+	s.exitGranted, s.exitGrantsKnown = granted, true
 }
 
-// clearExit forgets the session's exit view and pools; the sticky choice
-// stays for the next session.
+// clearExit forgets the session's exit view, pools and grants; the sticky
+// choice stays for the next session.
 func (s *Service) clearExit() {
 	s.routeSitesMu.Lock()
 	defer s.routeSitesMu.Unlock()
 	s.exit, s.exitPools = nil, nil
+	s.exitGranted, s.exitGrantsKnown = nil, false
+}
+
+// GrantedExitPools returns the pools the current map grants, and whether
+// meshd has a map to tell (false before any, and after the session ends).
+func (s *Service) GrantedExitPools() ([]GrantedExitPool, bool) {
+	s.routeSitesMu.Lock()
+	defer s.routeSitesMu.Unlock()
+	if !s.exitGrantsKnown {
+		return nil, false
+	}
+	return append([]GrantedExitPool(nil), s.exitGranted...), true
+}
+
+// grantedExitPoolsOrNil is GrantedExitPools for status: nil without a
+// map, an empty list when the map grants none.
+func (s *Service) grantedExitPoolsOrNil() []GrantedExitPool {
+	granted, known := s.GrantedExitPools()
+	if !known {
+		return nil
+	}
+	if granted == nil {
+		return []GrantedExitPool{}
+	}
+	return granted
+}
+
+// exitPoolGranted reports whether use, a pool's reference or a name only
+// one pool has, is one the current map grants; true while meshd cannot
+// tell (no map), and for auto, off and the empty choice, which name no
+// pool.
+func (s *Service) exitPoolGranted(use string) bool {
+	if use == "" || use == routesettings.ExitUseAuto || use == routesettings.ExitUseOff {
+		return true
+	}
+	granted, known := s.GrantedExitPools()
+	if !known {
+		return true
+	}
+	return GrantsExitPool(granted, use)
+}
+
+// GrantsExitPool reports whether use names one of granted as
+// exitPoolLocked resolves it: by reference, or by a name exactly one
+// granted pool has (a shared name resolves to none and drops the traffic).
+func GrantsExitPool(granted []GrantedExitPool, use string) bool {
+	named := 0
+	for _, pool := range granted {
+		if pool.Ref == use {
+			return true
+		}
+		if pool.Name == use {
+			named++
+		}
+	}
+	return named == 1
 }
 
 func (s *Service) exitSnapshot() *ExitView {

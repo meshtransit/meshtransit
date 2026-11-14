@@ -557,6 +557,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		SubnetRouter:       mapSubnetRouterStatus(status.SubnetRouter),
 		ExitNode:           mapExitNodeStatus(status.ExitNode),
 		Exit:               mapExitStatus(status.Exit, status.ExitRoute),
+		ExitPools:          mapExitPools(status.ExitPools),
 		KubernetesClusters: mapKubernetesClusters(status.KubernetesClusters),
 		Captive:            mapCaptiveStatus(status.Captive),
 		ConnectionLogs:     mapConnectionLogs(status.ConnectionLogs),
@@ -752,6 +753,18 @@ func mapSubnetRouteStatus(status dataplane.SubnetRouteStatus) subnetRouteStatus 
 		mapped.Refused = append(mapped.Refused, subnetRouteRefusal{Prefix: refusal.Prefix.String(), Reason: refusal.Reason})
 	}
 	return mapped
+}
+
+// mapExitPools lists the granted pools; nil (omitted) without a map.
+func mapExitPools(granted []daemon.GrantedExitPool) *[]exitPoolStatus {
+	if granted == nil {
+		return nil
+	}
+	pools := make([]exitPoolStatus, 0, len(granted))
+	for _, pool := range granted {
+		pools = append(pools, exitPoolStatus{Ref: pool.Ref, Name: pool.Name})
+	}
+	return &pools
 }
 
 func mapExitStatus(view *daemon.ExitView, route dataplane.ExitRouteStatus) *exitStatus {

@@ -104,9 +104,9 @@ func TestExitUseWaitsUntilTheChoiceApplies(t *testing.T) {
 			[]string{"exit", "use", "World"},
 			[]localapi.Status{{Exit: &localapi.ExitStatus{Use: "World", Refused: "exit_use_off"}}},
 			false, nil,
-			"Exit: not routed: exit_use_off\n", 1,
+			"Exit: not routed: exit_use_off\n", 2, // once for the granted pools (TD-CLI-120), once applied
 		},
-		{"run through sudo", []string{"exit", "use", "World"}, []localapi.Status{{}}, true, nil, "", 0},
+		{"run through sudo", []string{"exit", "use", "World"}, []localapi.Status{{}}, true, nil, "", 1},
 		{"auto after a pool", []string{"exit", "use", "auto"}, []localapi.Status{
 			serving,
 			{Exit: &localapi.ExitStatus{Use: "auto", Pool: "p1", PoolName: "World", Routing: true}},
@@ -314,5 +314,57 @@ func TestExitCaptiveRefusedByThePool(t *testing.T) {
 	// Closing is never refused.
 	if code := Run(t.Context(), []string{"exit", "captive", "--close"}, &stdout, &stderr, options); code != 0 || !asked {
 		t.Fatalf("exit captive --close = %d, asked %t", code, asked)
+	}
+}
+
+// TD-CLI-120: meshctl refuses a pool the Network does not grant before it
+// changes the host's settings, as meshd does on Windows; without a map to
+// tell (no exit_pools) or without meshd it writes the choice as before.
+func TestExitUseRefusesAPoolNotGranted(t *testing.T) {
+	t.Parallel()
+	granted := &[]localapi.ExitPool{{Ref: "p1", Name: "World"}}
+	for _, test := range []struct {
+		name    string
+		use     string
+		status  localapi.Status
+		err     error
+		refused string
+	}{
+		{
+			name: "not granted", use: "world-typo", status: localapi.Status{ExitPools: granted},
+			refused: `meshctl: this Network grants no Exit Pool named "world-typo"; it grants: World` + "\n",
+		},
+		{
+			name: "none granted", use: "World", status: localapi.Status{ExitPools: &[]localapi.ExitPool{}},
+			refused: `meshctl: this Network grants no Exit Pool named "World"; it grants none` + "\n",
+		},
+		{name: "by name", use: "World", status: localapi.Status{ExitPools: granted}},
+		{name: "by reference", use: "p1", status: localapi.Status{ExitPools: granted}},
+		{
+			name: "a name two pools share", use: "Office",
+			status:  localapi.Status{ExitPools: &[]localapi.ExitPool{{Ref: "p2", Name: "Office"}, {Ref: "p3", Name: "Office"}}},
+			refused: `meshctl: 2 Exit Pools are named "Office": name one by its reference (meshctl exit status lists them)` + "\n",
+		},
+		{name: "no map yet", use: "world-typo", status: localapi.Status{}},
+		{name: "meshd down", use: "world-typo", err: errors.New("no socket")},
+		{name: "auto", use: "auto", status: localapi.Status{ExitPools: &[]localapi.ExitPool{}}},
+		{name: "off", use: "off", status: localapi.Status{ExitPools: &[]localapi.ExitPool{}}},
+	} {
+		client := &statusSequence{statuses: []localapi.Status{test.status}}
+		client.err = test.err
+		routes := &fakeRoutes{delegated: true}
+		options := testOptions(client)
+		options.Routes = routes.run
+		var stdout, stderr bytes.Buffer
+		code := Run(t.Context(), []string{"exit", "use", test.use}, &stdout, &stderr, options)
+		if test.refused != "" {
+			if code != 1 || stderr.String() != test.refused || len(routes.quiet) != 0 {
+				t.Errorf("%s = %d, %q, routes run %d", test.name, code, stderr.String(), len(routes.quiet))
+			}
+			continue
+		}
+		if code != 0 || len(routes.quiet) != 1 {
+			t.Errorf("%s = %d, %q, routes run %d", test.name, code, stderr.String(), len(routes.quiet))
+		}
 	}
 }

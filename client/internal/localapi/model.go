@@ -46,6 +46,10 @@ type statusResponse struct {
 	SubnetRouter    subnetRouterStatus `json:"subnet_router"`
 	ExitNode        exitNodeStatus     `json:"exit_node"`
 	Exit            *exitStatus        `json:"exit,omitempty"`
+	// ExitPools are the Exit Pools the Network grants this node, for the
+	// apps to offer instead of a free name (TD-CLI-120); omitted without a
+	// map to tell, an empty list when it grants none.
+	ExitPools *[]exitPoolStatus `json:"exit_pools,omitempty"`
 	// KubernetesClusters are the clusters the node may reach (mtcp-v1
 	// §7.11); omitted when it does not take them.
 	KubernetesClusters []kubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
@@ -193,6 +197,13 @@ type exitNodeStatus struct {
 	Code                 string `json:"code,omitempty"`
 	Families             string `json:"families,omitempty"`
 	Error                string `json:"error,omitempty"`
+}
+
+// exitPoolStatus is one Exit Pool the Network grants: its reference and
+// name, either of which a choice may name.
+type exitPoolStatus struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
 }
 
 // exitStatus is the exit node the node sends its Internet traffic to

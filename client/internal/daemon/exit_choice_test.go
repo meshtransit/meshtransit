@@ -337,7 +337,7 @@ func TestExitChoiceApprovesANewPrimaryWhileTheExitIsOff(t *testing.T) {
 	h.failover.setExitPreference(exitPreference{})
 	_, view, sticky := h.failover.exitSelection()
 	service := &Service{exitPins: h.failover.exit.pins}
-	service.setExit(view, sticky, h.failover.exitCandidates())
+	service.setExit(view, sticky, h.failover.exitCandidates(), h.failover.grantedExitPools())
 	if _, err := service.ApproveExitNodes(t.Context(), []string{"exit-9"}); err == nil {
 		t.Fatal("approving an exit node of no pool succeeded")
 	}
@@ -361,7 +361,7 @@ func TestExitChoiceApprovesNothingInAnUnpinnedPool(t *testing.T) {
 	t.Parallel()
 	pins, _ := openExitPins("")
 	service := &Service{exitPins: pins}
-	service.setExit(nil, exitSticky{}, map[string][]string{"pool-a": {"exit-1", "exit-2"}})
+	service.setExit(nil, exitSticky{}, map[string][]string{"pool-a": {"exit-1", "exit-2"}}, nil)
 	if _, err := service.ApproveExitNodes(t.Context(), []string{"exit-1"}); err == nil {
 		t.Fatal("approved in a pool never pinned")
 	}

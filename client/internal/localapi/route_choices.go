@@ -139,6 +139,9 @@ func (s *Server) writeRouteChoicesError(writer http.ResponseWriter, err error) {
 			"accept-public is on: an administrator turns accept on with meshctl routes accept on")
 	case errors.Is(err, routesettings.ErrInvalid):
 		s.writeError(writer, http.StatusBadRequest, "invalid_route_choice", "the value is not accepted")
+	case errors.Is(err, daemon.ErrExitPoolNotGranted):
+		s.writeError(writer, http.StatusConflict, "exit_pool_not_granted",
+			"this Network grants no Exit Pool by that name: choose one it grants (meshctl exit status lists them)")
 	case errors.Is(err, daemon.ErrRouteChoicesUnavailable):
 		s.writeError(writer, http.StatusServiceUnavailable, "route_settings_unavailable",
 			"the route settings cannot be used: an administrator checks them with meshctl routes show")

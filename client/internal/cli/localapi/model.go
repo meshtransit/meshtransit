@@ -38,6 +38,9 @@ type Status struct {
 	SubnetRouter       *SubnetRouterStatus `json:"subnet_router,omitempty"`
 	ExitNode           *ExitNodeStatus     `json:"exit_node,omitempty"`
 	Exit               *ExitStatus         `json:"exit,omitempty"`
+	// ExitPools are the Exit Pools the Network grants this machine; nil
+	// when meshd has no map to tell (TD-CLI-120).
+	ExitPools *[]ExitPool `json:"exit_pools,omitempty"`
 	// KubernetesClusters are the clusters this machine may reach (mtcp-v1
 	// §7.11); omitted when it takes none.
 	KubernetesClusters []KubernetesClusterStatus `json:"kubernetes_clusters,omitempty"`
@@ -245,6 +248,13 @@ type SubnetRouteSite struct {
 	Router     string   `json:"router,omitempty"`
 	RouterName string   `json:"router_name,omitempty"`
 	Via        string   `json:"via"`
+}
+
+// ExitPool is an Exit Pool the Network grants: a choice names its
+// reference or its name.
+type ExitPool struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
 }
 
 // ExitStatus is the exit node the node sends its Internet traffic to.

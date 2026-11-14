@@ -40,6 +40,48 @@ func hostRouteArgs(args []string) (routes []string, handled bool) {
 	return nil, false
 }
 
+// exitPoolRefusal is why meshctl refuses use before it changes the host's
+// settings: a pool the Network does not grant, which would drop the
+// host's Internet traffic with no exit node to carry it (TD-CLI-120).
+// Empty for auto and off, and when meshd cannot tell (no map, not
+// running): the choice is written as before, as root may set it ahead.
+func exitPoolRefusal(ctx context.Context, use string, options Options, global globalOptions) string {
+	if use == "auto" || use == "off" || options.NewClient == nil {
+		return ""
+	}
+	client, err := options.NewClient(global.socketPath, global.timeout)
+	if err != nil {
+		return ""
+	}
+	status, err := client.Status(ctx)
+	if err != nil || status.ExitPools == nil {
+		return ""
+	}
+	names := make([]string, 0, len(*status.ExitPools))
+	named := 0
+	for _, pool := range *status.ExitPools {
+		if pool.Ref == use {
+			return ""
+		}
+		if pool.Name == use {
+			named++
+		}
+		names = append(names, cmp.Or(pool.Name, pool.Ref))
+	}
+	if named > 1 {
+		return fmt.Sprintf("meshctl: %d Exit Pools are named %q: name one by its reference (meshctl exit status lists them)",
+			named, use)
+	}
+	if named == 1 {
+		return ""
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("meshctl: this Network grants no Exit Pool named %q; it grants none", use)
+	}
+	return fmt.Sprintf("meshctl: this Network grants no Exit Pool named %q; it grants: %s",
+		use, strings.Join(names, ", "))
+}
+
 // runHostRoutes runs one routes command through Routes; routes is empty
 // for a malformed command, answered with the usage of what was typed.
 func runHostRoutes(command string, routes []string, quiet bool, stdout, stderr io.Writer,

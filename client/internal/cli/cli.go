@@ -151,6 +151,12 @@ func Run(
 			return 2
 		}
 		quiet := commandArgs[0] == "exit"
+		if len(routes) == 2 && routes[0] == "exit-use" {
+			if refusal := exitPoolRefusal(ctx, routes[1], options, global); refusal != "" {
+				_, _ = fmt.Fprintln(stderr, refusal)
+				return 1
+			}
+		}
 		code, delegated := runHostRoutes(commandArgs[0], routes, quiet, stdout, stderr, options.Routes)
 		if code != 0 || delegated || !quiet {
 			return code

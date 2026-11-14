@@ -193,6 +193,9 @@ type Status struct {
 	// when it uses none, and ExitRoute what the helper does with it.
 	Exit      *ExitView
 	ExitRoute dataplane.ExitRouteStatus
+	// ExitPools are the Exit Pools the Network grants this node, for a
+	// choice to name one (TD-CLI-120); nil without a map to tell.
+	ExitPools []GrantedExitPool
 	// Captive is a captive portal found while the host uses an exit node.
 	Captive         CaptiveView
 	PathProbes      PathProbeStatus
@@ -475,11 +478,15 @@ type Service struct {
 	// node a new session keeps using, and exitPools the candidates of each
 	// pool Core grants, by reference, which approval checks while no exit
 	// node is used.
-	routeSitesMu      sync.Mutex
-	routeSites        []RouteSiteView
-	exit              *ExitView
-	exitSticky        exitSticky
-	exitPools         map[string][]string
+	routeSitesMu sync.Mutex
+	routeSites   []RouteSiteView
+	exit         *ExitView
+	exitSticky   exitSticky
+	exitPools    map[string][]string
+	// exitGranted are the pools the current map grants (TD-CLI-120);
+	// exitGrantsKnown is false before any map and after the session.
+	exitGranted       []GrantedExitPool
+	exitGrantsKnown   bool
 	loadRouteSettings func(string) (routesettings.Settings, error)
 	// updateRouteSettings changes the route settings under their lock
 	// (routesettings.Update) where routeChoicesWritable lets meshd.
@@ -1108,7 +1115,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 			if exitSelection != nil {
 				report, view, sticky := failover.exitSelection()
-				s.setExit(view, sticky, failover.exitCandidates())
+				s.setExit(view, sticky, failover.exitCandidates(), failover.grantedExitPools())
 				offerLatest(exitSelection, report)
 			}
 		}
@@ -2703,6 +2710,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		SubnetRouter:       s.subnetRouterStatus(),
 		ExitNode:           s.exitNodeStatus(),
 		Exit:               s.exitSnapshot(),
+		ExitPools:          s.grantedExitPoolsOrNil(),
 		ExitRoute:          s.exitRouteStatus(),
 		Captive:            s.captiveView(),
 		PathProbes:         s.pathProbeStatus(),
