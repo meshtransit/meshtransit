@@ -307,7 +307,9 @@ FROM mesh.network n JOIN mesh.workspace w ON w.id = n.workspace_id WHERE n.id = 
 // Phase 2 revokes a deleted Network's Devices in batches: one evidence
 // record a step, each Device revoked with its keys (so schema 161 now says
 // revoked too), then the deletion completes. Run last: it ends a fixture
-// Network for good.
+// Network for good, never one a later test run uses: the role process
+// tests register into the authority fixture Network, the share scale and
+// guardrail cut tests use their provider and consumer (TD-TEST-70).
 func assertNetworkDeletionWorkerRevokesDevices(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	workerPool *postgresadapter.Pool) {
 	t.Helper()
@@ -322,8 +324,10 @@ FROM mesh.network n
 JOIN mesh.device d ON d.network_id = n.id AND d.state = 'active' AND d.deleted_at IS NULL
 JOIN mesh.device_machine_key_epoch m ON m.device_id = d.id AND m.epoch = d.current_machine_key_epoch
 JOIN mesh.device_node_key_epoch k ON k.device_id = d.id AND k.epoch = d.current_node_key_epoch
-WHERE n.state = 'active' AND (mesh_ops.network_deletion_blockers_internal_v1(n.workspace_id, n.id) ->> 'total')::BIGINT = 0
-ORDER BY (SELECT count(*) FROM mesh.device x WHERE x.network_id = n.id) DESC, n.id, d.id LIMIT 1`).Scan(&networkID,
+WHERE n.state = 'active' AND n.id <> ALL($1::BIGINT[])
+  AND (mesh_ops.network_deletion_blockers_internal_v1(n.workspace_id, n.id) ->> 'total')::BIGINT = 0
+ORDER BY (SELECT count(*) FROM mesh.device x WHERE x.network_id = n.id) DESC, n.id, d.id LIMIT 1`,
+		[]int64{integrationNetworkInternalID, shareScaleProvider, shareScaleConsumer}).Scan(&networkID,
 		&networkText, &devices, &fingerprint, &nodeKey); err != nil {
 		t.Fatalf("no fixture Network with Devices and nothing blocking it: %v", err)
 	}

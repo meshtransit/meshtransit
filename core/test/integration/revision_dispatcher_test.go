@@ -20,7 +20,13 @@ import (
 	"meshtransit.net/core/internal/platform/observability"
 )
 
-const integrationNetworkPublicID = "01890f00-0000-7000-8000-000000000201"
+const (
+	integrationNetworkPublicID = "01890f00-0000-7000-8000-000000000201"
+	// integrationNetworkInternalID is the shared authority-fixture Network
+	// (Workspace 101); the role process tests register into it after the
+	// migration tests, which must leave it active.
+	integrationNetworkInternalID = int64(201)
+)
 
 func assertRevisionDispatcherDelivery(
 	ctx context.Context,
