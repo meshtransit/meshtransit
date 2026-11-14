@@ -41,7 +41,7 @@ type setupCommand struct {
 	now         func() time.Time
 }
 
-// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply|migrate"
+// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply|migrate|renew-tls"
 // (docs: self-host-config-design.md). Output names files and states, never
 // secret values. migrate runs inside the server's containers, as the image
 // user: it only reads run/ and talks to the database.
@@ -75,6 +75,7 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 		"check":            {command.check},
 		"apply":            {command.secrets, command.approveIfNew, command.render, command.check},
 		"migrate":          {command.migrateReported},
+		"renew-tls":        {command.renewTLS},
 	}
 	operation := args[0]
 	run, ok := steps[operation]
@@ -90,8 +91,12 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 	if operation != "init" && operation != "migrate" {
 		// One setup run at a time over the state directory. migrate writes
 		// nothing there; the database serializes its own migrations.
-		if err := prepareStateDir(*stateDir, command.owner); err != nil {
-			return fail(err)
+		// renew-tls runs in a container that mounts only the secrets, the
+		// lock and the renew directory: the state directory is not its own.
+		if operation != "renew-tls" {
+			if err := prepareStateDir(*stateDir, command.owner); err != nil {
+				return fail(err)
+			}
 		}
 		unlock, err := selfhost.LockSetup(*stateDir)
 		if err != nil {
@@ -173,8 +178,29 @@ func (command setupCommand) secrets() error {
 	if err != nil {
 		return err
 	}
+	restart, err := selfhost.PendingRestart(command.paths.layout.SecretsDir)
+	if err != nil {
+		return err
+	}
 	return command.report(map[string]any{"operation": "secrets", "created": nonNil(report.Created),
-		"kept": len(report.Kept)})
+		"kept": len(report.Kept), "renewed": nonNil(report.Renewed), "restart": nonNil(restart)})
+}
+
+// renewTLS renews the internal TLS that is due (the host's timer runs it
+// each day, then restarts what the restart file names) and records the
+// outcome in renew/status.json, failure included.
+func (command setupCommand) renewTLS() error {
+	now := command.now()
+	secretsDir := command.paths.layout.SecretsDir
+	var report selfhost.RenewReport
+	config, err := command.loadConfig()
+	if err == nil {
+		report, err = selfhost.RenewTLS(config, secretsDir, selfhost.GenerateOptions{Now: now, Owner: command.owner})
+	}
+	report.Renewed, report.Restart = nonNil(report.Renewed), nonNil(report.Restart)
+	statusErr := selfhost.WriteRenewStatus(secretsDir, now, report, err)
+	reportErr := command.report(map[string]any{"operation": "renew-tls", "result": report})
+	return errors.Join(err, statusErr, reportErr)
 }
 
 func (command setupCommand) approve() error {
@@ -229,6 +255,9 @@ func (command setupCommand) render() error {
 	if err := prepareRunDir(command.paths.layout.RunDir, command.owner); err != nil {
 		return err
 	}
+	if err := selfhost.PrepareRenewDir(command.paths.layout.SecretsDir); err != nil {
+		return err
+	}
 	for _, name := range selfhost.DataDirs {
 		if err := prepareDataDir(filepath.Join(filepath.Dir(command.paths.layout.SecretsDir), name),
 			command.owner); err != nil {
@@ -247,7 +276,9 @@ func (command setupCommand) render() error {
 }
 
 // prepareRunDir makes the rendered files' directory, owned by the image
-// user (0750); a link is refused.
+// group (root:65532 0750): root on the host runs compose from these files
+// each night (the TLS renewal timer), so the image user, which every
+// container runs as, must not be able to change them. A link is refused.
 func prepareRunDir(runDir string, owner *selfhost.Owner) error {
 	if err := os.MkdirAll(runDir, 0o750); err != nil {
 		return err
@@ -259,10 +290,10 @@ func prepareRunDir(runDir string, owner *selfhost.Owner) error {
 	if owner == nil {
 		return nil
 	}
-	if err := os.Chown(runDir, owner.UID, owner.GID); err != nil {
+	if err := os.Chown(runDir, 0, owner.GID); err != nil {
 		return err
 	}
-	return os.Chmod(runDir, 0o750) // #nosec G302 -- a directory the image user reads.
+	return os.Chmod(runDir, 0o750) // #nosec G302 -- a directory the image group reads.
 }
 
 // check loads every rendered file with Core's own loaders: what passes here
@@ -376,7 +407,8 @@ func replaceFile(dir, name string, contents []byte, owner *selfhost.Owner) error
 		return err
 	}
 	if owner != nil {
-		if err := temporary.Chown(owner.UID, owner.GID); err != nil {
+		// root's, readable by the image group (prepareRunDir).
+		if err := temporary.Chown(0, owner.GID); err != nil {
 			_ = temporary.Close()
 			return err
 		}

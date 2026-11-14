@@ -49,116 +49,108 @@ const (
 	leafLifetime = 2 * 365 * 24 * time.Hour
 )
 
-// generateTLS makes the CA and every leaf dir lacks. A leaf of an existing
-// CA is issued by that CA; a missing CA with existing leaves is refused, so
-// the leaves are never left signed by a key setup no longer has. A key and
-// its certificate are one pair: half a pair (an interrupted run) is refused,
-// and an existing pair must match. Callers hold LockSetup.
-func generateTLS(config Config, dir string, options GenerateOptions, record func(string, bool)) error {
-	caCertificate, caKey, created, err := loadOrCreateCA(dir, options)
-	if err != nil {
-		return err
+// generateTLS makes the CA and every leaf dir lacks, and issues again a
+// leaf with less than a third of its life left, queueing its service in
+// the restart file first (renew.go); it returns the leaves it issued again.
+// A leaf of an existing CA is issued by that CA; a missing CA with existing
+// leaves is refused, so the leaves are never left signed by a key setup no
+// longer has. A key and its certificate are one pair: half a pair (an
+// interrupted run) is refused, and an existing pair must match. Callers
+// hold LockSetup.
+func generateTLS(config Config, dir string, options GenerateOptions, record func(string, bool)) ([]string, error) {
+	if err := recoverTLS(dir, options.Owner); err != nil {
+		return nil, err
 	}
-	record("ca.crt", created)
-	record("ca.key", created)
+	current, created, err := loadOrCreateCA(dir, options)
+	if err != nil {
+		return nil, err
+	}
+	record(caCertificateFile, created)
+	record(caKeyFile, created)
+	run := &renewal{config: config, dir: dir, options: options}
 	for _, leaf := range tlsLeaves {
 		present, err := pairPresent(dir, leaf.name)
 		if err != nil {
-			return err
+			return run.report.Renewed, err
 		}
-		if present {
-			if err := verifyLeaf(dir, leaf.name, caCertificate, leaf.names(config)); err != nil {
-				return err
+		if !present {
+			if err := createLeaf(dir, leaf, config, current, options); err != nil {
+				return run.report.Renewed, err
 			}
-			record(leaf.name+".crt", false)
-			record(leaf.name+".key", false)
+			record(leaf.name+".key", true)
+			record(leaf.name+".crt", true)
 			continue
 		}
-		certificate, key, err := issueLeaf(caCertificate, caKey, leaf.names(config), options.Now)
+		certificate, err := verifyLeaf(dir, leaf.name, current, leaf.names(config))
 		if err != nil {
-			return err
+			return run.report.Renewed, err
 		}
-		keyCreated, err := writeIfAbsent(dir, leaf.name+".key", key, 0o600, options.Owner)
-		clear(key)
-		if err != nil {
-			return err
+		if leafDue(certificate, options.Now) {
+			if err := run.replaceLeaf(leaf, current.signing, current.key); err != nil {
+				return run.report.Renewed, err
+			}
 		}
-		certificateCreated, err := writeIfAbsent(dir, leaf.name+".crt", certificate, 0o640, options.Owner)
-		if err != nil {
-			return err
-		}
-		if !keyCreated || !certificateCreated {
-			return fmt.Errorf("%w: %s appeared while setup wrote it", ErrSecrets, leaf.name)
-		}
-		record(leaf.name+".key", true)
-		record(leaf.name+".crt", true)
+		record(leaf.name+".crt", false)
+		record(leaf.name+".key", false)
+	}
+	return run.report.Renewed, nil
+}
+
+func createLeaf(dir string, leaf tlsLeaf, config Config, current trust, options GenerateOptions) error {
+	certificate, key, err := issueLeaf(current.signing, current.key, leaf.names(config), options.Now)
+	if err != nil {
+		return err
+	}
+	keyCreated, err := writeIfAbsent(dir, leaf.name+".key", key, 0o600, options.Owner)
+	clear(key)
+	if err != nil {
+		return err
+	}
+	certificateCreated, err := writeIfAbsent(dir, leaf.name+".crt", certificate, 0o640, options.Owner)
+	if err != nil {
+		return err
+	}
+	if !keyCreated || !certificateCreated {
+		return fmt.Errorf("%w: %s appeared while setup wrote it", ErrSecrets, leaf.name)
 	}
 	return nil
 }
 
-func loadOrCreateCA(dir string, options GenerateOptions) (*x509.Certificate, *ecdsa.PrivateKey, bool, error) {
-	certificatePath, keyPath := filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key")
+func loadOrCreateCA(dir string, options GenerateOptions) (trust, bool, error) {
+	certificatePath, keyPath := filepath.Join(dir, caCertificateFile), filepath.Join(dir, caKeyFile)
 	_, certificateErr := os.Lstat(certificatePath)
 	_, keyErr := os.Lstat(keyPath)
 	switch {
 	case certificateErr == nil && keyErr == nil:
-		certificate, key, err := readCA(certificatePath, keyPath)
-		return certificate, key, false, err
+		current, err := readTrust(dir)
+		return current, false, err
 	case !errors.Is(certificateErr, fs.ErrNotExist) || !errors.Is(keyErr, fs.ErrNotExist):
-		return nil, nil, false, fmt.Errorf("%w: ca.crt and ca.key must both exist or both be absent", ErrSecrets)
+		return trust{}, false, fmt.Errorf("%w: ca.crt and ca.key must both exist or both be absent", ErrSecrets)
 	}
 	for _, leaf := range tlsLeaves {
 		if _, err := os.Lstat(filepath.Join(dir, leaf.name+".crt")); err == nil {
-			return nil, nil, false, fmt.Errorf("%w: certificates exist without their CA", ErrSecrets)
+			return trust{}, false, fmt.Errorf("%w: certificates exist without their CA", ErrSecrets)
 		}
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certificate, keyPEM, err := newCA(options.Now)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("%w: CA key: %w", ErrSecrets, err)
-	}
-	template := &x509.Certificate{
-		SerialNumber: serialNumber(), Subject: pkix.Name{CommonName: "MeshTransit self-host CA"},
-		NotBefore: options.Now.Add(-time.Hour), NotAfter: options.Now.Add(caLifetime),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true, IsCA: true, MaxPathLenZero: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("%w: CA certificate: %w", ErrSecrets, err)
-	}
-	keyPEM, err := privateKeyPEM(key)
-	if err != nil {
-		return nil, nil, false, err
+		return trust{}, false, err
 	}
 	defer clear(keyPEM)
-	keyCreated, err := writeIfAbsent(dir, "ca.key", keyPEM, 0o600, options.Owner)
+	keyCreated, err := writeIfAbsent(dir, caKeyFile, keyPEM, 0o600, options.Owner)
 	if err != nil {
-		return nil, nil, false, err
+		return trust{}, false, err
 	}
-	certificateCreated, err := writeIfAbsent(dir, "ca.crt",
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o640, options.Owner)
+	certificateCreated, err := writeIfAbsent(dir, caCertificateFile,
+		encodeCertificates([]*x509.Certificate{certificate}), 0o640, options.Owner)
 	if err != nil {
-		return nil, nil, false, err
+		return trust{}, false, err
 	}
 	if !keyCreated || !certificateCreated {
-		return nil, nil, false, fmt.Errorf("%w: the CA appeared while setup wrote it", ErrSecrets)
+		return trust{}, false, fmt.Errorf("%w: the CA appeared while setup wrote it", ErrSecrets)
 	}
-	certificate, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("%w: CA certificate: %w", ErrSecrets, err)
-	}
-	return certificate, key, true, nil
-}
-
-func readCA(certificatePath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	certificate, key, err := readPair(certificatePath, keyPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !certificate.IsCA {
-		return nil, nil, fmt.Errorf("%w: ca.crt is not a CA", ErrSecrets)
-	}
-	return certificate, key, nil
+	current, err := readTrust(dir)
+	return current, true, err
 }
 
 // readPair reads a certificate and its key (never through a link) and
@@ -207,25 +199,26 @@ func pairPresent(dir, name string) (bool, error) {
 	}
 }
 
-// verifyLeaf checks an existing leaf: its key matches it, the current CA
-// signed it (a replaced CA leaves no leaf of the old one in use) and it
-// names exactly the names it must.
-func verifyLeaf(dir, name string, ca *x509.Certificate, names []string) error {
+// verifyLeaf checks an existing leaf: its key matches it, a CA of the
+// bundle signed it (a replaced CA leaves no leaf of the old one in use) and
+// it names exactly the names it must.
+func verifyLeaf(dir, name string, current trust, names []string) (*x509.Certificate, error) {
 	certificate, _, err := readPair(filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !slices.Equal(certificate.DNSNames, names) || len(certificate.IPAddresses) != 0 {
-		return fmt.Errorf("%w: %s.crt names other hosts; remove %s.key and %s.crt to issue them again",
+		return nil, fmt.Errorf("%w: %s.crt names other hosts; remove %s.key and %s.crt to issue them again",
 			ErrSecrets, name, name, name)
 	}
-	if err := certificate.CheckSignatureFrom(ca); err != nil {
-		return fmt.Errorf("%w: %s.crt is not signed by ca.crt; remove %s.key and %s.crt to issue them again",
+	if !current.trusts(certificate) {
+		return nil, fmt.Errorf("%w: %s.crt is not signed by ca.crt; remove %s.key and %s.crt to issue them again",
 			ErrSecrets, name, name, name)
 	}
-	return nil
+	return certificate, nil
 }
 
+// issueLeaf issues a leaf for names. It never outlives its CA.
 func issueLeaf(ca *x509.Certificate, caKey *ecdsa.PrivateKey, names []string, now time.Time) ([]byte, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -233,7 +226,7 @@ func issueLeaf(ca *x509.Certificate, caKey *ecdsa.PrivateKey, names []string, no
 	}
 	template := &x509.Certificate{
 		SerialNumber: serialNumber(), Subject: pkix.Name{CommonName: names[0]}, DNSNames: names,
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(leafLifetime),
+		NotBefore: now.Add(-time.Hour), NotAfter: leafNotAfter(ca, now),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -246,6 +239,15 @@ func issueLeaf(ca *x509.Certificate, caKey *ecdsa.PrivateKey, names []string, no
 		return nil, nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), keyPEM, nil
+}
+
+// leafNotAfter is a leaf's expiry: its lifetime, cut at its CA's.
+func leafNotAfter(ca *x509.Certificate, now time.Time) time.Time {
+	notAfter := now.Add(leafLifetime)
+	if ca.NotAfter.Before(notAfter) {
+		return ca.NotAfter
+	}
+	return notAfter
 }
 
 func privateKeyPEM(key *ecdsa.PrivateKey) ([]byte, error) {

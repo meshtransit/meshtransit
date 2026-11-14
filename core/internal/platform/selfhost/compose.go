@@ -37,7 +37,8 @@ const (
 
 // serviceMounts are the files each Core container may read: exactly the
 // paths its settings name. Only migrate holds the superuser's password, and
-// no container holds the CA key.
+// no running service holds the CA key: only renew-tls, a maintenance run
+// without a network that the host's timer starts (units.go).
 type serviceMounts struct {
 	core, migrate []string
 }
@@ -75,10 +76,21 @@ func composeFiles(config Config, layout Layout, mounts serviceMounts, connection
 			" scram-sha-256",
 		"",
 	}, "\n")
-	return map[string][]byte{
+	files := map[string][]byte{
 		"compose.yaml": compose, "Caddyfile": caddyfile(config, layout), "pg_hba.conf": []byte(hba),
 		"console.env": console,
-	}, nil
+	}
+	for name, contents := range renewUnits(layout) {
+		files[name] = contents
+	}
+	return files, nil
+}
+
+// existingBind mounts path at itself; a missing path fails the run instead
+// of being created.
+func existingBind(path string, readOnly bool) map[string]any {
+	return map[string]any{"type": "bind", "source": path, "target": path, "read_only": readOnly,
+		"bind": map[string]any{"create_host_path": false}}
 }
 
 // readOnly mounts each path at itself, read only.
@@ -173,6 +185,22 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 				"caddy-config:/config"}, readOnly(secret("ca.crt"))...),
 			"networks": network(proxyAddress),
 		},
+		// renew-tls renews the TLS files (renew.go): root, to write the image
+		// user's files, with only the two capabilities that needs. The
+		// "maintenance" profile keeps "compose up" from starting it.
+		renewService: map[string]any{
+			"image": config.Images.Core, "user": "0:0", "restart": "no", "profiles": []string{"maintenance"},
+			"command": []string{"setup", "renew-tls", "--state-dir=" + stateDir},
+			// The secrets, the setup lock (setup created it before it rendered
+			// this file), root's directory for the restart file, and the
+			// configuration. Docker must not create a missing path: a lock
+			// made a directory would stop every later setup run.
+			"volumes": []map[string]any{
+				existingBind(layout.SecretsDir, false), existingBind(filepath.Join(stateDir, ".setup.lock"), false),
+				existingBind(restartDir(layout.SecretsDir), false), existingBind(OperatorDir, true),
+			},
+			"network_mode": "none",
+		},
 		"relay": map[string]any{
 			"image": config.Images.Relay, "user": imageUserID, "restart": "unless-stopped",
 			"command": []string{"serve"}, "env_file": []string{run("relay.env")},
@@ -202,6 +230,8 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 			settings["cap_add"] = []string{"NET_BIND_SERVICE"}
 		case "relay":
 			settings["cap_add"] = []string{"NET_BIND_SERVICE"}
+		case renewService:
+			settings["cap_add"] = []string{"CHOWN", "DAC_OVERRIDE"}
 		}
 	}
 	contents, err := yaml.Marshal(map[string]any{

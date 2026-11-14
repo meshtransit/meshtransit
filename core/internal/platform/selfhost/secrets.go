@@ -72,16 +72,27 @@ var secretCatalog = []secretSpec{
 // Owner is who owns the generated files: the images run as 65532.
 type Owner struct{ UID, GID int }
 
-// GenerateOptions bound one run.
+// GenerateOptions bound one run of setup or of the TLS renewal.
 type GenerateOptions struct {
 	Now   time.Time
 	Owner *Owner
+	// fault fails a named point of a run: tests stop a run half way with it.
+	fault func(point string) error
 }
 
-// GenerateReport names the files a run created and kept, never contents.
+func (options GenerateOptions) inject(point string) error {
+	if options.fault == nil {
+		return nil
+	}
+	return options.fault(point)
+}
+
+// GenerateReport names the files a run created and kept, and the leaves it
+// issued again, never contents.
 type GenerateReport struct {
 	Created []string
 	Kept    []string
+	Renewed []string
 }
 
 // GenerateSecrets creates every secret, certificate and the state file that
@@ -130,7 +141,9 @@ func GenerateSecrets(config Config, dir string, options GenerateOptions) (Genera
 	if err := writeDerived(dir, "redis-users.acl", redisACL, true, options.Owner, record); err != nil {
 		return report, err
 	}
-	if err := generateTLS(config, dir, options, record); err != nil {
+	renewed, err := generateTLS(config, dir, options, record)
+	report.Renewed = renewed
+	if err != nil {
 		return report, err
 	}
 	if err := ensureState(dir, options); err != nil {

@@ -1,6 +1,7 @@
 package selfhost
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 			DependsOn map[string]struct {
 				Condition string `yaml:"condition"`
 			} `yaml:"depends_on"`
-			Volumes     []string `yaml:"volumes"`
+			Volumes     []any    `yaml:"volumes"`
 			CapDrop     []string `yaml:"cap_drop"`
 			CapAdd      []string `yaml:"cap_add"`
 			SecurityOpt []string `yaml:"security_opt"`
@@ -83,7 +84,13 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 		t.Errorf("pg_hba.conf = %s", hba)
 	}
 	// Each container sees only the files its settings name.
-	mounted := func(name string) string { return strings.Join(compose.Services[name].Volumes, "\n") }
+	mounted := func(name string) string {
+		lines := make([]string, 0, len(compose.Services[name].Volumes))
+		for _, volume := range compose.Services[name].Volumes {
+			lines = append(lines, fmt.Sprint(volume))
+		}
+		return strings.Join(lines, "\n")
+	}
 	for name := range compose.Services {
 		volumes := mounted(name)
 		if strings.Contains(volumes, "/ca.key") || strings.Contains(volumes, "/var/lib/meshtransit:") {
@@ -93,7 +100,7 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 			t.Errorf("%s mounts the superuser's password", name)
 		}
 	}
-	if relay := compose.Services["relay"].Volumes; len(relay) != 1 || !strings.Contains(relay[0], "/relay.key:") {
+	if relay := compose.Services["relay"].Volumes; len(relay) != 1 || !strings.Contains(fmt.Sprint(relay[0]), "/relay.key:") {
 		t.Errorf("relay mounts %v", relay)
 	}
 	if strings.Contains(mounted("meshcore"), "postgres-migrator-password") ||
