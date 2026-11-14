@@ -48,6 +48,9 @@ type status struct {
 	Exit *exitStatus `json:"exit,omitempty"`
 	// ExitSettings is the app's choice (SetExitNode).
 	ExitSettings exitSettings `json:"exitSettings"`
+	// ExitPools are the Exit Pools the Network grants, for the app to
+	// offer (TD-CLI-120); absent without a map, empty when none.
+	ExitPools *[]exitPool `json:"exitPools,omitempty"`
 	// Resolver is MeshTransit's resolver on the device (DNS design D4).
 	Resolver resolverStatus `json:"resolver"`
 }
@@ -66,6 +69,13 @@ type resolverStatus struct {
 	Queries          uint64 `json:"queries"`
 	Failures         uint64 `json:"failures"`
 	Truncated        uint64 `json:"truncated"`
+}
+
+// exitPool is an Exit Pool the Network grants: SetExitNode takes its
+// reference or its name.
+type exitPool struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
 }
 
 // exitSettings is the Exit Pool the app chose and whether the LAN stays
@@ -168,9 +178,22 @@ func newStatus(running bool, current daemon.Status) status {
 			Refused: current.SubnetRoutes.RefusedTotal, LocalConflict: current.SubnetRoutes.LocalConflict,
 			Error: current.SubnetRoutes.Error,
 		},
-		Sites: siteRoutes(current.RouteSites),
-		Exit:  exitStatusOf(current),
+		Sites:     siteRoutes(current.RouteSites),
+		Exit:      exitStatusOf(current),
+		ExitPools: exitPoolsOf(current.ExitPools),
 	}
+}
+
+// exitPoolsOf lists the granted pools; nil (absent) without a map.
+func exitPoolsOf(granted []daemon.GrantedExitPool) *[]exitPool {
+	if granted == nil {
+		return nil
+	}
+	pools := make([]exitPool, 0, len(granted))
+	for _, pool := range granted {
+		pools = append(pools, exitPool{Ref: pool.Ref, Name: pool.Name})
+	}
+	return &pools
 }
 
 func exitStatusOf(current daemon.Status) *exitStatus {

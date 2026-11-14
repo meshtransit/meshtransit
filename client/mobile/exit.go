@@ -9,8 +9,10 @@ import (
 
 	"golang.zx2c4.com/wireguard/tun"
 
+	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/overlayframe"
+	"meshtransit.net/client/internal/routesettings"
 )
 
 // maximumExitRoutes bounds the routes the Internet takes on the interface:
@@ -205,12 +207,34 @@ func (engine *Engine) SetExitNode(pool string, allowLAN bool) (err error) {
 	if engine == nil {
 		return errEngineClosed
 	}
+	use := strings.TrimSpace(pool)
+	if use == routesettings.ExitUseOff {
+		use = "" // "off" means no pool, as routesettings.ApplyChoices reads it on the desktop
+	}
+	if engine.service != nil {
+		granted, known := engine.service.GrantedExitPools()
+		if refusal := exitPoolRefusal(use, granted, known); refusal != nil {
+			return refusal
+		}
+	}
 	settings, err := loadRouteSettings(engine.routeSettings)
 	if err != nil {
 		return err // never overwrite settings it cannot read
 	}
-	settings.ExitUse, settings.ExitAllowLAN = strings.TrimSpace(pool), allowLAN
+	settings.ExitUse, settings.ExitAllowLAN = use, allowLAN
 	return saveRouteSettings(engine.routeSettings, settings)
+}
+
+// exitPoolRefusal refuses a pool the Network does not grant (TD-CLI-120):
+// behind the VPN's kill switch it would drop the device's Internet traffic
+// with no exit node to carry it. None (""), auto and any choice while the
+// map is unknown are taken ("off" is "" by then); the message is shown to
+// the person as it is.
+func exitPoolRefusal(use string, granted []daemon.GrantedExitPool, known bool) error {
+	if !known || use == "" || use == routesettings.ExitUseAuto || daemon.GrantsExitPool(granted, use) {
+		return nil
+	}
+	return fmt.Errorf("this Network grants no Exit Pool named %q: choose one it grants", use)
 }
 
 // ExitNode returns the Exit Pool the device uses, "" for none.
