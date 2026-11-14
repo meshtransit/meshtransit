@@ -54,7 +54,23 @@ func TestVerifierFromRefusesAHalfScopeAndAReusedKey(t *testing.T) {
 
 func TestEmbeddedAllowlistLoads(t *testing.T) {
 	t.Parallel()
-	if _, err := TrustedVerifier(); err != nil {
+	verifier, err := TrustedVerifier()
+	if err != nil {
 		t.Fatal(err)
+	}
+	// The offline key verifies any Deployment; the POC renewal key only the POC's.
+	if verifier.IsScoped("meshtransit-poc-2026-10") || !verifier.IsScoped("meshtransit-cloud-renew-2026") {
+		t.Fatal("embedded key scopes changed")
+	}
+	public, err := base64.StdEncoding.DecodeString(trustedKeys["meshtransit-cloud-renew-2026"].public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poc, err := deployment.ParseID("01995d00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.CheckRenewalKey("meshtransit-cloud-renew-2026", public, poc, deployment.ProfileCloud); err != nil {
+		t.Fatalf("POC renewal key: %v", err)
 	}
 }
