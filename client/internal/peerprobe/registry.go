@@ -1004,7 +1004,7 @@ func buildChannelSet(
 	}
 	seenIDs := map[uint64]struct{}{snapshot.Self.ID: {}}
 	seenNodeKeys := map[[32]byte]struct{}{localNodeKey: {}}
-	seenDiscoveryKeys := map[key.DiscoPublic]struct{}{localDiscoveryKey: {}}
+	contested := contestedDiscoveryKeys(snapshot.Peers, localDiscoveryKey)
 	for _, node := range snapshot.Peers {
 		if node.ID == 0 || node.Expired || !node.MachineAuthorized {
 			return channelSet{}, ErrInvalidSnapshot
@@ -1029,10 +1029,12 @@ func buildChannelSet(
 			return channelSet{}, ErrInvalidSnapshot
 		}
 		discoveryKey := key.DiscoPublic(rawDiscovery)
-		if _, exists := seenDiscoveryKeys[discoveryKey]; exists {
-			return channelSet{}, ErrInvalidSnapshot
+		if contested[discoveryKey] {
+			// Another peer, or this node, has the same disco key: one of
+			// them claims a key it may not hold (TD-SEC-80). Neither is
+			// probed; the rest of the map still is.
+			continue
 		}
-		seenDiscoveryKeys[discoveryKey] = struct{}{}
 
 		endpoints := make(map[netip.AddrPort]struct{}, len(node.Endpoints))
 		for _, endpoint := range node.Endpoints {
@@ -1070,6 +1072,31 @@ func buildChannelSet(
 	}
 
 	return next, nil
+}
+
+// contestedDiscoveryKeys returns the disco keys that more than one peer,
+// or a peer and this node, carry. Keys that do not parse are left to the
+// caller, which rejects the map.
+func contestedDiscoveryKeys(peers []networkmap.Node, local key.DiscoPublic) map[key.DiscoPublic]bool {
+	count := make(map[key.DiscoPublic]int, len(peers)+1)
+	count[local] = 1
+	for _, node := range peers {
+		if node.DiscoveryKey == "" {
+			continue
+		}
+		raw, err := parseMapKey(node.DiscoveryKey, mapDiscoKeyPrefix)
+		if err != nil {
+			continue
+		}
+		count[key.DiscoPublic(raw)]++
+	}
+	contested := make(map[key.DiscoPublic]bool)
+	for discoveryKey, n := range count {
+		if n > 1 {
+			contested[discoveryKey] = true
+		}
+	}
+	return contested
 }
 
 func validEndpoint(endpoint netip.AddrPort) bool { return networkmap.UsableEndpoint(endpoint) }

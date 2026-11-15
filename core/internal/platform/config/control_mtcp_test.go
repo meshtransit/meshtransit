@@ -253,3 +253,38 @@ func TestLoadControlMTCPNextKeyExpiry(t *testing.T) {
 		t.Error("past next key expiry accepted")
 	}
 }
+
+// TD-SEC-80: unproven disco keys are refused unless the operator turns the
+// legacy setting on explicitly.
+func TestLoadControlMTCPUnprovenDiscoKeys(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		value   string
+		present bool
+		want    bool
+		wantErr bool
+	}{
+		"default refuses": {},
+		"turned on":       {value: "true", present: true, want: true},
+		"turned off":      {value: "false", present: true},
+		"not a boolean":   {value: "yes", present: true, wantErr: true},
+	} {
+		lookup := func(name string) (string, bool) {
+			if name == envControlMTCPAcceptUnprovenDisco {
+				return test.value, test.present
+			}
+			return "", false
+		}
+		cfg, err := loadControlMTCPConfig(lookup, now, false)
+		if test.wantErr {
+			if err == nil || !strings.Contains(err.Error(), envControlMTCPAcceptUnprovenDisco) {
+				t.Errorf("%s: err = %v", name, err)
+			}
+			continue
+		}
+		if err != nil || cfg.AcceptUnprovenDiscoKeys != test.want {
+			t.Errorf("%s: %v, AcceptUnprovenDiscoKeys = %v", name, err, cfg.AcceptUnprovenDiscoKeys)
+		}
+	}
+}

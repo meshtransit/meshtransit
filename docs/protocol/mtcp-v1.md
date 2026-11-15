@@ -324,10 +324,12 @@ never-expiring lifetime). Any other key is answered `CONFLICT`: a key another
 member issued never extends a member's Device past the expiry its owner
 approved.
 
-Core MUST reject (`CONFLICT`) a node key or disco key that belongs to another
-Device, or that any Device has used before; retired keys are remembered. Core
-MUST reject a request whose node or disco key proofs do not verify
-(`INVALID`); sibling proofs are dropped instead (6.2).
+Core MUST reject (`CONFLICT`) a node key that belongs to another Device, or
+that any Device has used before; retired keys are remembered. Disco keys are
+not stored: a node may use a new one in any session (8.1), and the proof of
+possession, not uniqueness, keeps another Device from claiming it. Core MUST
+reject a request whose node or disco key proofs do not verify (`INVALID`);
+sibling proofs are dropped instead (6.2).
 
 ### 6.2 Responses
 
@@ -1765,9 +1767,23 @@ address (that is a `PORT_MAPPED` endpoint).
   session and stores it only when it changes; the Console shows it with the
   Device's paths.
 
-- `disco_key` MUST equal the Device's current disco key (the one proved in
-  this session's registration or rotation); otherwise Core answers
-  `Error{INVALID}` and ignores the report.
+- `disco_key` MUST be proved in this session (TD-SEC-80): by the session's
+  registration or rotation, or by `disco_key_proof` (6.4, the same proof as
+  registration's) in the report. A session that proved no key yet, such as a
+  reconnect opened by `Ping`, sends the proof with its first report; Core then
+  keeps that key for the session. A report that proves another key replaces
+  it. Another key without a proof, a proof that does not verify, no proof, or
+  the session's node key as disco key is answered `Error{INVALID}` and the
+  report is ignored. Nodes send the proof with every report; Core checks it
+  only when the key is not already the session's.
+- Only while nodes older than `disco_key_proof` remain may an operator let
+  Core take an unproven key in a session that proved none
+  (`MESHTRANSIT_CONTROL_MTCP_ACCEPT_UNPROVEN_DISCO_KEYS=true`): any Device can
+  then claim another Device's disco key. The metric
+  `meshtransit_mtcp_disco_key_reports_total{result="unproven_taken"}` shows
+  when none remain.
+- A node that finds one disco key on two peers, or a peer's key equal to its
+  own, does not probe those peers and keeps the rest of the map.
 - The node sends its first report right after its first map, with an empty
   `endpoints` list when it has no candidates yet: relay tickets bind the
   disco key, so Core issues the relay grant (section 9) only once it has one.
@@ -2219,7 +2235,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C11 | Map tampering by a compromised relay | Maps never travel through relays; relay map is signed separately |
 | C12 | Captured INIT replayed to displace a live node | Sessions count only after the first TRANSPORT record; durable per-Device timestamps shared by replicas |
 | C13 | Approval URL leaked or phished | Pending approvals bound to machine key and node key; separate resume handle; fingerprint on the approval page |
-| C14 | Registering someone else's public node or disco key | Uniqueness against current and retired keys; proof of possession bound to the handshake hash |
+| C14 | Registering or reporting someone else's public node or disco key | Node keys: uniqueness against current and retired keys; node and disco keys: proof of possession bound to the handshake hash, at registration, rotation and in the first endpoint report of a session that proved none (8.1, TD-SEC-80); a node skips peers whose disco keys collide |
 | C15 | Stolen machine key renews an expired Device | `auth.resume` only before expiry unless policy enables auto-renewal |
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |

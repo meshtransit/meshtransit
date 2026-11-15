@@ -102,6 +102,11 @@ type ApplicationOptions struct {
 	// DeniedEndpointPrefixes are ranges, such as Core's own addresses,
 	// that are dropped from every endpoint report.
 	DeniedEndpointPrefixes []netip.Prefix
+	// AcceptUnprovenDiscoKeys takes an endpoint report's disco key without
+	// a proof in a session that proved none (TD-SEC-80): only while nodes
+	// that predate EndpointReport.disco_key_proof are still in use, since
+	// any Device can then claim another Device's disco key.
+	AcceptUnprovenDiscoKeys bool
 	// DNSSuffix is the deployment's DNS suffix maps name Devices and shares
 	// under; the zero value is dnsname.DefaultSuffix.
 	DNSSuffix dnsname.Suffix
@@ -475,6 +480,69 @@ func (conversation *conversation) provenDisco() node.DiscoveryKey {
 	return conversation.disco
 }
 
+// checkDisco admits an endpoint report's disco key (mtcp-v1 §8.1): one
+// this report proves, which the session then holds, or the key the session
+// proved at registration, rotation or in an earlier report. Without either,
+// only AcceptUnprovenDiscoKeys admits it (TD-SEC-80). A node key is never a
+// disco key: node and disco proofs share one domain. It returns the refusal
+// sent to the node, or "".
+func (conversation *conversation) checkDisco(disco node.DiscoveryKey, proof []byte) string {
+	metrics := conversation.application.options.Metrics
+	if raw := disco.Bytes(); conversation.isNodeKey(raw) {
+		metrics.discoReport(discoReportNodeKey)
+		return "the disco key is a node key"
+	}
+	proven := conversation.provenDisco()
+	if proven.IsValid() && proven == disco {
+		return "" // proved once in this session: a proof adds nothing
+	}
+	if len(proof) != 0 {
+		raw := disco.Bytes()
+		if !conversation.session.VerifyKeyProof(raw[:], proof) {
+			metrics.discoReport(discoReportBadProof)
+			return "the disco key proof does not verify"
+		}
+		if conversation.proveDisco(disco) {
+			metrics.discoReport(discoReportProven)
+		}
+		return ""
+	}
+	if proven.IsValid() {
+		metrics.discoReport(discoReportOther)
+		return "the disco key is not the Device's"
+	}
+	if !conversation.application.options.AcceptUnprovenDiscoKeys {
+		metrics.discoReport(discoReportUnprovenRefused)
+		return "the disco key needs a proof"
+	}
+	metrics.discoReport(discoReportUnprovenTaken)
+	return ""
+}
+
+// isNodeKey reports whether raw is the session's node key: the one it
+// proved, or the one its hello named.
+func (conversation *conversation) isNodeKey(raw [32]byte) bool {
+	current := conversation.currentKey()
+	if current.IsValid() && current.Bytes() == raw {
+		return true
+	}
+	hello := conversation.session.Hello().GetNodeKey()
+	return len(hello) == len(raw) && [32]byte(hello) == raw
+}
+
+// proveDisco makes a disco key proved in this session the session's;
+// a valid proof shows possession, so it also replaces a key proved
+// earlier. It reports whether the key changed.
+func (conversation *conversation) proveDisco(disco node.DiscoveryKey) bool {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	if conversation.disco == disco {
+		return false
+	}
+	conversation.disco = disco
+	return true
+}
+
 func (conversation *conversation) currentKey() node.Key {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
@@ -719,9 +787,8 @@ func (conversation *conversation) endpoints(report *mtcpv1.EndpointReport) error
 	if err != nil {
 		return Violation(mtcpv1.Error_INVALID, "invalid disco key")
 	}
-	if proven := conversation.provenDisco(); proven.IsValid() && proven != disco {
-		// mtcp-v1 §8.1: another disco key than the one the node proved.
-		return conversation.sendError(mtcpv1.Error_INVALID, "the disco key is not the Device's", 0)
+	if refusal := conversation.checkDisco(disco, report.GetDiscoKeyProof()); refusal != "" {
+		return conversation.sendError(mtcpv1.Error_INVALID, refusal, 0)
 	}
 	filter := newEndpointFilter(snapshot.RelayDirectory(), conversation.application.options.DeniedEndpointPrefixes)
 	endpoints := make([]node.Endpoint, 0, len(report.GetEndpoints()))

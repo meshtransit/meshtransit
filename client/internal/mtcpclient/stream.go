@@ -509,7 +509,10 @@ type sessionRun struct {
 	exitSelectionSent *controlplane.RouteExitSelection
 	// captiveSent are the captive portal windows reported in this session,
 	// the last report at captiveSentAt.
-	captiveSent   map[string]bool
+	captiveSent map[string]bool
+	// discoProof proves the peer-probe disco key in this session; computed
+	// for the first endpoint report and sent with each (TD-SEC-80).
+	discoProof    []byte
 	captiveSentAt time.Time
 	// unacked counts applied deltas not acknowledged yet, ackView is the
 	// latest applied view and ackTimer acknowledges it (mtcp-v1 §7.2).
@@ -1289,7 +1292,8 @@ func pathStatsMessage(report controlplane.PathStatsReport) *mtcpv1.PathStatsRepo
 }
 
 func (run *sessionRun) endpointReport(update controlplane.EndpointUpdate) *mtcpv1.EndpointReport {
-	report := &mtcpv1.EndpointReport{DiscoKey: run.stream.disco[:], ObservedMs: time.Now().UnixMilli()}
+	report := &mtcpv1.EndpointReport{DiscoKey: run.stream.disco[:], ObservedMs: time.Now().UnixMilli(),
+		DiscoKeyProof: run.peerProbeProof()}
 	if update.HasPreferredRelay && update.PreferredRelay > 0 {
 		report.PreferredRelay = uint32(update.PreferredRelay) //nolint:gosec // G115: region IDs are small
 	}
@@ -1308,6 +1312,22 @@ func (run *sessionRun) endpointReport(update controlplane.EndpointUpdate) *mtcpv
 		addConnectivity(report, update)
 	}
 	return report
+}
+
+// peerProbeProof is this session's proof of the peer-probe disco key, or
+// nil without a prover. A prover that fails leaves the report unproven:
+// Core then refuses it and the node reports again.
+func (run *sessionRun) peerProbeProof() []byte {
+	prove := run.stream.options.PeerProbeKeyProof
+	if run.discoProof != nil || prove == nil {
+		return run.discoProof
+	}
+	proof, err := prove(run.s.control, run.s.noise.HandshakeHash())
+	if err != nil {
+		return nil
+	}
+	run.discoProof = proof[:]
+	return run.discoProof
 }
 
 // addConnectivity fills the NAT classification, IPv6 reachability (from the

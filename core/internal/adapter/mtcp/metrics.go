@@ -26,8 +26,11 @@ type Metrics struct {
 	streamEnds *prometheus.CounterVec
 	sheds      prometheus.Counter
 	unproven   prometheus.Counter
-	forwarding prometheus.Counter
-	keyExpiry  prometheus.GaugeFunc
+	// discoReports counts endpoint reports' disco keys by how they were
+	// admitted (TD-SEC-80).
+	discoReports *prometheus.CounterVec
+	forwarding   prometheus.Counter
+	keyExpiry    prometheus.GaugeFunc
 	// controlKeys and keyClock are what keyExpiry reads at scrape time: a
 	// rolling key's expiry moves with the clock.
 	controlKeysMu sync.Mutex
@@ -261,6 +264,14 @@ func NewMetrics() *Metrics {
 		// Watch, not page: a rising rate means sessions held open without
 		// registering, a slot-holding pattern; nodes whose key was not found
 		// also end here after the unproven lifetime.
+		// Watch: unproven_taken falls to zero once every node sends disco
+		// key proofs; then MESHTRANSIT_CONTROL_MTCP_ACCEPT_UNPROVEN_DISCO_KEYS
+		// can be turned off. bad_proof or other growing means a node claims
+		// a disco key it does not hold.
+		discoReports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_disco_key_reports_total",
+			Help: "Endpoint reports' disco keys by admission: proven (a report proved a new key for its session), unproven_taken, unproven_refused, bad_proof, other (not the session's proved key), node_key (the session's node key).",
+		}, []string{"result"}),
 		unproven: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_unproven_sessions_closed_total",
 			Help: "MTCP sessions closed because they proved no Device within the unproven limit.",
@@ -443,7 +454,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.unproven, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
+		metrics.sheds, metrics.unproven, metrics.discoReports, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
 		metrics.browserCompletions,
 		metrics.siblingProofs,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
@@ -511,6 +522,22 @@ func (metrics *Metrics) sessionOpened()  { metrics.sessions.Inc() }
 func (metrics *Metrics) sessionClosed()  { metrics.sessions.Dec() }
 func (metrics *Metrics) shed(count int)  { metrics.sheds.Add(float64(count)) }
 func (metrics *Metrics) unprovenClosed() { metrics.unproven.Inc() }
+
+// Outcomes of meshtransit_mtcp_disco_key_reports_total.
+const (
+	discoReportProven          = "proven"
+	discoReportUnprovenTaken   = "unproven_taken"
+	discoReportUnprovenRefused = "unproven_refused"
+	discoReportBadProof        = "bad_proof"
+	discoReportOther           = "other"
+	discoReportNodeKey         = "node_key"
+)
+
+func (metrics *Metrics) discoReport(result string) {
+	if metrics != nil {
+		metrics.discoReports.WithLabelValues(result).Inc()
+	}
+}
 
 // Outcomes of meshtransit_mtcp_browser_completions_total.
 const (

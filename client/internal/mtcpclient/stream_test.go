@@ -106,6 +106,9 @@ func streamOptions(t *testing.T, core *fakeCore) (controlplane.KeyMaterial, cont
 	return trust.Material, controlplane.NetmapOptions{
 		Hostname: "laptop", PinnedFingerprint: trust.Fingerprint,
 		PeerProbePublicKey: "discokey:" + bytesHexOf(public[:]),
+		PeerProbeKeyProof: func(control key.ControlPublic, hash [32]byte) ([32]byte, error) {
+			return sharedmtcp.DiscoKeyProof(disco, control, hash)
+		},
 	}
 }
 
@@ -129,6 +132,10 @@ func TestStreamNetmapDeliversMapsAndReports(t *testing.T) {
 		report, ok := core.expect(s, sharedmtcp.MessageEndpointReport).(*mtcpv1.EndpointReport)
 		if !ok {
 			return
+		}
+		// TD-SEC-80: the report proves its disco key in this session.
+		if !sharedmtcp.VerifyKeyProof(s.control, s.hash, [32]byte(report.GetDiscoKey()), report.GetDiscoKeyProof()) {
+			t.Errorf("endpoint report without a valid disco key proof")
 		}
 		self := snapshotMessage(10).GetSelf()
 		self.DiscoKey = report.GetDiscoKey()

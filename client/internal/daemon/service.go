@@ -18,6 +18,7 @@ import (
 
 	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/key"
+	sharedmtcp "meshtransit.net/shared/mtcp"
 
 	"meshtransit.net/client/internal/captive"
 	"meshtransit.net/client/internal/controlplane"
@@ -1389,6 +1390,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Version:            "meshd/" + s.build.Version,
 					PinnedFingerprint:  record.ControlKeyFingerprint(),
 					PeerProbePublicKey: peerprobe.MapDiscoveryKey(discoKey.Public()),
+					PeerProbeKeyProof: func(control key.ControlPublic, hash [32]byte) ([32]byte, error) {
+						return sharedmtcp.DiscoKeyProof(discoKey, control, hash)
+					},
 					Candidates:         s.configuredCandidates,
 					EndpointUpdates:    endpointUpdates,
 					EnforcementReports: enforcementReports,

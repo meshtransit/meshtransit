@@ -950,6 +950,10 @@ message EndpointReport {
   PortMapping port_mapping = 8;
   // When nat was classified; zero when nat is absent.
   int64 nat_observed_ms = 9;
+  // Proof of possession of disco_key bound to this session (mtcp-v1 §6.4,
+  // §8.1). Required when the session has not proved this key (by its
+  // registration, rotation or an earlier report); Core skips it otherwise.
+  bytes disco_key_proof = 10;
 }
 
 // PortMapping is the state of the node's mapping on its local gateway. It

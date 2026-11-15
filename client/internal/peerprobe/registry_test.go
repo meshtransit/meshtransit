@@ -148,6 +148,43 @@ func TestRegistryRejectsUnauthorizedInputs(t *testing.T) {
 	}
 }
 
+// TD-SEC-80: a disco key that two peers, or a peer and this node, carry is
+// one of them claiming a key it may not hold. Neither is probed; the map
+// and every other peer still are.
+func TestRegistrySkipsContestedDiscoveryKeys(t *testing.T) {
+	t.Parallel()
+
+	_, _, registry, snapshot, generation := testRegistry(t)
+	honest := testIdentity(t).Public()
+	contested := cloneTestSnapshot(snapshot)
+	contested.Revision++
+	claimant := contested.Peers[0]
+	claimant.ID = 900
+	claimant.PublicKey = testNodeKeyText(0x33)
+	mirror := contested.Peers[0]
+	mirror.ID = 901
+	mirror.PublicKey = testNodeKeyText(0x34)
+	mirror.DiscoveryKey = contested.Self.DiscoveryKey
+	other := contested.Peers[0]
+	other.ID = 902
+	other.PublicKey = testNodeKeyText(0x35)
+	other.DiscoveryKey = MapDiscoveryKey(honest)
+	other.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("203.0.113.45:41641")}
+	contested.Peers = append(contested.Peers, claimant, mirror, other)
+	contestedGeneration := generation
+	contestedGeneration.MapRevision = contested.Revision
+	count, err := registry.Replace(contested, contestedGeneration, time.Unix(1_000, 0))
+	if err != nil || count != 1 {
+		t.Fatalf("Replace(contested disco keys) = %d, %v, want only the uncontested peer", count, err)
+	}
+	if _, err := registry.SealPing(testTransaction(contestedGeneration, snapshot.Peers[0]), 0); !errors.Is(err, ErrUnknownPeer) {
+		t.Fatalf("SealPing(contested peer) error = %v, want ErrUnknownPeer", err)
+	}
+	if _, err := registry.SealPing(testTransaction(contestedGeneration, other), 0); err != nil {
+		t.Fatalf("SealPing(uncontested peer) error = %v", err)
+	}
+}
+
 func TestRegistryReplacementIsAtomic(t *testing.T) {
 	t.Parallel()
 
@@ -157,12 +194,11 @@ func TestRegistryReplacementIsAtomic(t *testing.T) {
 	invalid.Revision++
 	duplicate := invalid.Peers[0]
 	duplicate.ID++
-	duplicate.PublicKey = testNodeKeyText(0x33)
 	invalid.Peers = append(invalid.Peers, duplicate)
 	invalidGeneration := generation
 	invalidGeneration.MapRevision = invalid.Revision
 	if _, err := registry.Replace(invalid, invalidGeneration, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidSnapshot) {
-		t.Fatalf("Replace(duplicate discovery key) error = %v, want ErrInvalidSnapshot", err)
+		t.Fatalf("Replace(duplicate node key) error = %v, want ErrInvalidSnapshot", err)
 	}
 	if _, err := registry.SealPing(testTransaction(generation, snapshot.Peers[0]), 0); err != nil {
 		t.Fatalf("SealPing() after failed replacement error = %v", err)

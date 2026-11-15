@@ -258,7 +258,15 @@ func (stream *MapStream) ReportEndpoints(ctx context.Context) error {
 		return err
 	}
 	connectivity := stream.client.Connectivity()
-	report := &mtcpv1.EndpointReport{DiscoKey: connectivity.DiscoveryKey[:], ObservedMs: time.Now().UnixMilli()}
+	// The session proved no disco key (it opens with Ping): the report
+	// proves it (mtcp-v1 §8.1, TD-SEC-80).
+	proof, err := sharedmtcp.DiscoKeyProof(stream.client.disco, stream.session.control,
+		stream.session.noise.HandshakeHash())
+	if err != nil {
+		return errors.Join(ErrMap, fmt.Errorf("prove disco key: %w", err))
+	}
+	report := &mtcpv1.EndpointReport{DiscoKey: connectivity.DiscoveryKey[:], ObservedMs: time.Now().UnixMilli(),
+		DiscoKeyProof: proof[:]}
 	for _, endpoint := range connectivity.Endpoints {
 		report.Endpoints = append(report.Endpoints, &mtcpv1.Endpoint{
 			Ip: endpoint.Addr().AsSlice(), Port: uint32(endpoint.Port()), Kind: mtcpv1.Endpoint_SERVER_REFLEXIVE,

@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/dnsdigest"
+	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/policydigest"
 	"meshtransit.net/shared/routedigest"
 )
@@ -356,10 +357,14 @@ type NetmapOptions struct {
 	Version            string
 	PinnedFingerprint  string
 	PeerProbePublicKey string
-	Candidates         pathdiscovery.Set
-	PreferredRelay     int
-	HasPreferredRelay  bool
-	EndpointUpdates    <-chan EndpointUpdate
+	// PeerProbeKeyProof proves possession of the peer-probe disco key in one
+	// control session (mtcp-v1 §6.4, §8.1); endpoint reports carry it, so
+	// no other Device can claim the key (TD-SEC-80). Nil sends no proof.
+	PeerProbeKeyProof func(control key.ControlPublic, handshakeHash [32]byte) ([32]byte, error)
+	Candidates        pathdiscovery.Set
+	PreferredRelay    int
+	HasPreferredRelay bool
+	EndpointUpdates   <-chan EndpointUpdate
 	// EnforcementReports, when set, carries what the packet filter enforces;
 	// each report is sent to Core and repeated while it stays current.
 	EnforcementReports <-chan EnforcementReport

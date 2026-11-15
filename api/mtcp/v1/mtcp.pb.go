@@ -7304,6 +7304,7 @@ type EndpointReport struct {
 	ObservedMs     int64                  `protobuf:"varint,7,opt,name=observed_ms,json=observedMs,proto3" json:"observed_ms,omitempty"`
 	PortMapping    *PortMapping           `protobuf:"bytes,8,opt,name=port_mapping,json=portMapping,proto3" json:"port_mapping,omitempty"`
 	NatObservedMs  int64                  `protobuf:"varint,9,opt,name=nat_observed_ms,json=natObservedMs,proto3" json:"nat_observed_ms,omitempty"`
+	DiscoKeyProof  []byte                 `protobuf:"bytes,10,opt,name=disco_key_proof,json=discoKeyProof,proto3" json:"disco_key_proof,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -7399,6 +7400,13 @@ func (x *EndpointReport) GetNatObservedMs() int64 {
 		return x.NatObservedMs
 	}
 	return 0
+}
+
+func (x *EndpointReport) GetDiscoKeyProof() []byte {
+	if x != nil {
+		return x.DiscoKeyProof
+	}
+	return nil
 }
 
 type PortMapping struct {
@@ -10302,7 +10310,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x11endpoint_report_s\x18\x01 \x01(\rR\x0fendpointReportS\x12 \n" +
 	"\fpath_stats_s\x18\x02 \x01(\rR\n" +
 	"pathStatsS\x12,\n" +
-	"\x12path_stats_enabled\x18\x03 \x01(\bR\x10pathStatsEnabled\"\x8f\x03\n" +
+	"\x12path_stats_enabled\x18\x03 \x01(\bR\x10pathStatsEnabled\"\xb7\x03\n" +
 	"\x0eEndpointReport\x12\x1b\n" +
 	"\tdisco_key\x18\x01 \x01(\fR\bdiscoKey\x12;\n" +
 	"\tendpoints\x18\x02 \x03(\v2\x1d.meshtransit.mtcp.v1.EndpointR\tendpoints\x12.\n" +
@@ -10314,7 +10322,9 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\vobserved_ms\x18\a \x01(\x03R\n" +
 	"observedMs\x12C\n" +
 	"\fport_mapping\x18\b \x01(\v2 .meshtransit.mtcp.v1.PortMappingR\vportMapping\x12&\n" +
-	"\x0fnat_observed_ms\x18\t \x01(\x03R\rnatObservedMs\"^\n" +
+	"\x0fnat_observed_ms\x18\t \x01(\x03R\rnatObservedMs\x12&\n" +
+	"\x0fdisco_key_proof\x18\n" +
+	" \x01(\fR\rdiscoKeyProof\"^\n" +
 	"\vPortMapping\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\rR\x05state\x12\x1d\n" +

@@ -25,6 +25,10 @@ const (
 	// device design §13): turned on only once every replica runs a Core
 	// that knows it.
 	envControlMTCPRegisterSiblings = "MESHTRANSIT_REGISTER_SIBLINGS"
+	// envControlMTCPAcceptUnprovenDisco takes endpoint reports' disco keys
+	// without a proof (TD-SEC-80): only while nodes older than
+	// EndpointReport.disco_key_proof are in use. Default false.
+	envControlMTCPAcceptUnprovenDisco = "MESHTRANSIT_CONTROL_MTCP_ACCEPT_UNPROVEN_DISCO_KEYS"
 	// envControlMTCPDeniedEndpoints names the operator's ranges, such as
 	// Core and load balancer addresses, that peers are never told to probe.
 	envControlMTCPDeniedEndpoints = "MESHTRANSIT_CONTROL_MTCP_DENIED_ENDPOINT_CIDRS"
@@ -83,6 +87,10 @@ type ControlMTCPConfig struct {
 	// RegisterSiblings offers register.siblings1: one Device per person
 	// and Network on one machine (duplicate-device design).
 	RegisterSiblings bool
+	// AcceptUnprovenDiscoKeys takes an endpoint report's disco key without
+	// a proof of possession; any Device can then claim another's
+	// (TD-SEC-80). Only for the time nodes that send no proof remain.
+	AcceptUnprovenDiscoKeys bool
 }
 
 // TrustedProxyPrefixes returns a defensive copy.
@@ -159,7 +167,11 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (C
 	if present && siblings != "true" && siblings != "false" {
 		return ControlMTCPConfig{}, settingError(envControlMTCPRegisterSiblings)
 	}
-	return ControlMTCPConfig{RegisterSiblings: siblings == "true",
+	unprovenDisco, present := lookup(envControlMTCPAcceptUnprovenDisco)
+	if present && unprovenDisco != "true" && unprovenDisco != "false" {
+		return ControlMTCPConfig{}, settingError(envControlMTCPAcceptUnprovenDisco)
+	}
+	return ControlMTCPConfig{RegisterSiblings: siblings == "true", AcceptUnprovenDiscoKeys: unprovenDisco == "true",
 		KeyNotAfter: utcOrZero(notAfter), KeyLifetime: lifetime,
 		NextKeyNotAfter: utcOrZero(nextNotAfter), NextKeyLifetime: nextLifetime,
 		HandshakeRate: rate, HandshakeBurst: burst,

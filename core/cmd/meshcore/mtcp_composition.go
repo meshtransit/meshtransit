@@ -345,12 +345,13 @@ func composeMTCP(
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
 		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, RouteOffers: deps.routeOffers, ExitOffers: deps.exitOffers,
-		CaptiveWindows:         deps.captiveWindows,
-		Metrics:                metrics,
-		DeniedEndpointPrefixes: controlConfig.MTCP.DeniedEndpointPrefixes(),
-		DNSSuffix:              deps.dnsSuffix,
-		DNSInfrastructureNames: deps.dnsInfrastructure,
-		FlowTickets:            deps.flowTickets,
+		CaptiveWindows:          deps.captiveWindows,
+		Metrics:                 metrics,
+		DeniedEndpointPrefixes:  controlConfig.MTCP.DeniedEndpointPrefixes(),
+		AcceptUnprovenDiscoKeys: controlConfig.MTCP.AcceptUnprovenDiscoKeys,
+		DNSSuffix:               deps.dnsSuffix,
+		DNSInfrastructureNames:  deps.dnsInfrastructure,
+		FlowTickets:             deps.flowTickets,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer

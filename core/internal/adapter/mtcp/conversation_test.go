@@ -976,6 +976,7 @@ func TestRotationNeedsAnAuthorizedDevice(t *testing.T) {
 func TestConversationEndpointReports(t *testing.T) {
 	t.Parallel()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	report := func(endpoints ...*mtcpv1.Endpoint) *mtcpv1.EndpointReport {
 		disco := make([]byte, 32)
 		disco[0] = 9
@@ -1337,6 +1338,7 @@ func TestPathStatsAreStoredForMapPeers(t *testing.T) {
 func TestConversationStoresConnectivityWhenItChanges(t *testing.T) {
 	t.Parallel()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -1389,6 +1391,7 @@ func TestConversationStoresConnectivityWhenItChanges(t *testing.T) {
 func TestConversationStoresPublicAddressesAndPlatform(t *testing.T) {
 	t.Parallel()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	f.session.hello.Client = &mtcpv1.ClientInfo{Product: "meshd", Version: "0.9.1", Os: " Darwin ", Arch: "arm64"}
 	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
 		t.Fatal(err)
@@ -1472,6 +1475,7 @@ func TestPublicAddressesKeepReflexiveOnesFirst(t *testing.T) {
 func TestConversationStoresConnectivityAgainForANewGenerationOrAfterADrop(t *testing.T) {
 	t.Parallel()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -1532,6 +1536,7 @@ func TestServeDeclaresLargeMapsOnlyForClientsThatDo(t *testing.T) {
 func TestConversationFlushesADeferredEndpointChange(t *testing.T) {
 	t.Parallel()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -1584,6 +1589,15 @@ func TestConversationFlushesADeferredEndpointChange(t *testing.T) {
 	}
 }
 
+// proveTestDisco makes the session hold the test reports' disco key as
+// proved earlier (by a registration, rotation or report proof).
+func (f *conversationFixture) proveTestDisco() {
+	f.t.Helper()
+	var disco [32]byte
+	disco[0] = 9
+	f.talk.proveDisco(must(node.NewDiscoveryKey(disco)))
+}
+
 func endpointReportFixture(port uint32) *mtcpv1.EndpointReport {
 	disco := make([]byte, 32)
 	disco[0] = 9
@@ -1615,6 +1629,7 @@ func flushUnavailable() error { return fmt.Errorf("%w: redis timeout", mapsessio
 func endpointPacingFixture(t *testing.T) *conversationFixture {
 	t.Helper()
 	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.proveTestDisco()
 	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -2167,4 +2182,97 @@ func (registrations *fakeRegistrations) authenticatedMachines() []control.Authen
 	registrations.mu.Lock()
 	defer registrations.mu.Unlock()
 	return slices.Clone(registrations.machines)
+}
+
+// TD-SEC-80: a session that proved no disco key at registration or rotation
+// (a reconnect, opened by Ping) takes an endpoint report's disco key only
+// with a proof bound to this session, and then only that key.
+func TestEndpointReportsNeedADiscoKeyProof(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	refused := func(name string, report *mtcpv1.EndpointReport) {
+		t.Helper()
+		stored := len(f.endpoints.sets)
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+			t.Fatal(err)
+		}
+		if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_INVALID ||
+			m.GetFatal() || len(f.endpoints.sets) != stored {
+			t.Fatalf("%s: %v, %d stored", name, m, len(f.endpoints.sets))
+		}
+	}
+	taken := func(name string, report *mtcpv1.EndpointReport) {
+		t.Helper()
+		stored := len(f.endpoints.sets)
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.endpoints.sets) != stored+1 {
+			t.Fatalf("%s: not stored", name)
+		}
+	}
+	_, _, _, victim, _ := f.keys(1) // another Device's disco key, seen in a map
+	refused("unproven disco key", &mtcpv1.EndpointReport{DiscoKey: victim})
+	refused("proof of another key", &mtcpv1.EndpointReport{DiscoKey: victim, DiscoKeyProof: make([]byte, 32)})
+	_, _, _, own, ownProof := f.keys(2)
+	refused("proof of a key for another one", &mtcpv1.EndpointReport{DiscoKey: victim, DiscoKeyProof: ownProof})
+	taken("proved disco key", &mtcpv1.EndpointReport{DiscoKey: own, DiscoKeyProof: ownProof})
+	f.advance(time.Second)
+	taken("the proved key again, without a proof", &mtcpv1.EndpointReport{DiscoKey: own})
+	f.advance(time.Second)
+	_, _, _, next, nextProof := f.keys(3)
+	taken("a newly proved key replaces it", &mtcpv1.EndpointReport{DiscoKey: next, DiscoKeyProof: nextProof})
+	f.advance(time.Second)
+	refused("the earlier key, unproven now", &mtcpv1.EndpointReport{DiscoKey: own})
+	// A proof made in another session (another handshake hash) proves
+	// nothing here.
+	other := must(key.NewDiscoPrivate())
+	var elsewhere [32]byte
+	elsewhere[0] = 1
+	replayed := must(sharedmtcp.DiscoKeyProof(other, f.control.Public(), elsewhere))
+	otherPublic := other.Public()
+	refused("a proof from another session", &mtcpv1.EndpointReport{DiscoKey: otherPublic[:],
+		DiscoKeyProof: replayed[:]})
+	// A node key is never a disco key, though its proof verifies alike.
+	_, nodeRaw, nodeProof, _, _ := f.keys(4)
+	f.session.hello.NodeKey = nodeRaw
+	refused("the node key as disco key", &mtcpv1.EndpointReport{DiscoKey: nodeRaw, DiscoKeyProof: nodeProof})
+}
+
+// While nodes without disco key proofs remain, an operator can take their
+// reports' disco keys unproven (TD-SEC-80); a proof still binds the key.
+func TestEndpointReportsTakeUnprovenDiscoKeysWhenAllowed(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	f.talk.application.options.AcceptUnprovenDiscoKeys = true
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	_, _, _, legacy, _ := f.keys(1)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport,
+		&mtcpv1.EndpointReport{DiscoKey: legacy}); err != nil || len(f.endpoints.sets) != 1 {
+		t.Fatalf("unproven key with the legacy setting: %v, %d stored", err, len(f.endpoints.sets))
+	}
+	f.advance(time.Second)
+	_, _, _, own, ownProof := f.keys(2)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport,
+		&mtcpv1.EndpointReport{DiscoKey: own, DiscoKeyProof: ownProof}); err != nil || len(f.endpoints.sets) != 2 {
+		t.Fatalf("proved key: %v, %d stored", err, len(f.endpoints.sets))
+	}
+	f.advance(time.Second)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport,
+		&mtcpv1.EndpointReport{DiscoKey: legacy}); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_INVALID ||
+		len(f.endpoints.sets) != 2 {
+		t.Fatalf("an unproven key after a proof: %v, %d stored", m, len(f.endpoints.sets))
+	}
 }
