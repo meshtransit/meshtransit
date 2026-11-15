@@ -3,11 +3,13 @@ package mtcp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/core/internal/domain/captivewindow"
 	"meshtransit.net/core/internal/domain/network"
@@ -102,4 +104,58 @@ func TestCaptiveWindowsAreRecordedForTheMapsDevice(t *testing.T) {
 		len(recorder.windows) != 2 {
 		t.Fatalf("after the interval: %v, %d recorded", err, len(recorder.windows))
 	}
+}
+
+// TD-SEC-81: windows whose times Core cannot take cost no log line in a
+// session without a map, and one line per session with a map, however many
+// reports carry them; every such window of a mapped session is counted.
+func TestUntakenCaptiveWindowsAreLoggedOncePerSession(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	var logs syncBuffer
+	f.talk.application.options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	f.talk.application.options.Metrics = NewMetrics()
+	f.talk.application.options.CaptiveWindows = &fakeCaptiveRecorder{}
+	f.session.capabilities = append(f.session.capabilities, "captive.audit1")
+	ahead := make([]*mtcpv1.CaptiveWindow, 0, captivewindow.MaximumPerReport)
+	for i := range captivewindow.MaximumPerReport {
+		ahead = append(ahead, &mtcpv1.CaptiveWindow{WindowId: strings.Repeat(string(rune('a'+i%6)), 31) + "0",
+			OpenedMs: f.now().Add(time.Hour).UnixMilli(), ClosedMs: f.now().Add(time.Hour + time.Minute).UnixMilli(),
+			End: mtcpv1.CaptiveWindow_EXPIRED})
+	}
+	report := &mtcpv1.CaptiveWindowReport{Windows: ahead}
+	for range 5 {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageCaptiveWindowReport, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := logs.count("captive window times not taken"); n != 0 ||
+		counterValue(t, f.talk.application.options.Metrics.captiveUntaken) != 0 {
+		t.Fatalf("a session without a map logged %d lines", n)
+	}
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 2)); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		if err := f.talk.Receive(t.Context(), sharedmtcp.MessageCaptiveWindowReport, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Windows that repeat an ID count once per report: six distinct IDs.
+	if n := logs.count("captive window times not taken"); n != 1 ||
+		counterValue(t, f.talk.application.options.Metrics.captiveUntaken) != 5*6 {
+		t.Fatalf("a mapped session logged %d lines, counted %v", n,
+			counterValue(t, f.talk.application.options.Metrics.captiveUntaken))
+	}
+}
+
+func counterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(counter)
+	families, err := registry.Gather()
+	if err != nil || len(families) != 1 || len(families[0].GetMetric()) != 1 {
+		t.Fatalf("gather: %v %v", families, err)
+	}
+	return families[0].GetMetric()[0].GetCounter().GetValue()
 }

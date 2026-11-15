@@ -29,8 +29,10 @@ type Metrics struct {
 	// discoReports counts endpoint reports' disco keys by how they were
 	// admitted (TD-SEC-80).
 	discoReports *prometheus.CounterVec
-	forwarding   prometheus.Counter
-	keyExpiry    prometheus.GaugeFunc
+	// captiveUntaken counts captive windows whose times Core could not take.
+	captiveUntaken prometheus.Counter
+	forwarding     prometheus.Counter
+	keyExpiry      prometheus.GaugeFunc
 	// controlKeys and keyClock are what keyExpiry reads at scrape time: a
 	// rolling key's expiry moves with the clock.
 	controlKeysMu sync.Mutex
@@ -261,9 +263,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_sessions_shed_total",
 			Help: "MTCP sessions this replica asked to reconnect elsewhere to rebalance load.",
 		}),
-		// Watch, not page: a rising rate means sessions held open without
-		// registering, a slot-holding pattern; nodes whose key was not found
-		// also end here after the unproven lifetime.
+		// Watch: growth means a node's clock runs ahead of Core's (or a node
+		// replays old windows); logged once per session.
+		captiveUntaken: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_captive_windows_untaken_total",
+			Help: "Captive portal windows of mapped sessions whose times Core could not take.",
+		}),
 		// Watch: unproven_taken falls to zero once every node sends disco
 		// key proofs; then MESHTRANSIT_CONTROL_MTCP_ACCEPT_UNPROVEN_DISCO_KEYS
 		// can be turned off. bad_proof or other growing means a node claims
@@ -272,6 +277,9 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_disco_key_reports_total",
 			Help: "Endpoint reports' disco keys by admission: proven (a report proved a new key for its session), unproven_taken, unproven_refused, bad_proof, other (not the session's proved key), node_key (the session's node key).",
 		}, []string{"result"}),
+		// Watch, not page: a rising rate means sessions held open without
+		// registering, a slot-holding pattern; nodes whose key was not found
+		// also end here after the unproven lifetime.
 		unproven: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_unproven_sessions_closed_total",
 			Help: "MTCP sessions closed because they proved no Device within the unproven limit.",
@@ -454,7 +462,7 @@ func NewMetrics() *Metrics {
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds, metrics.unproven, metrics.discoReports, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
+		metrics.sheds, metrics.unproven, metrics.discoReports, metrics.captiveUntaken, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
 		metrics.browserCompletions,
 		metrics.siblingProofs,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
@@ -532,6 +540,12 @@ const (
 	discoReportOther           = "other"
 	discoReportNodeKey         = "node_key"
 )
+
+func (metrics *Metrics) captiveWindowsUntaken(count int) {
+	if metrics != nil {
+		metrics.captiveUntaken.Add(float64(count))
+	}
+}
 
 func (metrics *Metrics) discoReport(result string) {
 	if metrics != nil {

@@ -200,10 +200,13 @@ type conversation struct {
 
 	// endpointPacing keeps and paces this session's endpoint reports.
 	endpointPacing endpointPacing
-	lastPaths      time.Time   // when the last PathStatsReport was stored
-	lastCaptive    time.Time   // when the last CaptiveWindowReport was taken
-	lastDNSHealth  time.Time   // when the last DnsHealthReport was taken
-	dnsRoot        atomic.Bool // the session gets the root zone (Request.DNSRoot)
+	lastPaths      time.Time // when the last PathStatsReport was stored
+	lastCaptive    time.Time // when the last CaptiveWindowReport was taken
+	// captiveTimesLogged is set once this session logged windows whose times
+	// Core could not take; later ones are only counted (TD-SEC-81).
+	captiveTimesLogged bool
+	lastDNSHealth      time.Time   // when the last DnsHealthReport was taken
+	dnsRoot            atomic.Bool // the session gets the root zone (Request.DNSRoot)
 	// identity, browser and resync are the session's budgets for
 	// RegisterRequest and RotateNodeKey, browser approval URLs and
 	// MapResync (rate_budget.go); Receive is serial, so they need no lock.
