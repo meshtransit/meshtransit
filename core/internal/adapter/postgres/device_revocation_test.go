@@ -63,6 +63,7 @@ func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T)
 		claimDeviceRevocationIdempotencySQL,
 		lockDeviceRevocationRevisionSQL,
 		lockDeviceRevocationTargetSQL,
+		deviceActorWithinCeilingSQL,
 		lockDeviceRevocationAuditStreamSQL,
 		setDeviceRevocationChangeSQL,
 		revokeDeviceSQL,
@@ -352,5 +353,42 @@ func TestDeviceRevocationStateMapsEveryStoredState(t *testing.T) {
 	}
 	if _, err := deviceRevocationState("paused"); !errors.Is(err, ErrDeviceRevocationEvidence) {
 		t.Fatalf("unknown state: %v", err)
+	}
+}
+
+// Schema 295 (TD-SEC-87): a Device whose owner holds a role beyond the
+// actor's ceiling is refused after the target lock, before anything changes.
+func TestDeviceRevocationResolveRefusesDeviceBeyondCeiling(t *testing.T) {
+	t.Parallel()
+
+	command := deviceRevocationCommandFixture(t)
+	attempt := deviceRevocationAttemptFixture(t)
+	databaseTransaction := newFakeDeviceRevocationTransaction()
+	enqueueNewDeviceRevocationResolution(t, databaseTransaction, command, attempt)
+	databaseTransaction.rows[deviceActorWithinCeilingSQL] = []deviceRevocationRow{deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*bool) = false
+			return nil
+		},
+	}}
+	store := beginTestDeviceRevocationStore(t, databaseTransaction)
+
+	transaction, err := store.Begin(context.Background(), command.Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if _, err := transaction.Resolve(context.Background(), command, attempt); !errors.Is(err, revocation.ErrForbidden) {
+		t.Fatalf("Resolve() error = %v, want ErrForbidden", err)
+	}
+	if err := transaction.Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	queries := deviceRevocationCallQueries(databaseTransaction.calls)
+	if queries[len(queries)-1] != deviceActorWithinCeilingSQL || databaseTransaction.commitCalls != 0 {
+		t.Fatalf("refused revocation queries = %#v, commits %d", queries, databaseTransaction.commitCalls)
+	}
+	ceilingCall := databaseTransaction.calls[len(databaseTransaction.calls)-1]
+	if ceilingCall.arguments[2] != int64(301) || ceilingCall.arguments[3] != command.ActorPrincipalID().String() {
+		t.Fatalf("ceiling arguments = %#v", ceilingCall.arguments)
 	}
 }

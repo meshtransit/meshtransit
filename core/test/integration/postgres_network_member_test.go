@@ -640,12 +640,12 @@ FROM network_member_node_backup AS backup WHERE key_epoch.id = backup.id`},
 	}
 }
 
-// assertNetworkMemberCeiling checks the delegation ceiling of a removal by
-// the scope of each role: an it_admin bound to this Network removes a member
-// whose roles are bound to this Network, but not a Workspace admin, a holder
-// of any Workspace-scope role or a member with a custom role binding of the
-// Network; a Workspace it_admin removes the custom binding holder but not a
-// Workspace admin. It leaves no member or role behind.
+// assertNetworkMemberCeiling checks the delegation ceiling of a removal: it
+// comes from Workspace-scope roles only (schema 295), as for role assignment,
+// so an it_admin bound to this Network removes no member holding any role or
+// a custom role binding of the Network; a Workspace it_admin removes the
+// custom binding holder but not a Workspace admin. It leaves no member or
+// role behind.
 func assertNetworkMemberCeiling(ctx context.Context, t *testing.T, admin *pgx.Conn, fixture networkMemberFixture) {
 	t.Helper()
 	owner, confirmer := fixture.owner, fixture.confirmer
@@ -679,6 +679,23 @@ func assertNetworkMemberCeiling(ctx context.Context, t *testing.T, admin *pgx.Co
 	if _, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID); !errors.Is(err,
 		memberlifecycle.ErrForbidden) {
 		t.Fatalf("Network it_admin removed a Network auditor: %v", err)
+	}
+	// Schema 295 (TD-SEC-87): a removal needs the ceiling assign_workspace_role_v1
+	// needs, from Workspace-scope roles only, so a Network it_admin no longer
+	// removes another Network it_admin (and the role with them).
+	if _, err := fixture.roles.Revoke(ctx, newRevokeCommand(t, owner, nil, networkAuditor.AssignmentID, 1)); err != nil {
+		t.Fatalf("revoke Network auditor: %v", err)
+	}
+	revokePeer := fixture.grant(ctx, t, networkLateJoinerID, authorization.BuiltinRoleITAdmin, fixture.scope.NetworkID())
+	if _, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID); !errors.Is(err,
+		memberlifecycle.ErrForbidden) {
+		t.Fatalf("Network it_admin removed a Network it_admin: %v", err)
+	}
+	revokePeer()
+	networkAuditor = newAssignCommand(t, owner, nil, mustIntegrationPublicID(t, networkLateJoinerID),
+		authorization.BuiltinRoleAuditor, fixture.scope.NetworkID())
+	if _, err := fixture.roles.Assign(ctx, networkAuditor); err != nil {
+		t.Fatalf("assign Network auditor again: %v", err)
 	}
 	removed, err := fixture.remove(ctx, t, owner, networkLateJoinerID)
 	if err != nil || removed.RolesRevoked != 1 {

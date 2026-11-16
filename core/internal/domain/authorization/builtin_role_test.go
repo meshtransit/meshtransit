@@ -56,7 +56,7 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 		{
 			role: BuiltinRoleNetworkAdmin,
 			granted: []Permission{"policy.publish", "share.offer", "dns.manage", "route.approve",
-				"kubernetes_cluster.manage", "kubernetes_cluster.approve"},
+				"kubernetes_cluster.manage", "kubernetes_cluster.approve", "interchange.manage"},
 			notGranted: []Permission{"device.manage", "member.invite", "role_binding.manage", "billing.manage",
 				"network.member.manage"},
 		},
@@ -67,7 +67,9 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 			notGranted: []Permission{"policy.publish", "share.offer", "dns.manage", "billing.manage",
 				"kubernetes_cluster.manage", "kubernetes_cluster.approve",
 				// TD-SEC-86: Device Group membership decides who reaches what.
-				"device_group.manage", "device_group.members.manage", "device_group.delegation.manage"},
+				"device_group.manage", "device_group.members.manage", "device_group.delegation.manage",
+				// TD-SEC-87: relays in every Network's signed relay map.
+				"interchange.manage"},
 		},
 		{
 			role:       BuiltinRoleBillingAdmin,

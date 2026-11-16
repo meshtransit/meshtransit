@@ -88,7 +88,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		permissions: permissionsOf(
 			"workspace.read", "network.create", "member.read", "role_binding.read",
 			"identity_group.read", "identity_group.manage", "device_tag.read", "device_tag.manage",
-			"interchange.read",
+			"interchange.read", "interchange.manage",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "network.update", "dns.manage",
 			"device.read", "device_group.read", "device_group.manage", "device_group.members.manage",
@@ -109,7 +109,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "member.invite", "member.manage",
 			"identity_provider.manage", "identity_group.read",
-			"device_tag.read", "interchange.read", "interchange.manage",
+			// TD-SEC-87: Private Interchange relays belong to network_admin.
+			"device_tag.read", "interchange.read",
 			"role_definition.read", "role_binding.read", "role_binding.manage", "access_review.manage",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "network.member.manage",

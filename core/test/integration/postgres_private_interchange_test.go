@@ -82,6 +82,21 @@ func assertPostgreSQLPrivateInterchange(ctx context.Context, t *testing.T, admin
 	if _, err := service.Create(ctx, member, workspaceID, spec, newCorrelationID(t)); !errors.Is(err, interchange.ErrForbidden) {
 		t.Fatalf("plain member created a relay: %v", err)
 	}
+	// Schema 295 (TD-SEC-87): it_admin reads relays but no longer adds one to
+	// every Network's relay map; network_admin does.
+	removeITAdmin := seedEnrollmentKeyRole(ctx, t, admin, member, 1999, "it_admin")
+	if listing, err := service.List(ctx, member, workspaceID); err != nil || listing.CanManage {
+		t.Fatalf("it_admin relays = %+v, error = %v", listing, err)
+	}
+	if _, err := service.Create(ctx, member, workspaceID, spec, newCorrelationID(t)); !errors.Is(err, interchange.ErrForbidden) {
+		t.Fatalf("it_admin created a relay: %v", err)
+	}
+	removeITAdmin()
+	removeNetworkAdmin := seedEnrollmentKeyRole(ctx, t, admin, member, 1999, "network_admin")
+	if listing, err := service.List(ctx, member, workspaceID); err != nil || !listing.CanManage {
+		t.Fatalf("network_admin relays = %+v, error = %v", listing, err)
+	}
+	removeNetworkAdmin()
 	foreign := privateInterchangeSpec(t, "office-hn", relayKey, network.ID(newCorrelationID(t)))
 	if _, err := service.Create(ctx, owner, workspaceID, foreign, newCorrelationID(t)); !errors.Is(err, interchange.ErrUnknownNetwork) {
 		t.Fatalf("relay over a foreign Network: %v", err)

@@ -228,6 +228,12 @@ func enqueueNewDeviceRevocationResolution(
 			return nil
 		},
 	})
+	transaction.enqueueRow(deviceActorWithinCeilingSQL, deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*bool) = true
+			return nil
+		},
+	})
 	transaction.enqueueRow(lockDeviceRevocationAuditStreamSQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
 			*destinations[0].(*int64) = 3

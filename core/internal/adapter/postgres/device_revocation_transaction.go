@@ -192,6 +192,21 @@ func (transaction *deviceRevocationTransaction) resolveLocked(
 		transaction.locked.nodeKeyInternalID <= 0 {
 		return revocation.Resolution{}, ErrDeviceRevocationEvidence
 	}
+	var withinCeiling bool
+	if err := transaction.database.QueryRow(
+		ctx,
+		deviceActorWithinCeilingSQL,
+		transaction.workspaceInternalID,
+		transaction.networkInternalID,
+		transaction.locked.deviceInternalID,
+		command.ActorPrincipalID().String(),
+		attempt.OccurredAt(),
+	).Scan(&withinCeiling); err != nil {
+		return revocation.Resolution{}, fmt.Errorf("check the Device owner's ceiling: %w", err)
+	}
+	if !withinCeiling {
+		return revocation.Resolution{}, revocation.ErrForbidden
+	}
 	deviceState, err := deviceRevocationState(deviceStateValue)
 	if err != nil {
 		return revocation.Resolution{}, err

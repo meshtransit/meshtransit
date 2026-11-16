@@ -699,6 +699,8 @@ func Catalog() []Migration {
 			securityReviewCeilingAndRouteSQL),
 		newMigration(294, "Role ceiling by permissions; invitations need the inviter's current authority; it_admin "+
 			"leaves Device Groups", roleCeilingByPermissionsSQL),
+		newMigration(295, "Device actions within the owner's role ceiling; relays are network_admin's",
+			deviceOwnerCeilingSQL),
 	}
 }
 
@@ -1360,3 +1362,6 @@ var securityReviewCeilingAndRouteSQL string
 
 //go:embed 000294_role_ceiling_by_permissions.up.sql
 var roleCeilingByPermissionsSQL string
+
+//go:embed 000295_device_owner_ceiling.up.sql
+var deviceOwnerCeilingSQL string

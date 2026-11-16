@@ -168,3 +168,9 @@ const completeDeviceRevocationIdempotencySQL = `SELECT
         $7::TEXT, $8::UUID, $9::BIGINT, $10::BIGINT, $11::JSONB,
         $12::UUID, $13::TIMESTAMPTZ
     )::TEXT`
+
+// deviceActorWithinCeilingSQL (schema 295, TD-SEC-87) reports whether the
+// actor may act on the locked Device given who owns it: the Workspace owner's
+// only the owner, another member's only within the ceiling over their roles.
+const deviceActorWithinCeilingSQL = `SELECT mesh_ops.device_actor_within_ceiling_v1(
+    $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::UUID, $5::TIMESTAMPTZ)`

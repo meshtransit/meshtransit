@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 294 {
-		t.Fatalf("len(Catalog()) = %d, want 294", len(catalog))
+	if len(catalog) != 295 {
+		t.Fatalf("len(Catalog()) = %d, want 295", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 294 {
-		t.Fatalf("LatestVersion() = %d, want 294", LatestVersion())
+	if LatestVersion() != 295 {
+		t.Fatalf("LatestVersion() = %d, want 295", LatestVersion())
 	}
 }
 
@@ -8360,6 +8360,11 @@ func TestOnlyRetentionDeletesEvidence(t *testing.T) {
 				t.Errorf("migration %d deletes evidence: %q", migration.Version, match)
 			}
 		}
+		if migration.Version == 295 {
+			// Reviewed: schema 295 moves one built-in grant, as 228 did.
+			sql = strings.Replace(sql,
+				"ALTER TABLE mesh.builtin_role_permission DISABLE TRIGGER builtin_role_permission_immutable;", "", 1)
+		}
 		if migration.Version == 294 {
 			// Reviewed: schema 294 changes the built-in role catalog as 228
 			// did, through the catalog's own triggers, not evidence.
@@ -8669,5 +8674,31 @@ func TestRoleCeilingMigrationNarrowsITAdmin(t *testing.T) {
 	if strings.Index(migration.SQL, "workspace_inviter_authorized_v1(\n            v_workspace.id") >
 		strings.Index(migration.SQL, "INSERT INTO mesh.principal") {
 		t.Error("the inviter must be checked before anything is created")
+	}
+}
+
+func TestDeviceOwnerCeilingMigration(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[294]
+	if migration.Version != 295 {
+		t.Fatalf("migration 295 = %d", migration.Version)
+	}
+	for _, want := range []string{
+		"AND permission.permission_key = 'interchange.manage';",
+		"SELECT 'network_admin', permission.id",
+		"ALTER TABLE mesh.builtin_role_permission ENABLE TRIGGER builtin_role_permission_immutable;",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_device_lifecycle_v1(",
+		"IF NOT mesh_ops.device_actor_within_ceiling_v1(\n            v_workspace, v_network, v_device.id",
+		"CREATE OR REPLACE FUNCTION mesh_ops.remove_network_member_v1(",
+		"    v_network_assigners := v_assigners;\n",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.device_actor_within_ceiling_v1(BIGINT, BIGINT, BIGINT, UUID, TIMESTAMPTZ)\n" +
+			"    TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 295 lacks %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "AND assignment.network_id = v_scope.network_id AND assignment.role_key IN") {
+		t.Error("migration 295 must not take assigners from roles bound to the Network")
 	}
 }

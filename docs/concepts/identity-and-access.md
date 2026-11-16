@@ -160,14 +160,11 @@ Network's members.
   the member started but nobody approved yet stays pending; approving it is
   refused, because approval needs a current Network membership.
 - **Who may remove whom.** Nobody removes the owner or themselves. The actor
-  must outrank each role the member holds in its own scope: a Workspace-scope
-  role needs the owner or a Workspace-scope `admin` or `it_admin` who could
-  grant it; a role bound to this Network may also be outranked by the
-  actor's own `admin` or `it_admin` role bound to this Network (never to
-  another Network); and a custom role binding of the Network needs a
-  Workspace-scope assigner. So an `it_admin` bound to one Network removes
-  members whose only roles are bound to that Network, but not a holder of a
-  Workspace-scope role.
+  must be able to grant every role the member holds, of either scope, from
+  their own Workspace-scope role (owner, `admin`, or `it_admin` for
+  `it_admin` only), exactly as for assigning roles; a custom role binding of
+  the Network also needs a Workspace-scope assigner. So an `it_admin` bound
+  to one Network removes only members who hold no role.
 
 ## Roles and permissions
 
@@ -180,12 +177,19 @@ Permissions come from roles:
 |---|---|---|
 | `admin` | Workspace | owner, `admin` |
 | `security_admin` | Workspace | owner, `admin` |
-| `billing_admin` | Workspace | owner, `admin`, `it_admin` |
+| `billing_admin` | Workspace | owner, `admin` |
 | `it_admin` | Workspace or one Network | owner, `admin`, `it_admin` |
-| `network_admin` | Workspace or one Network | owner, `admin`, `it_admin` |
-| `auditor` | Workspace or one Network | owner, `admin`, `it_admin` |
+| `network_admin` | Workspace or one Network | owner, `admin` |
+| `auditor` | Workspace or one Network | owner, `admin` |
 
-- Only holders bound to the whole Workspace assign roles.
+- Only holders bound to the whole Workspace assign roles, and only roles
+  whose every permission they hold themselves.
+- Acting on a member's Device (suspend, resume, hand over, move to the
+  Workspace, rename, revoke) needs the same ceiling over the roles its owner
+  holds; only the owner acts on the owner's Devices. Workspace Devices are
+  managed by anyone with the permission.
+- Device Groups and Private Interchange relays are `network_admin`'s (and
+  `admin`'s), not `it_admin`'s.
 - A role assignment can expire. Nobody changes their own roles, and the owner
   holds no role assignment.
 - In short: `it_admin` manages members (including each Network's members,

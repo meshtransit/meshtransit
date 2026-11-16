@@ -222,6 +222,7 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	// Schema 181: the rename is stamped with its transaction's time.
 	assertUpdatedByDatabaseClock(ctx, t, admin, "device", device.String())
 	assertNoCallerClockNow(ctx, t, admin)
+	assertDeviceOwnerCeiling(ctx, t, admin, runtimePool, lifecycle, scope, owner, member, other)
 
 	inventoryStore, err := postgresadapter.NewConsoleDeviceInventoryStore(runtimePool,
 		postgresadapter.AccountSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second})
