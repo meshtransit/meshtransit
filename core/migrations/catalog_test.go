@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 293 {
-		t.Fatalf("len(Catalog()) = %d, want 293", len(catalog))
+	if len(catalog) != 294 {
+		t.Fatalf("len(Catalog()) = %d, want 294", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 293 {
-		t.Fatalf("LatestVersion() = %d, want 293", LatestVersion())
+	if LatestVersion() != 294 {
+		t.Fatalf("LatestVersion() = %d, want 294", LatestVersion())
 	}
 }
 
@@ -8360,6 +8360,16 @@ func TestOnlyRetentionDeletesEvidence(t *testing.T) {
 				t.Errorf("migration %d deletes evidence: %q", migration.Version, match)
 			}
 		}
+		if migration.Version == 294 {
+			// Reviewed: schema 294 changes the built-in role catalog as 228
+			// did, through the catalog's own triggers, not evidence.
+			for _, allowed := range []string{
+				"ALTER TABLE mesh.builtin_role DISABLE TRIGGER builtin_role_immutable;",
+				"ALTER TABLE mesh.builtin_role_permission DISABLE TRIGGER builtin_role_permission_immutable;",
+			} {
+				sql = strings.Replace(sql, allowed, "", 1)
+			}
+		}
 		if migration.Version > 274 {
 			if match := gate.FindString(sql); match != "" {
 				t.Errorf("migration %d touches the evidence trigger: %q", migration.Version, match)
@@ -8630,5 +8640,34 @@ func TestSecurityReviewMigrationChecksCeilingAndRoute(t *testing.T) {
 		if !strings.Contains(migration.SQL, want) {
 			t.Errorf("migration 293 lacks %q", want)
 		}
+	}
+}
+
+func TestRoleCeilingMigrationNarrowsITAdmin(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[293]
+	if migration.Version != 294 {
+		t.Fatalf("migration 294 = %d", migration.Version)
+	}
+	for _, want := range []string{
+		"UPDATE mesh.builtin_role SET assignable_by = ARRAY['owner', 'admin']",
+		"WHERE role_key IN ('network_admin', 'billing_admin', 'auditor');",
+		"'device_group.manage', 'device_group.members.manage', 'device_group.delegation.manage');",
+		"ALTER TABLE mesh.builtin_role ENABLE TRIGGER builtin_role_immutable;",
+		"ALTER TABLE mesh.builtin_role_permission ENABLE TRIGGER builtin_role_permission_immutable;",
+		"CREATE OR REPLACE FUNCTION mesh_ops.accept_workspace_invitation_v1(",
+		"IF NOT mesh_ops.workspace_inviter_authorized_v1(",
+		"IF v_invitation.role_key IS NOT NULL AND v_membership.id IS NOT NULL THEN",
+		"REVOKE ALL ON FUNCTION mesh_ops.workspace_inviter_authorized_v1(BIGINT, BIGINT, TEXT, TIMESTAMPTZ)\n" +
+			"    FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("migration 294 lacks %q", want)
+		}
+	}
+	// The inviter check runs before an Account can be created.
+	if strings.Index(migration.SQL, "workspace_inviter_authorized_v1(\n            v_workspace.id") >
+		strings.Index(migration.SQL, "INSERT INTO mesh.principal") {
+		t.Error("the inviter must be checked before anything is created")
 	}
 }

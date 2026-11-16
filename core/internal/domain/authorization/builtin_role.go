@@ -19,7 +19,8 @@ const (
 	BuiltinRoleAdmin BuiltinRole = "admin"
 	// BuiltinRoleNetworkAdmin owns policy, DNS, routes, Resources and sharing.
 	BuiltinRoleNetworkAdmin BuiltinRole = "network_admin"
-	// BuiltinRoleITAdmin owns members, identity, roles and Devices.
+	// BuiltinRoleITAdmin owns members, identity and Devices; it assigns only
+	// it_admin, the one role whose permissions it holds.
 	BuiltinRoleITAdmin BuiltinRole = "it_admin"
 	// BuiltinRoleBillingAdmin owns billing only.
 	BuiltinRoleBillingAdmin BuiltinRole = "billing_admin"
@@ -82,7 +83,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 	},
 	BuiltinRoleNetworkAdmin: {
 		networkScopeAllowed: true,
-		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
+		// TD-SEC-84: an assigner holds every permission the role grants.
+		assignableBy: []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin},
 		permissions: permissionsOf(
 			"workspace.read", "network.create", "member.read", "role_binding.read",
 			"identity_group.read", "identity_group.manage", "device_tag.read", "device_tag.manage",
@@ -114,19 +116,20 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 			"device.read", "device.manage", "device.transfer", "device.quarantine",
 			"session.revoke", "enrollment_profile.read", "enrollment_profile.manage",
 			"enrollment_credential.issue", "enrollment_credential.revoke",
-			"device_group.read", "device_group.manage", "device_group.members.manage",
-			"device_group.delegation.manage",
+			// TD-SEC-86: Device Group membership decides access, so only
+			// network_admin and admin change it.
+			"device_group.read",
 			"policy.read", "policy.explain", "route.read", "connector.read",
 			"resource.read", "resource_group.read", "share.read",
 		),
 	},
 	BuiltinRoleBillingAdmin: {
-		assignableBy: []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
+		assignableBy: []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin},
 		permissions:  permissionsOf("workspace.read", "billing.read", "billing.manage"),
 	},
 	BuiltinRoleAuditor: {
 		networkScopeAllowed: true,
-		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
+		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin},
 		// Every read permission in Workspace or Network scope, plus export.
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "role_definition.read", "role_binding.read",

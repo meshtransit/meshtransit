@@ -65,7 +65,9 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 			granted: []Permission{"device.manage", "member.invite", "role_binding.manage", "session.revoke",
 				"network.member.manage"},
 			notGranted: []Permission{"policy.publish", "share.offer", "dns.manage", "billing.manage",
-				"kubernetes_cluster.manage", "kubernetes_cluster.approve"},
+				"kubernetes_cluster.manage", "kubernetes_cluster.approve",
+				// TD-SEC-86: Device Group membership decides who reaches what.
+				"device_group.manage", "device_group.members.manage", "device_group.delegation.manage"},
 		},
 		{
 			role:       BuiltinRoleBillingAdmin,
@@ -100,9 +102,10 @@ func TestBuiltinRoleDelegationCeiling(t *testing.T) {
 	if !BuiltinRoleAdmin.AssignableBy(RoleAssignerOwner) || !BuiltinRoleAdmin.AssignableBy(RoleAssignerAdmin) {
 		t.Fatal("owner and admin must grant admin")
 	}
-	for _, role := range []BuiltinRole{BuiltinRoleNetworkAdmin, BuiltinRoleITAdmin, BuiltinRoleBillingAdmin, BuiltinRoleAuditor} {
-		if !role.AssignableBy(RoleAssignerITAdmin) {
-			t.Fatalf("it_admin cannot grant %s", role)
+	// TD-SEC-84: it_admin grants only what it holds itself.
+	for _, role := range BuiltinRoles() {
+		if role.AssignableBy(RoleAssignerITAdmin) != (role == BuiltinRoleITAdmin) {
+			t.Fatalf("it_admin may grant %s: %v", role, role.AssignableBy(RoleAssignerITAdmin))
 		}
 	}
 	scoped := []BuiltinRole{}
@@ -119,5 +122,27 @@ func TestBuiltinRoleDelegationCeiling(t *testing.T) {
 	}
 	if _, err := ParseBuiltinRole("member"); err == nil {
 		t.Fatal("member must not be assignable")
+	}
+}
+
+// TD-SEC-84: whoever may assign a role holds every permission it grants, so
+// assigning a role (to anyone, colluders included) never widens what the
+// assigner's side can do. Owner holds everything.
+func TestBuiltinRoleAssignersHoldEveryPermissionTheyGrant(t *testing.T) {
+	t.Parallel()
+	assignerRoles := map[RoleAssigner]BuiltinRole{
+		RoleAssignerAdmin: BuiltinRoleAdmin, RoleAssignerITAdmin: BuiltinRoleITAdmin,
+	}
+	for _, role := range BuiltinRoles() {
+		for assigner, assignerRole := range assignerRoles {
+			if !role.AssignableBy(assigner) {
+				continue
+			}
+			for _, permission := range role.Permissions() {
+				if !assignerRole.Grants(permission) {
+					t.Errorf("%s may grant %s, which holds %q it lacks", assigner, role, permission)
+				}
+			}
+		}
 	}
 }

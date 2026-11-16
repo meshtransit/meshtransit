@@ -159,6 +159,28 @@ func assertPostgreSQLDeviceGroups(ctx context.Context, t *testing.T, admin *pgx.
 		t.Fatalf("second member page = %+v, error = %v", second, err)
 	}
 
+	// Schema 294 (TD-SEC-86): it_admin reads groups but neither manages them nor
+	// changes who is in them, since membership decides who reaches what.
+	itAdmin := newAssignCommand(t, owner, workspaceID, publicid.ID(member.PrincipalID()),
+		authorization.BuiltinRoleITAdmin, networkID)
+	if _, err := roleService.Assign(ctx, itAdmin); err != nil {
+		t.Fatalf("assign it_admin: %v", err)
+	}
+	if itListing, err := service.List(ctx, member, scope); err != nil || itListing.CanManage || itListing.CanManageMembers {
+		t.Fatalf("it_admin groups = %+v, error = %v", itListing, err)
+	}
+	if _, err := service.ChangeMembers(ctx, member, scope, group, 2, nil, devices,
+		newCorrelationID(t)); !errors.Is(err, devicegroup.ErrForbidden) {
+		t.Fatalf("it_admin changed group members: %v", err)
+	}
+	if _, err := service.Create(ctx, member, scope, devicegroup.Definition{Name: "Laptops"},
+		newCorrelationID(t)); !errors.Is(err, devicegroup.ErrForbidden) {
+		t.Fatalf("it_admin created a group: %v", err)
+	}
+	if _, err := roleService.Revoke(ctx, newRevokeCommand(t, owner, workspaceID, itAdmin.AssignmentID, 1)); err != nil {
+		t.Fatalf("revoke it_admin: %v", err)
+	}
+
 	// network_admin on this Network now manages groups (schema 120 grant).
 	networkAdmin := newAssignCommand(t, owner, workspaceID, publicid.ID(member.PrincipalID()),
 		authorization.BuiltinRoleNetworkAdmin, networkID)

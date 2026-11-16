@@ -324,6 +324,120 @@ VALUES ($1::UUID, 1, 101, 'boss@example.test', 'admin', $2, now() + INTERVAL '1 
 	if after := invitationAuthorityCounts(ctx, t, admin); after != before {
 		t.Fatalf("a refused member link changed authority: %+v, want %+v", after, before)
 	}
+
+	// Schema 294 (TD-SEC-84, TD-SEC-85): a role comes only with joining, and
+	// only while the inviter may still invite and grant that role.
+	var newcomer int64
+	if err := admin.QueryRow(ctx, `SELECT accepted_by_principal_id FROM mesh.workspace_invitation
+WHERE public_id = $1::UUID`, invitationID).Scan(&newcomer); err != nil {
+		t.Fatal(err)
+	}
+	invite := func(id, email, role string, inviter int64) {
+		t.Helper()
+		next, err := invitation.NewToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nextDigest := next.Digest()
+		var rolePtr *string
+		if role != "" {
+			rolePtr = &role
+		}
+		runInvitationFixture(ctx, t, admin, `INSERT INTO mesh.workspace_invitation (public_id, deployment_id,
+    workspace_id, email, role_key, token_digest, expires_at, invited_by_principal_id, created_at, updated_at)
+VALUES ($1::UUID, 1, 101, $2, $3, $4, now() + INTERVAL '1 day', $5, now(), now())`,
+			id, email, rolePtr, nextDigest[:], inviter)
+		digest = nextDigest
+	}
+	refuse := func(name, suffix, email string) {
+		t.Helper()
+		before := invitationAuthorityCounts(ctx, t, admin)
+		if _, err := accept(suffix, email); !errors.Is(err, oidcauth.ErrInvitationRejected) {
+			t.Fatalf("%s = %v, want ErrInvitationRejected", name, err)
+		}
+		if after := invitationAuthorityCounts(ctx, t, admin); after != before {
+			t.Fatalf("%s changed authority: %+v, want %+v", name, after, before)
+		}
+	}
+	// A member cannot add a role to themselves through a link to their own
+	// address, even one the owner sent: roles of members go through role
+	// assignment and its ceiling.
+	invite("01890f00-0000-7000-8000-000000001973", "newcomer.k@example.test", "it_admin", 11)
+	refuse("a member taking a role through their own link", "e76", "Newcomer.K@Example.test")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_invitation SET state = 'revoked', revoked_at = now(),
+    version = version + 1, updated_at = now() WHERE public_id = $1::UUID`, "01890f00-0000-7000-8000-000000001973")
+
+	// Another person from here on: the fake provider has one subject, so a
+	// different subject key makes a different identity.
+	keys, err = oidcauth.NewSubjectKeyring(integrationSubjectKey(t, "invitation-subject-v1", 0x72))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An inviter who may not invite (the newcomer is an auditor) has nothing
+	// to pass on, with or without a role.
+	invite("01890f00-0000-7000-8000-000000001974", "late.joiner@example.test", "", newcomer)
+	refuse("an invitation from a member who may not invite", "e77", "late.joiner@example.test")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_invitation SET role_key = 'auditor'
+WHERE public_id = $1::UUID`, "01890f00-0000-7000-8000-000000001974")
+	refuse("a role invitation from a member who may not invite", "e7a", "late.joiner@example.test")
+
+	// As it_admin the newcomer invites and grants it_admin, but not a role
+	// beyond it (network_admin), and nothing once the role is gone.
+	runInvitationFixture(ctx, t, admin, `INSERT INTO mesh.workspace_role_assignment (public_id, deployment_id,
+    workspace_id, principal_id, workspace_membership_id, role_key, state, authority_generation, valid_from, version,
+    created_at, updated_at)
+SELECT pg_catalog.uuidv7(), membership.deployment_id, 101, membership.principal_id, membership.id, 'it_admin',
+    'active', 1, now() - INTERVAL '1 minute', 1, now() - INTERVAL '1 minute', now() - INTERVAL '1 minute'
+FROM mesh.workspace_membership AS membership
+WHERE membership.workspace_id = 101 AND membership.principal_id = $1 AND membership.state = 'active'`, newcomer)
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_invitation SET role_key = 'network_admin'
+WHERE public_id = $1::UUID`, "01890f00-0000-7000-8000-000000001974")
+	refuse("an it_admin's network_admin invitation", "e7b", "late.joiner@example.test")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_invitation SET role_key = 'it_admin'
+WHERE public_id = $1::UUID`, "01890f00-0000-7000-8000-000000001974")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_role_assignment SET state = 'revoked',
+    revoked_at = now(), version = version + 1, updated_at = now()
+WHERE workspace_id = 101 AND principal_id = $1 AND role_key = 'it_admin' AND state = 'active'`, newcomer)
+	refuse("an invitation whose inviter lost the role", "e78", "late.joiner@example.test")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_role_assignment SET state = 'active',
+    revoked_at = NULL, version = version + 1, updated_at = now()
+WHERE workspace_id = 101 AND principal_id = $1 AND role_key = 'it_admin' AND state = 'revoked'`, newcomer)
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_membership SET state = 'suspended'
+WHERE workspace_id = 101 AND principal_id = $1 AND state = 'active'`, newcomer)
+	refuse("an invitation whose inviter is suspended", "e7c", "late.joiner@example.test")
+	runInvitationFixture(ctx, t, admin, `UPDATE mesh.workspace_membership SET state = 'active'
+WHERE workspace_id = 101 AND principal_id = $1 AND state = 'suspended'`, newcomer)
+	if _, err := accept("e79", "late.joiner@example.test"); err != nil {
+		t.Fatalf("an it_admin's it_admin invitation: %v", err)
+	}
+	var lateRoles int64
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.workspace_role_assignment AS assignment
+JOIN mesh.workspace_invitation AS invitation ON invitation.accepted_by_principal_id = assignment.principal_id
+WHERE invitation.public_id = $1::UUID AND assignment.role_key = 'it_admin' AND assignment.state = 'active'
+  AND assignment.workspace_id = 101`, "01890f00-0000-7000-8000-000000001974").Scan(&lateRoles); err != nil ||
+		lateRoles != 1 {
+		t.Fatalf("the late joiner's it_admin roles = %d, %v", lateRoles, err)
+	}
+}
+
+// runInvitationFixture changes invitation fixtures directly, past the
+// triggers that guard their transitions.
+func runInvitationFixture(ctx context.Context, t *testing.T, admin *pgx.Conn, sql string, args ...any) {
+	t.Helper()
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `RESET ROLE; SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, sql, args...); err != nil {
+		t.Fatalf("invitation fixture: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // invitationAuthorityCounts counts every row an invitation acceptance can

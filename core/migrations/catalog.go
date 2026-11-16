@@ -697,6 +697,8 @@ func Catalog() []Migration {
 		newMigration(292, "The api role renews its own Cloud entitlement", deploymentEntitlementRenewalSQL),
 		newMigration(293, "Invitation role ceiling on resend and revoke; resolvers check the sign-in route",
 			securityReviewCeilingAndRouteSQL),
+		newMigration(294, "Role ceiling by permissions; invitations need the inviter's current authority; it_admin "+
+			"leaves Device Groups", roleCeilingByPermissionsSQL),
 	}
 }
 
@@ -1355,3 +1357,6 @@ var deploymentEntitlementRenewalSQL string
 
 //go:embed 000293_security_review_ceiling_and_route.up.sql
 var securityReviewCeilingAndRouteSQL string
+
+//go:embed 000294_role_ceiling_by_permissions.up.sql
+var roleCeilingByPermissionsSQL string

@@ -674,9 +674,15 @@ func assertNetworkMemberCeiling(ctx context.Context, t *testing.T, admin *pgx.Co
 		t.Fatalf("Network it_admin removed a Workspace auditor: %v", err)
 	}
 	revokeWorkspaceAuditor()
-	removed, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID)
+	// Schema 294 (TD-SEC-84): it_admin no longer grants auditor, so it cannot
+	// remove one either, even one bound to this Network.
+	if _, err := fixture.remove(ctx, t, confirmer, networkLateJoinerID); !errors.Is(err,
+		memberlifecycle.ErrForbidden) {
+		t.Fatalf("Network it_admin removed a Network auditor: %v", err)
+	}
+	removed, err := fixture.remove(ctx, t, owner, networkLateJoinerID)
 	if err != nil || removed.RolesRevoked != 1 {
-		t.Fatalf("Network it_admin removing a Network auditor = %+v, %v", removed, err)
+		t.Fatalf("owner removing a Network auditor = %+v, %v", removed, err)
 	}
 	var auditorState string
 	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.workspace_role_assignment WHERE public_id = $1::UUID`,

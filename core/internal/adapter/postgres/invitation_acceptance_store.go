@@ -47,7 +47,7 @@ func invitationAcceptanceError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
-		case "P0002", "MTV05", "MTV06", "42501", "22023", "23505":
+		case "P0002", "MTV05", "MTV06", "MTV07", "MTV08", "42501", "22023", "23505":
 			return oidcauth.ErrInvitationRejected
 		}
 	}
