@@ -193,6 +193,13 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 				result.Applied = append(result.Applied, name)
 			}
 		}
+		if len(options.LoginPasswords) != 0 {
+			logins, err := ensureOperatorLogins(ctx, transaction, options.LoginPasswords, options.RotateLoginPasswords)
+			if err != nil {
+				return err
+			}
+			result.Logins = logins
+		}
 		after, err := readOperatorReport(ctx, queryRow, version)
 		if err != nil {
 			return err

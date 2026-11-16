@@ -217,7 +217,8 @@ func (runner *MigrationRunner) validatePreflight(
 	transaction migrationTransaction,
 ) error {
 	var preflight migrationPreflight
-	if err := transaction.QueryRow(ctx, migrationPreflightSQL, migrationSupportRoles()).Scan(
+	if err := transaction.QueryRow(ctx, migrationPreflightSQL, migrationSupportRoles(),
+		migrations.OperatorAllowedMemberships(), operatorLoginNames()).Scan(
 		&preflight.serverVersion,
 		&preflight.extensionVersion,
 		&preflight.currentUser,

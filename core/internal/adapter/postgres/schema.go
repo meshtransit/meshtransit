@@ -52,10 +52,15 @@ const runtimeSchemaCompatibilitySQL = `SELECT
         AND NOT runtime_role.rolcreaterole
         AND NOT runtime_role.rolreplication
         AND NOT runtime_role.rolbypassrls
+        -- The only memberships a serving login may have are the operator
+        -- logins' own ($2, TD-SEC-90 S1): inherit only, never SET or ADMIN.
         AND NOT EXISTS (
             SELECT 1
             FROM pg_catalog.pg_auth_members AS membership
+            JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
             WHERE membership.member = runtime_role.oid
+              AND NOT (runtime_role.rolname || ' is a member of ' || granted_role.rolname = ANY($2::TEXT[])
+                  AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)
         )
         AND NOT EXISTS (
             SELECT 1
@@ -131,7 +136,8 @@ func checkRuntimeSchemaCompatibility(
 	}
 
 	var compatibility runtimeSchemaCompatibility
-	if err := querier.QueryRow(ctx, runtimeSchemaCompatibilitySQL, checksums).Scan(
+	if err := querier.QueryRow(ctx, runtimeSchemaCompatibilitySQL, checksums,
+		migrations.OperatorAllowedMemberships()).Scan(
 		&compatibility.currentVersion,
 		&compatibility.minimumReaderGeneration,
 		&compatibility.maximumReaderGeneration,

@@ -29,8 +29,8 @@ func TestRunMigrateOperatorApplyPassesOptionsAndReportsSteps(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("exit %d: %s", exitCode, errorOutput.String())
 	}
-	if service.options != (postgresadapter.OperatorApplyOptions{DryRun: true, AfterRollout: true, Through: 171}) ||
-		service.applyCalls != 1 || service.closeCalls != 1 {
+	if options := service.options; !options.DryRun || !options.AfterRollout || options.Through != 171 ||
+		len(options.LoginPasswords) != 0 || service.applyCalls != 1 || service.closeCalls != 1 {
 		t.Fatalf("service = %+v", service)
 	}
 	var result operatorCommandOutput

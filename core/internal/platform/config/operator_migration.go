@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,13 @@ const (
 	envOperatorConnectTimeout         = "MESHTRANSIT_OPERATOR_CONNECT_TIMEOUT"
 	envOperatorLockTimeout            = "MESHTRANSIT_OPERATOR_LOCK_TIMEOUT"
 	envOperatorStatementTimeout       = "MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT"
+	// envOperatorLoginPasswordFiles lists login=file pairs, comma-separated:
+	// the passwords of the operator logins the apply keeps (TD-SEC-90 S1).
+	envOperatorLoginPasswordFiles = "MESHTRANSIT_OPERATOR_LOGIN_PASSWORD_FILES" //nolint:gosec // G101 false positive.
+	maxOperatorLogins             = 8
+	// envOperatorLoginRotate ("true"/"false") lets an apply replace a login
+	// password that differs from the stored one.
+	envOperatorLoginRotate = "MESHTRANSIT_OPERATOR_LOGIN_ROTATE"
 )
 
 // OperatorMigrationConfig contains the privileged database operator identity
@@ -25,6 +34,12 @@ type OperatorMigrationConfig struct {
 	ConnectTimeout   time.Duration
 	LockTimeout      time.Duration
 	StatementTimeout time.Duration
+	// LoginPasswordFiles holds, by login name, the file with that login's
+	// password; empty when no login is kept.
+	LoginPasswordFiles map[string]SecretFile
+	// RotateLoginPasswords lets the apply replace a differing stored login
+	// password.
+	RotateLoginPasswords bool
 }
 
 // LoadOperatorMigration reads only the MESHTRANSIT_OPERATOR_* settings of the
@@ -74,7 +89,17 @@ func LoadOperatorMigration(lookup LookupFunc) (OperatorMigrationConfig, error) {
 	if lockTimeout >= statementTimeout {
 		return OperatorMigrationConfig{}, settingError(envOperatorLockTimeout)
 	}
+	loginPasswordFiles, err := loadOperatorLoginPasswordFiles(lookup)
+	if err != nil {
+		return OperatorMigrationConfig{}, err
+	}
+	rotate, present := lookup(envOperatorLoginRotate)
+	if present && rotate != "true" && rotate != "false" {
+		return OperatorMigrationConfig{}, settingError(envOperatorLoginRotate)
+	}
 	return OperatorMigrationConfig{
+		LoginPasswordFiles:   loginPasswordFiles,
+		RotateLoginPasswords: rotate == "true",
 		PostgreSQL: MigrationPostgreSQLConfig{
 			Address:      address,
 			Database:     database,
@@ -86,4 +111,36 @@ func LoadOperatorMigration(lookup LookupFunc) (OperatorMigrationConfig, error) {
 		LockTimeout:      lockTimeout,
 		StatementTimeout: statementTimeout,
 	}, nil
+}
+
+// operatorLoginName is a lower-case PostgreSQL role name.
+var operatorLoginName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// loadOperatorLoginPasswordFiles reads login=file pairs. A login appears at
+// most once; names are identifiers and files absolute paths.
+func loadOperatorLoginPasswordFiles(lookup LookupFunc) (map[string]SecretFile, error) {
+	value, present := lookup(envOperatorLoginPasswordFiles)
+	files := map[string]SecretFile{}
+	if !present || value == "" {
+		return files, nil
+	}
+	pairs := strings.Split(value, ",")
+	if len(pairs) > maxOperatorLogins {
+		return nil, settingError(envOperatorLoginPasswordFiles)
+	}
+	for _, pair := range pairs {
+		name, path, found := strings.Cut(strings.TrimSpace(pair), "=")
+		if !found || !operatorLoginName.MatchString(name) {
+			return nil, settingError(envOperatorLoginPasswordFiles)
+		}
+		if _, duplicate := files[name]; duplicate {
+			return nil, settingError(envOperatorLoginPasswordFiles)
+		}
+		file, err := NewSecretFile(path)
+		if err != nil {
+			return nil, settingError(envOperatorLoginPasswordFiles)
+		}
+		files[name] = file
+	}
+	return files, nil
 }

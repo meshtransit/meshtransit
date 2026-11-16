@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	// operatorApplicationRoles log in: the migrator and the serving roles.
-	// A step may grant to or revoke from them, never own with or reset them.
-	// Every NOLOGIN owner comes from a role step, the first two
-	// (mesh_audit_writer, mesh_share_writer) from version 2's.
-	operatorApplicationRoles = []string{"mesh_migrator", "mesh_runtime", "mesh_worker", "mesh_observer"}
+	// operatorApplicationRoles log in: the migrator and the serving roles,
+	// among them the operator logins (operator_logins.go). A step may grant
+	// to or revoke from them, never own with or reset them. Every NOLOGIN
+	// owner comes from a role step, the first two (mesh_audit_writer,
+	// mesh_share_writer) from version 2's.
+	operatorApplicationRoles = []string{"mesh_migrator", "mesh_runtime", "mesh_worker", "mesh_observer", "mesh_control"}
 )
 
 // operatorFunctionOwners maps each function family (the name without its

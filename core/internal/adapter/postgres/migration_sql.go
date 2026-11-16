@@ -52,10 +52,19 @@ const (
         FROM pg_catalog.pg_auth_members AS membership
         JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
         JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
-        WHERE member_role.rolname = CURRENT_USER
+        WHERE (member_role.rolname = CURRENT_USER
            OR granted_role.rolname = CURRENT_USER
            OR member_role.rolname = ANY($1::text[])
            OR granted_role.rolname = ANY($1::text[])
+           -- the operator logins ($3): a role granted mesh_control would
+           -- inherit what mesh_runtime holds
+           OR member_role.rolname = ANY($3::text[])
+           OR granted_role.rolname = ANY($3::text[]))
+          -- The operator logins' own memberships ($2, TD-SEC-90 S1) are
+          -- meant: inherit only, never SET or ADMIN, never the migrator.
+          AND NOT (member_role.rolname || ' is a member of ' || granted_role.rolname = ANY($2::text[])
+              AND member_role.rolname <> CURRENT_USER AND granted_role.rolname <> CURRENT_USER
+              AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)
     )
 FROM pg_catalog.pg_roles AS role
 WHERE role.rolname = CURRENT_USER`

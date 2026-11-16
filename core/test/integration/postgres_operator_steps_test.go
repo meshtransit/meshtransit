@@ -169,6 +169,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assertOperatorLogins(ctx, t, admin, operator, freshAdmin, freshMigration)
 	assertCreateRoleOperator(ctx, t, admin, freshAdmin, freshMigration)
 
 	// The runtime role is never an operator.
@@ -448,5 +449,125 @@ func assertCreateRoleOperator(ctx context.Context, t *testing.T, admin *pgx.Conn
 	}
 	if err := dropOperator(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// assertOperatorLogins qualifies TD-SEC-90 S1: the operator keeps the
+// mesh_control login, created with its password and a member of
+// mesh_runtime only (inherit, no set role); a repeat with the same password
+// changes nothing; another password replaces it; the membership is not
+// reported; the login connects and holds what the runtime role holds.
+func assertOperatorLogins(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	operator *postgresadapter.OperatorRunner, operatorConfig, migrationConfig config.MigrationConfig) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.WithoutCancel(ctx), "DROP ROLE IF EXISTS mesh_control")
+	})
+	keepOrRotate := func(password string, rotate bool) ([]postgresadapter.OperatorLoginResult, error) {
+		t.Helper()
+		result, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+			LoginPasswords: map[string][]byte{"mesh_control": []byte(password)}, RotateLoginPasswords: rotate})
+		return result.Logins, err
+	}
+	keep := func(password string) []postgresadapter.OperatorLoginResult {
+		t.Helper()
+		logins, err := keepOrRotate(password, false)
+		if err != nil {
+			t.Fatalf("Apply(login) = %v", err)
+		}
+		return logins
+	}
+	first := strings.Repeat("Kq7x", 10)
+	if logins := keep(first); len(logins) != 1 || logins[0].Name != "mesh_control" || !logins[0].PasswordChanged {
+		t.Fatalf("first login apply = %+v", logins)
+	}
+	if logins := keep(first); len(logins) != 1 || logins[0].Created || logins[0].PasswordChanged {
+		t.Fatalf("repeat login apply = %+v, want no change", logins)
+	}
+	var superuser, inherits, setsRole, member bool
+	if err := admin.QueryRow(ctx, `SELECT role.rolsuper OR role.rolcreaterole OR role.rolbypassrls OR NOT role.rolcanlogin,
+    membership.inherit_option, membership.set_option,
+    pg_catalog.pg_has_role('mesh_control', 'mesh_runtime', 'USAGE')
+FROM pg_catalog.pg_roles AS role
+JOIN pg_catalog.pg_auth_members AS membership ON membership.member = role.oid
+JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid AND granted.rolname = 'mesh_runtime'
+WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &member); err != nil {
+		t.Fatal(err)
+	}
+	if superuser || !inherits || setsRole || !member {
+		t.Fatalf("mesh_control attributes: privileged %v inherit %v set %v member %v", superuser, inherits, setsRole, member)
+	}
+	verification, err := openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx)
+	if err != nil || len(verification.Operator.Memberships) != 0 {
+		t.Fatalf("Verify() with the mesh_control login = %+v, %v", verification.Operator.Memberships, err)
+	}
+	// A different password is refused: the running pods use the stored one.
+	second := strings.Repeat("Zr4m", 10)
+	if _, err := keepOrRotate(second, false); !errors.Is(err, postgresadapter.ErrOperatorLoginPasswordDiffers) {
+		t.Fatalf("Apply(another password) = %v, want ErrOperatorLoginPasswordDiffers", err)
+	}
+	if logins, err := keepOrRotate(second, true); err != nil || len(logins) != 1 || !logins[0].PasswordChanged {
+		t.Fatalf("rotate password apply = %+v, %v", logins, err)
+	}
+	// A role granted mesh_control would inherit the runtime role: the
+	// migrator refuses to run.
+	if _, err := admin.Exec(ctx, "CREATE ROLE mesh_operator_test_heir NOLOGIN; GRANT mesh_control TO mesh_operator_test_heir"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx); !errors.Is(err,
+		postgresadapter.ErrMigrationPreflight) {
+		t.Fatalf("Verify() with mesh_control granted onward = %v, want preflight refusal", err)
+	}
+	if _, err := admin.Exec(ctx, "DROP ROLE mesh_operator_test_heir"); err != nil {
+		t.Fatal(err)
+	}
+	passwordPath := filepath.Join(t.TempDir(), "control-password")
+	if err := os.WriteFile(passwordPath, []byte(second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	passwordFile, err := config.NewSecretFile(passwordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := openIntegrationPostgreSQLConnection(ctx, t, operatorConfig.PostgreSQL.Address,
+		operatorConfig.PostgreSQL.Database, "mesh_control", passwordFile, operatorConfig.PostgreSQL.CAFile,
+		operatorConfig.ConnectTimeout)
+	var executes bool
+	if err := control.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege(
+    'mesh_ops.current_workspace_id()', 'EXECUTE')`).Scan(&executes); err != nil || !executes {
+		t.Fatalf("mesh_control runs a runtime function: %v, %v", executes, err)
+	}
+	// Core accepts the login as its runtime role (schema check, TD-SEC-90 S1).
+	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role: postgresadapter.PoolRoleRuntime, Address: operatorConfig.PostgreSQL.Address,
+		Database: operatorConfig.PostgreSQL.Database, User: "mesh_control", PasswordFile: passwordFile,
+		CAFile: operatorConfig.PostgreSQL.CAFile, MaxConnections: 2, ConnectTimeout: operatorConfig.ConnectTimeout,
+	})
+	if err != nil {
+		t.Fatalf("open a runtime pool as mesh_control: %v", err)
+	}
+	if err := pool.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Any other membership of the login is still reported.
+	if _, err := admin.Exec(ctx, "GRANT mesh_observer TO mesh_control"); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := operator.Status(ctx); err != nil ||
+		!slices.Equal(report.Memberships, []string{"mesh_control is a member of mesh_observer"}) {
+		t.Fatalf("Status() with an extra login membership = %v, %v", report.Memberships, err)
+	}
+	if _, err := admin.Exec(ctx, "REVOKE mesh_observer FROM mesh_control"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+		LoginPasswords: map[string][]byte{"mesh_control": []byte("short")}}); !errors.Is(err,
+		postgresadapter.ErrInvalidLoginPassword) {
+		t.Fatalf("Apply(short password) = %v, want ErrInvalidLoginPassword", err)
+	}
+	if _, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+		LoginPasswords: map[string][]byte{"mesh_runtime": []byte(first)}}); !errors.Is(err,
+		postgresadapter.ErrInvalidOperatorOptions) {
+		t.Fatalf("Apply(password for a non-login role) = %v, want ErrInvalidOperatorOptions", err)
 	}
 }

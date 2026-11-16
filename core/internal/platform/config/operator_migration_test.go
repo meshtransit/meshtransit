@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,4 +72,37 @@ func validOperatorValues(overrides map[string]string) map[string]string {
 		values[key] = value
 	}
 	return values
+}
+
+func TestLoadOperatorLoginPasswordFiles(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		value string
+		want  []string
+		valid bool
+	}{
+		"absent":    {value: "", valid: true},
+		"one":       {value: "mesh_control=/run/a/password", want: []string{"mesh_control"}, valid: true},
+		"two":       {value: "mesh_control=/run/a, mesh_api=/run/b", want: []string{"mesh_api", "mesh_control"}, valid: true},
+		"duplicate": {value: "mesh_control=/run/a,mesh_control=/run/b"},
+		"no file":   {value: "mesh_control"},
+		"relative":  {value: "mesh_control=run/a"},
+		"bad name":  {value: "Mesh-Control=/run/a"},
+	} {
+		files, err := loadOperatorLoginPasswordFiles(func(key string) (string, bool) {
+			return test.value, key == envOperatorLoginPasswordFiles && test.value != ""
+		})
+		if (err == nil) != test.valid {
+			t.Errorf("%s: error = %v, want valid %v", name, err, test.valid)
+			continue
+		}
+		var names []string
+		for login := range files {
+			names = append(names, login)
+		}
+		slices.Sort(names)
+		if test.valid && !slices.Equal(names, test.want) {
+			t.Errorf("%s: logins = %v, want %v", name, names, test.want)
+		}
+	}
 }

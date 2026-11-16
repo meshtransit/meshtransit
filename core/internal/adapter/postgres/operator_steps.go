@@ -118,6 +118,13 @@ type OperatorApplyOptions struct {
 	// Through, when positive, is the newest migration whose steps may run;
 	// a step of a migration up to Through that is not applied is refused.
 	Through int64
+	// LoginPasswords, by operator login name, are the passwords to keep:
+	// each named login is created if missing with this password and gets
+	// its memberships; an existing login must already have it.
+	LoginPasswords map[string][]byte
+	// RotateLoginPasswords allows replacing a login's stored password that
+	// differs from the given one (the serving pods must restart after).
+	RotateLoginPasswords bool
 }
 
 // OperatorWaiting is one step an apply left for later.
@@ -138,6 +145,8 @@ type OperatorApplyResult struct {
 	// Report is the state after the steps ran (for a dry run, as it was
 	// inside the transaction before the rollback).
 	Report OperatorReport
+	// Logins is what the apply did to each login it was given a password for.
+	Logins []OperatorLoginResult
 }
 
 type operatorPlan struct {
@@ -256,7 +265,8 @@ FROM ROWS FROM (pg_catalog.unnest($1::TEXT[]), pg_catalog.unnest($2::TEXT[]), pg
     WITH ORDINALITY AS requirement(kind, routine_signature, role_name, ordinal)`
 
 // operatorMembershipsSQL lists every membership a MeshTransit role ($1)
-// takes part in. MeshTransit roles are never members of another role. A
+// takes part in, but the operator logins' own ($2). MeshTransit roles are
+// otherwise never members of another role. A
 // grant that carries neither INHERIT nor SET (PostgreSQL 16), such as the
 // ADMIN-only grant a CREATEROLE role keeps on each role it creates, gives no
 // privilege and is not listed.
@@ -267,7 +277,11 @@ FROM pg_catalog.pg_auth_members AS membership
 JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
 JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
 WHERE (membership.inherit_option OR membership.set_option)
-  AND (member_role.rolname = ANY($1::TEXT[]) OR granted_role.rolname = ANY($1::TEXT[]))`
+  AND (member_role.rolname = ANY($1::TEXT[]) OR granted_role.rolname = ANY($1::TEXT[]))
+  -- The operator logins' own memberships ($2, TD-SEC-90 S1) are meant:
+  -- inherit only, never SET or ADMIN.
+  AND NOT (member_role.rolname || ' is a member of ' || granted_role.rolname = ANY($2::TEXT[])
+      AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)`
 
 const operatorSchemaPresentSQL = `SELECT pg_catalog.to_regclass('mesh_ops.schema_compatibility') IS NOT NULL`
 
@@ -311,7 +325,8 @@ func readOperatorReport(
 	if err != nil {
 		return OperatorReport{}, errors.Join(ErrOperatorCatalog, err)
 	}
-	if err := queryRow(ctx, operatorMembershipsSQL, managed).Scan(&report.Memberships); err != nil {
+	if err := queryRow(ctx, operatorMembershipsSQL, managed, migrations.OperatorAllowedMemberships()).Scan(
+		&report.Memberships); err != nil {
 		return OperatorReport{}, fmt.Errorf("read role memberships: %w", err)
 	}
 	return report, nil

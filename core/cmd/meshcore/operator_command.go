@@ -36,15 +36,16 @@ type operatorWaitingOutput struct {
 }
 
 type operatorCommandOutput struct {
-	Operation            string                  `json:"operation"`
-	DryRun               bool                    `json:"dry_run,omitempty"`
-	CurrentSchemaVersion int64                   `json:"current_schema_version"`
-	Applied              []string                `json:"applied,omitempty"`
-	Replayed             []string                `json:"replayed,omitempty"`
-	Waiting              []operatorWaitingOutput `json:"waiting,omitempty"`
-	Pending              []string                `json:"pending"`
-	RoleMemberships      []string                `json:"role_memberships,omitempty"`
-	Steps                []operatorStepOutput    `json:"steps,omitempty"`
+	Operation            string                                `json:"operation"`
+	DryRun               bool                                  `json:"dry_run,omitempty"`
+	CurrentSchemaVersion int64                                 `json:"current_schema_version"`
+	Applied              []string                              `json:"applied,omitempty"`
+	Replayed             []string                              `json:"replayed,omitempty"`
+	Waiting              []operatorWaitingOutput               `json:"waiting,omitempty"`
+	Pending              []string                              `json:"pending"`
+	RoleMemberships      []string                              `json:"role_memberships,omitempty"`
+	Logins               []postgresadapter.OperatorLoginResult `json:"logins,omitempty"`
+	Steps                []operatorStepOutput                  `json:"steps,omitempty"`
 }
 
 // runMigrateOperator runs "meshcore migrate operator status|apply" with the
@@ -74,6 +75,19 @@ func runMigrateOperator(
 		logger.ErrorContext(ctx, "operator migration failed",
 			"error_code", "invalid_operator_configuration", "error", err)
 		return 1
+	}
+	if operation == "apply" && len(operatorConfig.LoginPasswordFiles) != 0 {
+		options.RotateLoginPasswords = operatorConfig.RotateLoginPasswords
+		options.LoginPasswords = make(map[string][]byte, len(operatorConfig.LoginPasswordFiles))
+		for name, file := range operatorConfig.LoginPasswordFiles {
+			password, readErr := file.Read()
+			if readErr != nil {
+				logger.ErrorContext(ctx, "operator migration failed",
+					"error_code", "operator_login_password_unreadable", "login", name)
+				return 1
+			}
+			options.LoginPasswords[name] = []byte(password)
+		}
 	}
 	service, err := factory(ctx, operatorConfig)
 	if err != nil {
@@ -115,6 +129,7 @@ func runMigrateOperator(
 			result.Waiting = append(result.Waiting, operatorWaitingOutput{Step: waiting.Step, Reason: string(waiting.Reason)})
 		}
 		result.Pending = operatorPendingOutput(applied.Report)
+		result.Logins = applied.Logins
 	}
 	if err := json.NewEncoder(output).Encode(result); err != nil {
 		logger.ErrorContext(ctx, "operator migration failed", "error_code", "operator_output_failure")
@@ -165,6 +180,12 @@ func logOperatorFailure(ctx context.Context, logger *slog.Logger, code string, e
 		attributes = []any{"error_code", "operator_step_unverified"}
 	case errors.Is(err, postgresadapter.ErrMigrationState):
 		attributes = []any{"error_code", "operator_schema_not_clean"}
+	case errors.Is(err, postgresadapter.ErrOperatorLoginPasswordDiffers):
+		attributes = []any{"error_code", "operator_login_password_differs"}
+	case errors.Is(err, postgresadapter.ErrOperatorLoginsNeedSuperuser):
+		attributes = []any{"error_code", "operator_logins_need_superuser"}
+	case errors.Is(err, postgresadapter.ErrInvalidLoginPassword):
+		attributes = []any{"error_code", "operator_login_password_invalid"}
 	}
 	logger.ErrorContext(ctx, "operator migration failed", attributes...)
 }
