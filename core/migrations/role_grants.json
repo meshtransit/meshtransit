@@ -225,7 +225,6 @@
       "mesh_ops.publish_compiled_policy",
       "mesh_ops.publish_compiled_policy_v2",
       "mesh_ops.put_storage_credential_v2",
-      "mesh_ops.quarantine_device_leases_v1",
       "mesh_ops.ratchet_kubernetes_gateway_token_v1",
       "mesh_ops.read_access_graph_history_v3",
       "mesh_ops.read_access_graph_v4",
@@ -327,6 +326,7 @@
       "mesh_ops.resolve_registration_intake_scope",
       "mesh_ops.resolve_share_target_v1",
       "mesh_ops.resume_kubernetes_gateway_token_ratchet_v1",
+      "mesh_ops.revoke_device_v2",
       "mesh_ops.revoke_enrollment_key_v1",
       "mesh_ops.revoke_kubernetes_join_key_v1",
       "mesh_ops.revoke_resource_share_v6",
@@ -349,9 +349,6 @@
       "mesh.pending_registration"
     ],
     "updates": [
-      "mesh.device",
-      "mesh.device_machine_key_epoch",
-      "mesh.device_node_key_epoch",
       "mesh.pending_registration"
     ],
     "deletes": [],

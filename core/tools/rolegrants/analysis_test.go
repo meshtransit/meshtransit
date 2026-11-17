@@ -160,10 +160,21 @@ func TestDirectWritesByRole(t *testing.T) {
 	if !slices.Contains(control.Locks, "mesh.enrollment_profile") {
 		t.Error("control's registration locks enrollment_profile FOR UPDATE; the lock needs UPDATE")
 	}
+	// Schema 296 (S3): the api revokes a Device only through
+	// mesh_ops.revoke_device_v2, never by writing these tables itself. Its
+	// revocation still locks the rows FOR UPDATE while it resolves, which
+	// needs UPDATE: S2 moves that lock into a definer before it takes the
+	// api's UPDATE away.
 	api := result.Roles["api"]
+	if !slices.Contains(api.Functions, "mesh_ops.revoke_device_v2") {
+		t.Error("api does not revoke Devices through mesh_ops.revoke_device_v2")
+	}
 	for _, table := range []string{"mesh.device", "mesh.device_machine_key_epoch", "mesh.device_node_key_epoch"} {
-		if !slices.Contains(api.Updates, table) {
-			t.Errorf("api's Device revocation does not update %s", table)
+		if slices.Contains(api.Updates, table) {
+			t.Errorf("api updates %s directly; revocation goes through mesh_ops.revoke_device_v2", table)
+		}
+		if !slices.Contains(api.Locks, table) {
+			t.Errorf("api no longer locks %s: S2 may take its UPDATE away (update the design)", table)
 		}
 	}
 }

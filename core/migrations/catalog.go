@@ -701,6 +701,7 @@ func Catalog() []Migration {
 			"leaves Device Groups", roleCeilingByPermissionsSQL),
 		newMigration(295, "Device actions within the owner's role ceiling; relays are network_admin's",
 			deviceOwnerCeilingSQL),
+		newMigration(296, "Device revocation through a function that checks its authority", revokeDeviceFunctionSQL),
 	}
 }
 
@@ -1365,3 +1366,6 @@ var roleCeilingByPermissionsSQL string
 
 //go:embed 000295_device_owner_ceiling.up.sql
 var deviceOwnerCeilingSQL string
+
+//go:embed 000296_revoke_device_function.up.sql
+var revokeDeviceFunctionSQL string

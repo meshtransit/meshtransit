@@ -211,18 +211,19 @@ func enqueueNewDeviceRevocationResolution(
 	})
 	transaction.enqueueRow(lockDeviceRevocationTargetSQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
+			// Distinct values per field, so a swapped argument shows.
 			*destinations[0].(*int64) = 301
 			*destinations[1].(*int64) = 1
-			*destinations[2].(*int64) = 1
+			*destinations[2].(*int64) = 21
 			*destinations[3].(*string) = "active"
-			*destinations[4].(*int64) = 1
+			*destinations[4].(*int64) = 3
 			*destinations[5].(*int64) = 311
-			*destinations[6].(*int64) = 1
+			*destinations[6].(*int64) = 31
 			*destinations[7].(*string) = "active"
 			*destinations[8].(*time.Time) = attempt.OccurredAt().Add(-time.Hour)
-			*destinations[9].(*int64) = 1
+			*destinations[9].(*int64) = 4
 			*destinations[10].(*int64) = 321
-			*destinations[11].(*int64) = 1
+			*destinations[11].(*int64) = 41
 			*destinations[12].(*string) = "active"
 			*destinations[13].(*time.Time) = attempt.OccurredAt().Add(-time.Hour)
 			return nil
@@ -248,24 +249,11 @@ func enqueueDeviceRevocationApply(
 	transaction *fakeDeviceRevocationTransaction,
 	recordID publicid.ID,
 ) {
-	transaction.enqueueRow(revokeDeviceSQL, deviceRevocationTestRow{
+	transaction.enqueueRow(revokeDeviceFunctionSQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
-			*destinations[0].(*int64) = 2
-			*destinations[1].(*int64) = 2
-			return nil
-		},
-	})
-	for _, query := range [...]string{revokeMachineKeyEpochSQL, revokeNodeKeyEpochSQL} {
-		transaction.enqueueRow(query, deviceRevocationTestRow{
-			scan: func(destinations ...any) error {
-				*destinations[0].(*int64) = 2
-				return nil
-			},
-		})
-	}
-	transaction.enqueueRow(quarantineRevokedDeviceLeasesSQL, deviceRevocationTestRow{
-		scan: func(destinations ...any) error {
-			*destinations[0].(*int64) = 2
+			for index, value := range [...]int64{2, 22, 32, 42, 5} {
+				*destinations[index].(*int64) = value
+			}
 			return nil
 		},
 	})

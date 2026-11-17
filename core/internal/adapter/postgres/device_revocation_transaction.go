@@ -399,85 +399,46 @@ func (transaction *deviceRevocationTransaction) applyLocked(
 	ctx context.Context,
 	change revocation.Change,
 ) (revocation.Result, error) {
-	if err := transaction.database.Exec(
-		ctx,
-		setDeviceRevocationChangeSQL,
-		change.Attempt().MutationIDs().ChangeID().String(),
-	); err != nil {
-		return revocation.Result{}, fmt.Errorf("set authority change context: %w", err)
-	}
-
 	command := change.Command()
 	resolution := change.Resolution()
 	occurredAt := change.Attempt().OccurredAt()
-	var deviceVersion, sessionGeneration int64
+	session := command.AccountSession()
+	// Schema 296 (role isolation S3): the function checks the permission and
+	// the owner's ceiling again and writes the Device, its current key epochs
+	// and the lease quarantine itself; the store no longer writes them.
+	var deviceVersion, sessionGeneration, machineVersion, nodeVersion, quarantined int64
 	if err := transaction.database.QueryRow(
 		ctx,
-		revokeDeviceSQL,
-		transaction.locked.deviceInternalID,
-		transaction.workspaceInternalID,
-		transaction.networkInternalID,
+		revokeDeviceFunctionSQL,
+		session.ID().String(),
+		session.DeploymentID().String(),
+		session.PrincipalID().String(),
+		session.IdentitySubjectID().String(),
+		session.Version(),
+		session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(),
+		session.ProviderGeneration(),
+		session.DeploymentRecoveryEpoch(),
+		transaction.scope.WorkspaceID().String(),
+		transaction.scope.NetworkID().String(),
 		command.NodeID().String(),
 		resolution.DeviceVersion(),
 		resolution.SessionGeneration(),
+		resolution.MachineKeyEpoch(),
+		resolution.MachineKeyVersion(),
+		resolution.NodeKeyEpoch(),
+		resolution.NodeKeyVersion(),
+		command.Reason().String(),
+		change.Attempt().MutationIDs().ChangeID().String(),
 		occurredAt,
-	).Scan(&deviceVersion, &sessionGeneration); err != nil {
+	).Scan(&deviceVersion, &sessionGeneration, &machineVersion, &nodeVersion, &quarantined); err != nil {
 		return revocation.Result{}, fmt.Errorf("revoke Device: %w", err)
 	}
 	if deviceVersion != resolution.DeviceVersion()+1 ||
-		sessionGeneration != resolution.SessionGeneration()+1 {
+		sessionGeneration != resolution.SessionGeneration()+1 ||
+		machineVersion != resolution.MachineKeyVersion()+1 ||
+		nodeVersion != resolution.NodeKeyVersion()+1 || quarantined < 0 {
 		return revocation.Result{}, ErrDeviceRevocationEvidence
-	}
-
-	var machineVersion int64
-	if err := transaction.database.QueryRow(
-		ctx,
-		revokeMachineKeyEpochSQL,
-		transaction.locked.machineKeyInternalID,
-		transaction.workspaceInternalID,
-		transaction.networkInternalID,
-		transaction.locked.deviceInternalID,
-		resolution.MachineKeyEpoch(),
-		resolution.MachineKeyVersion(),
-		occurredAt,
-		occurredAt,
-		command.Reason().String(),
-	).Scan(&machineVersion); err != nil {
-		return revocation.Result{}, fmt.Errorf("revoke current machine-key epoch: %w", err)
-	}
-	if machineVersion != resolution.MachineKeyVersion()+1 {
-		return revocation.Result{}, ErrDeviceRevocationEvidence
-	}
-
-	var nodeVersion int64
-	if err := transaction.database.QueryRow(
-		ctx,
-		revokeNodeKeyEpochSQL,
-		transaction.locked.nodeKeyInternalID,
-		transaction.workspaceInternalID,
-		transaction.networkInternalID,
-		transaction.locked.deviceInternalID,
-		resolution.NodeKeyEpoch(),
-		resolution.NodeKeyVersion(),
-		occurredAt,
-		occurredAt,
-		command.Reason().String(),
-	).Scan(&nodeVersion); err != nil {
-		return revocation.Result{}, fmt.Errorf("revoke current Node-key epoch: %w", err)
-	}
-	if nodeVersion != resolution.NodeKeyVersion()+1 {
-		return revocation.Result{}, ErrDeviceRevocationEvidence
-	}
-
-	// The Device's addresses enter quarantine; registration reuses them after.
-	var quarantined int64
-	if err := transaction.database.QueryRow(
-		ctx,
-		quarantineRevokedDeviceLeasesSQL,
-		transaction.locked.deviceInternalID,
-		occurredAt,
-	).Scan(&quarantined); err != nil {
-		return revocation.Result{}, fmt.Errorf("quarantine Device addresses: %w", err)
 	}
 
 	var networkRevision, inventoryRevision int64

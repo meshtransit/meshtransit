@@ -90,68 +90,6 @@ FOR UPDATE OF device, machine_key, node_key`
 const lockDeviceRevocationAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
 FROM mesh_audit.lock_network_stream_head()`
 
-const setDeviceRevocationChangeSQL = `SELECT pg_catalog.set_config(
-    'mesh.change_public_id',
-    $1::TEXT,
-    TRUE
-)`
-
-// revokeDeviceSQL ends an active, suspended or expired Device; a removed
-// Device keeps no suspension reason or pending handover.
-const revokeDeviceSQL = `UPDATE mesh.device AS device
-SET state = 'revoked',
-    suspended_reason = NULL,
-    handover_principal_id = NULL,
-    session_generation = device.session_generation + 1,
-    version = device.version + 1,
-    updated_at = $7::TIMESTAMPTZ
-WHERE device.id = $1::BIGINT
-  AND device.workspace_id = $2::BIGINT
-  AND device.network_id = $3::BIGINT
-  AND device.public_id = $4::UUID
-  AND device.version = $5::BIGINT
-  AND device.session_generation = $6::BIGINT
-  AND device.state IN ('active', 'suspended', 'expired')
-RETURNING device.version, device.session_generation`
-
-// quarantineRevokedDeviceLeasesSQL moves the revoked Device's active leases
-// to quarantined (schema 143) and returns how many moved.
-const quarantineRevokedDeviceLeasesSQL = `SELECT mesh_ops.quarantine_device_leases_v1($1::BIGINT, $2::TIMESTAMPTZ)`
-
-const revokeMachineKeyEpochSQL = `UPDATE mesh.device_machine_key_epoch AS key_epoch
-SET valid_until = $8::TIMESTAMPTZ,
-    revocation_reason = $9::TEXT,
-    state = 'revoked',
-    version = key_epoch.version + 1,
-    updated_at = $8::TIMESTAMPTZ
-WHERE key_epoch.id = $1::BIGINT
-  AND key_epoch.workspace_id = $2::BIGINT
-  AND key_epoch.network_id = $3::BIGINT
-  AND key_epoch.device_id = $4::BIGINT
-  AND key_epoch.epoch = $5::BIGINT
-  AND key_epoch.version = $6::BIGINT
-  AND key_epoch.state = 'active'
-  AND key_epoch.valid_from <= $7::TIMESTAMPTZ
-  AND key_epoch.valid_until IS NULL
-RETURNING key_epoch.version`
-
-const revokeNodeKeyEpochSQL = `UPDATE mesh.device_node_key_epoch AS key_epoch
-SET valid_until = $8::TIMESTAMPTZ,
-    revocation_reason = $9::TEXT,
-    state = 'revoked',
-    version = key_epoch.version + 1,
-    updated_at = $8::TIMESTAMPTZ
-WHERE key_epoch.id = $1::BIGINT
-  AND key_epoch.workspace_id = $2::BIGINT
-  AND key_epoch.network_id = $3::BIGINT
-  AND key_epoch.device_id = $4::BIGINT
-  AND key_epoch.epoch = $5::BIGINT
-  AND key_epoch.version = $6::BIGINT
-  AND key_epoch.state = 'active'
-  AND key_epoch.valid_from <= $7::TIMESTAMPTZ
-  AND key_epoch.valid_until IS NULL
-RETURNING key_epoch.version`
-
 const advanceDeviceRevocationRevisionSQL = `SELECT network_revision, inventory_revision
 FROM mesh_ops.advance_network_inventory_revision()`
 
@@ -174,3 +112,14 @@ const completeDeviceRevocationIdempotencySQL = `SELECT
 // only the owner, another member's only within the ceiling over their roles.
 const deviceActorWithinCeilingSQL = `SELECT mesh_ops.device_actor_within_ceiling_v1(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::UUID, $5::TIMESTAMPTZ)`
+
+// revokeDeviceFunctionSQL (schema 296, role isolation S3) revokes the locked
+// Device and its current key epochs and quarantines its leases, after
+// checking device.manage and the owner's ceiling inside the database.
+const revokeDeviceFunctionSQL = `SELECT device_version, session_generation, machine_key_version, node_key_version,
+    quarantined_leases
+FROM mesh_ops.revoke_device_v2(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+    $10::UUID, $11::UUID, $12::UUID, $13::BIGINT, $14::BIGINT, $15::BIGINT, $16::BIGINT, $17::BIGINT, $18::BIGINT,
+    $19::TEXT, $20::UUID, $21::TIMESTAMPTZ
+)`

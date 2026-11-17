@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 295 {
-		t.Fatalf("len(Catalog()) = %d, want 295", len(catalog))
+	if len(catalog) != 296 {
+		t.Fatalf("len(Catalog()) = %d, want 296", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 295 {
-		t.Fatalf("LatestVersion() = %d, want 295", LatestVersion())
+	if LatestVersion() != 296 {
+		t.Fatalf("LatestVersion() = %d, want 296", LatestVersion())
 	}
 }
 
@@ -8700,5 +8700,54 @@ func TestDeviceOwnerCeilingMigration(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "AND assignment.network_id = v_scope.network_id AND assignment.role_key IN") {
 		t.Error("migration 295 must not take assigners from roles bound to the Network")
+	}
+}
+
+// Schema 296 (role isolation S3): Device revocation writes only through a
+// definer that checks the permission and the owner's ceiling itself, locks
+// the exact rows the caller resolved, and only ever revokes.
+func TestRevokeDeviceFunctionChecksItsOwnAuthority(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[295]
+	if migration.Version != 296 {
+		t.Fatalf("migration 296 version = %d", migration.Version)
+	}
+	sql := migration.SQL
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.revoke_device_v2(",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog",
+		"mesh_ops.current_workspace_id()",
+		"mesh_ops.resolve_network_permission_v2(",
+		"'device.manage', p_evaluated_at",
+		"mesh_ops.device_actor_within_ceiling_v1(",
+		"v_device.version <> p_expected_device_version",
+		"v_device.session_generation <> p_expected_session_generation",
+		"v_machine.version <> p_expected_machine_key_version",
+		"v_node.version <> p_expected_node_key_version",
+		"v_machine.epoch <> p_expected_machine_key_epoch",
+		"v_node.epoch <> p_expected_node_key_epoch",
+		"p_evaluated_at <> pg_catalog.transaction_timestamp()",
+		"workspace.public_id = p_workspace_public_id AND network.public_id = p_network_public_id",
+		"SET state = 'revoked', suspended_reason = NULL, handover_principal_id = NULL",
+		"mesh_ops.quarantine_device_leases_v1(v_device.id, p_evaluated_at)",
+		"FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer",
+		"TIMESTAMPTZ) TO mesh_runtime;",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("schema 296 lacks %q", required)
+		}
+	}
+	// It never sets an owner, an expiry or a key.
+	for _, forbidden := range []string{"owner_principal_id =", "expires_at =", "public_key =", "current_node_key_epoch =",
+		"current_machine_key_epoch =", "DELETE FROM", "SECURITY INVOKER"} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("schema 296 contains %q", forbidden)
+		}
+	}
+	// The authority checks come before any write.
+	if strings.Index(sql, "resolve_network_permission_v2(") > strings.Index(sql, "UPDATE mesh.device AS device") ||
+		strings.Index(sql, "device_actor_within_ceiling_v1(") > strings.Index(sql, "UPDATE mesh.device AS device") {
+		t.Error("schema 296 writes before it checks its authority")
 	}
 }

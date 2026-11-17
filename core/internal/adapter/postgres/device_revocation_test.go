@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/domain/node/revocation"
 )
 
@@ -45,7 +46,7 @@ func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T)
 	}
 	if result.IdempotencyRecordID() != attempt.MutationIDs().IdempotencyRecordID() ||
 		result.NodeID() != command.NodeID() || result.DeviceVersion() != 2 ||
-		result.SessionGeneration() != 2 || result.NetworkRevision() != 6 ||
+		result.SessionGeneration() != 22 || result.NetworkRevision() != 6 ||
 		result.InventoryRevision() != 8 {
 		t.Fatalf("Apply() result = %#v, want exact terminal revisions", result)
 	}
@@ -65,17 +66,35 @@ func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T)
 		lockDeviceRevocationTargetSQL,
 		deviceActorWithinCeilingSQL,
 		lockDeviceRevocationAuditStreamSQL,
-		setDeviceRevocationChangeSQL,
-		revokeDeviceSQL,
-		revokeMachineKeyEpochSQL,
-		revokeNodeKeyEpochSQL,
-		quarantineRevokedDeviceLeasesSQL,
+		revokeDeviceFunctionSQL,
 		advanceDeviceRevocationRevisionSQL,
 		appendDeviceRevocationEvidenceSQL,
 		completeDeviceRevocationIdempotencySQL,
 	}
 	if got := deviceRevocationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantQueries) {
 		t.Fatalf("query order = %#v, want %#v", got, wantQueries)
+	}
+
+	// Schema 296: the function gets the session to check device.manage
+	// itself, the exact rows resolved, the reason, the change and the
+	// decision time, each in its place.
+	revokeCall := databaseTransaction.calls[8]
+	session := command.AccountSession()
+	want := []any{
+		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
+		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
+		command.Scope().WorkspaceID().String(), command.Scope().NetworkID().String(), command.NodeID().String(),
+		int64(1), int64(21), int64(3), int64(31), int64(4), int64(41), command.Reason().String(), change.Attempt().MutationIDs().ChangeID().String(),
+		attempt.OccurredAt(),
+	}
+	if len(revokeCall.arguments) != len(want) {
+		t.Fatalf("revoke_device_v2 got %d arguments, want %d", len(revokeCall.arguments), len(want))
+	}
+	for index := range want {
+		if !reflect.DeepEqual(revokeCall.arguments[index], want[index]) {
+			t.Errorf("revoke_device_v2 argument %d = %v, want %v", index+1, revokeCall.arguments[index], want[index])
+		}
 	}
 
 	completeCall := databaseTransaction.calls[len(databaseTransaction.calls)-1]
@@ -390,5 +409,22 @@ func TestDeviceRevocationResolveRefusesDeviceBeyondCeiling(t *testing.T) {
 	ceilingCall := databaseTransaction.calls[len(databaseTransaction.calls)-1]
 	if ceilingCall.arguments[2] != int64(301) || ceilingCall.arguments[3] != command.ActorPrincipalID().String() {
 		t.Fatalf("ceiling arguments = %#v", ceilingCall.arguments)
+	}
+}
+
+// Schema 296's refusals in Apply are unreachable while the store and the
+// database agree (Resolve holds the locks and ran the same checks): they
+// stay internal failures that are never retried, so a divergence shows.
+func TestDeviceRevocationFunctionRefusalsAreNotRetried(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{"42501", "P0002", "MTM03", "22023"} {
+		err := classifyDeviceRevocationDatabaseError(context.Background(), &pgconn.PgError{Code: code})
+		if errors.Is(err, revocation.ErrRetryableTransaction) || errors.Is(err, revocation.ErrForbidden) ||
+			errors.Is(err, revocation.ErrNotFound) {
+			t.Errorf("SQLSTATE %s classified as %v, want an internal failure", code, err)
+		}
+	}
+	if err := classifyDeviceRevocationDatabaseError(context.Background(), &pgconn.PgError{Code: "40001"}); !errors.Is(err, revocation.ErrRetryableTransaction) {
+		t.Errorf("a changed Device (40001) classified as %v, want retryable", err)
 	}
 }

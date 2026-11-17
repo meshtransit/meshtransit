@@ -5,9 +5,11 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/devicelifecycle"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -93,6 +95,10 @@ SET ownership = 'member', owner_principal_id = $2, custodian_principal_id = $2 W
 			itAdmin)); !errors.Is(err, revocation.ErrForbidden) {
 			t.Fatalf("it_admin revoked %s Device: %v", holder.name, err)
 		}
+		// Schema 296: the database refuses too, without the Go store.
+		assertDirectRevocation(t, "it_admin on "+holder.name+" Device",
+			directDeviceRevocations(ctx, t, admin, scope, itAdmin, device, directRevocation{})[0],
+			"42501", "Device is beyond the actor's ceiling")
 		if after := readIntegrationDevice(ctx, t, admin, device); after.version != before.version ||
 			after.state != "active" {
 			t.Fatalf("%s Device changed: %+v, want %+v", holder.name, after, before)
@@ -116,6 +122,21 @@ WHERE public_id = $1::UUID`, args: []any{device.String()}}})
 	}
 	// it_admin still acts on a plain member's Device.
 	ownedBy(9302)
+	// Schema 296 directly: the plain member's Device is revoked, then a
+	// second call finds it revoked; unknown Networks and Devices and stale
+	// versions are refused. All of it rolls back.
+	other := mustPublicID(t).String()
+	outcomes := directDeviceRevocations(ctx, t, admin, scope, itAdmin, device,
+		directRevocation{change: func(arguments []any) { arguments[10] = other }},
+		directRevocation{change: func(arguments []any) { arguments[11] = other }},
+		directRevocation{change: func(arguments []any) { arguments[12] = arguments[12].(int64) + 1 }},
+		directRevocation{},
+		directRevocation{})
+	assertDirectRevocation(t, "naming an unknown Network", outcomes[0], "42501", "Device revocation names another Network")
+	assertDirectRevocation(t, "for an unknown Device", outcomes[1], "P0002", "Device is unavailable")
+	assertDirectRevocation(t, "with a stale version", outcomes[2], "40001", "Device changed")
+	assertDirectRevocation(t, "of a plain member's Device", outcomes[3], "", "")
+	assertDirectRevocation(t, "of a revoked Device", outcomes[4], "MTM03", "Device cannot be revoked")
 	if err := act(itAdmin, devicelifecycle.ActionSuspend); err != nil {
 		t.Fatalf("it_admin suspended a plain member's Device: %v", err)
 	}
@@ -143,4 +164,83 @@ func deviceOwnerCeilingRevocation(t *testing.T, scope network.Scope, device node
 		t.Fatal(err)
 	}
 	return command
+}
+
+// directRevocation is one direct call of mesh_ops.revoke_device_v2 as the
+// runtime role, bypassing the Go store: the Device's current rows, changed by
+// change when it is not nil (index 9 the Workspace, 10 the Network, 11 the
+// Device public id, 12 the expected Device version).
+type directRevocation struct {
+	change func(arguments []any)
+}
+
+// directDeviceRevocations runs calls in order in one transaction as the
+// runtime role and returns, for each, the SQLSTATE and message it failed
+// with ("" when it revoked). It always rolls back.
+func directDeviceRevocations(ctx context.Context, t *testing.T, admin *pgx.Conn, scope network.Scope,
+	session accountsession.Session, device node.ID, calls ...directRevocation) [][2]string {
+	t.Helper()
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`,
+		scope.WorkspaceID().String(), scope.NetworkID().String()); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := make([][2]string, 0, len(calls))
+	for index, call := range calls {
+		var version, generation, machineEpoch, machineVersion, nodeEpoch, nodeVersion int64
+		if err := transaction.QueryRow(ctx, `SELECT device.version, device.session_generation,
+    machine.epoch, machine.version, node_key.epoch, node_key.version
+FROM mesh.device AS device
+JOIN mesh.device_machine_key_epoch AS machine ON machine.device_id = device.id
+ AND machine.epoch = device.current_machine_key_epoch
+JOIN mesh.device_node_key_epoch AS node_key ON node_key.device_id = device.id
+ AND node_key.epoch = device.current_node_key_epoch
+WHERE device.public_id = $1::UUID`, device.String()).Scan(&version, &generation, &machineEpoch, &machineVersion,
+			&nodeEpoch, &nodeVersion); err != nil {
+			t.Fatal(err)
+		}
+		arguments := []any{session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
+			session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
+			session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
+			scope.WorkspaceID().String(), scope.NetworkID().String(), device.String(),
+			version, generation, machineEpoch, machineVersion, nodeEpoch, nodeVersion}
+		if call.change != nil {
+			call.change(arguments)
+		}
+		savepoint := fmt.Sprintf("direct_revocation_%d", index)
+		if _, err := transaction.Exec(ctx, "SAVEPOINT "+savepoint); err != nil {
+			t.Fatal(err)
+		}
+		_, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.revoke_device_v2(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+    $10::UUID, $11::UUID, $12::UUID, $13::BIGINT, $14::BIGINT, $15::BIGINT, $16::BIGINT, $17::BIGINT, $18::BIGINT,
+    'Direct call', pg_catalog.uuidv7(), pg_catalog.transaction_timestamp())`, arguments...)
+		var pgError *pgconn.PgError
+		switch {
+		case errors.As(err, &pgError):
+			outcomes = append(outcomes, [2]string{pgError.Code, pgError.Message})
+			if _, err := transaction.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepoint); err != nil {
+				t.Fatal(err)
+			}
+		case err != nil:
+			t.Fatal(err)
+		default:
+			outcomes = append(outcomes, [2]string{"", ""})
+		}
+	}
+	return outcomes
+}
+
+func assertDirectRevocation(t *testing.T, name string, got [2]string, code, message string) {
+	t.Helper()
+	if got[0] != code || message != "" && got[1] != message {
+		t.Errorf("revoke_device_v2 %s = (%q, %q), want (%q, %q)", name, got[0], got[1], code, message)
+	}
 }
