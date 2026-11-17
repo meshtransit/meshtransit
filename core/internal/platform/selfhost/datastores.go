@@ -84,10 +84,22 @@ func postgresInitSQL(dir string) ([]byte, error) {
 	return []byte(builder.String()), nil
 }
 
-// redisCommands are the commands Core's Redis user may run (the
-// integration fixture's list), on MeshTransit's keys and channels only.
-const redisCommands = "+ping +publish +subscribe +eval +evalsha +hget +hset +hmget +exists +pexpire +del +get +set " +
-	"+time +hgetall +hdel +hscan +zadd +zrem +zcount +zremrangebyscore"
+// redisCommands are the commands Core's Redis user may run, on
+// MeshTransit's keys and channels only: those of the Redis adapter's "all"
+// role (meshcore redis acl rules all), which a test keeps covered.
+const redisCommands = "+ping +publish +subscribe +unsubscribe +eval +evalsha +eval_ro +evalsha_ro +hget +hset " +
+	"+hmget +exists +pexpire +del +get +set +time +hgetall +hdel +hscan +zadd +zrem +zcount +zremrangebyscore"
+
+// redisUserRules are Core's Redis user's rules after its password.
+const redisUserRules = "resetkeys resetchannels ~meshtransit:v1:* &meshtransit:v1:* -@all " + redisCommands
+
+// redisACLRevision names the bundled Redis user's rules, never its
+// password: the redis service carries it, so a Core that needs other rules
+// restarts Redis on upgrade.
+func redisACLRevision() string {
+	digest := sha256.Sum256([]byte(redisUserRules))
+	return hex.EncodeToString(digest[:8])
+}
 
 // redisACL is the bundled Redis's user file: the default user off, Core's
 // user with its password's SHA-256 (Redis never stores the password).
@@ -99,7 +111,7 @@ func redisACL(dir string) ([]byte, error) {
 	digest := sha256.Sum256(password)
 	clear(password)
 	return []byte("user default off\nuser meshtransit on #" + hex.EncodeToString(digest[:]) +
-		" resetkeys resetchannels ~meshtransit:v1:* &meshtransit:v1:* -@all " + redisCommands + "\n"), nil
+		" " + redisUserRules + "\n"), nil
 }
 
 func readPassword(dir, name string) ([]byte, error) {

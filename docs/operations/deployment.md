@@ -176,30 +176,39 @@ smaller limits without them (for example sharing; see the
 ## Redis
 
 Redis with TLS (`--tls-port`; client certificates are not needed) and ACLs
-with channel rules (6.2 or later; the integration tests use Redis 8), and an
-ACL user for Core with exactly these rights:
+with key selectors and channel rules (7.0 or later; the integration tests use
+Redis 8).
+
+Each serving role has its own Redis user with only what its code sends
+(role isolation, TD-SEC-90 S6): `mesh_api`, `mesh_control`, `mesh_worker`, and
+`mesh_all` for a process that runs every role. The rules are generated from the
+code; print them with:
 
 ```
-user meshcore on >PASSWORD resetkeys resetchannels
-  +ping +publish +subscribe +eval +evalsha
-  +get +set +del +exists +pexpire +time
-  +hget +hset +hmget +hgetall +hdel
-  +hscan +zadd +zrem +zcount +zremrangebyscore
-  ~meshtransit:v1:presence:node:*
-  ~meshtransit:v1:endpoints:node:*
-  ~meshtransit:v1:delivery:node:*
-  ~meshtransit:v1:site-selection:*
-  ~meshtransit:v1:dns-index:*
-  ~meshtransit:v1:ratelimit:management:*
-  ~meshtransit:v1:control:replicas
-  ~meshtransit:v1:kubeca:*
-  &meshtransit:v1:wakeup:network_revision_advanced
-  &meshtransit:v1:wakeup:connectivity_changed
-  &meshtransit:v1:wakeup:site_health_failed
-  &meshtransit:v1:wakeup:kube_cert_queued
-  &meshtransit:v1:wakeup:kube_cert_settled
-  &meshtransit:v1:wakeup:device_alias_claimed
+meshcore redis acl rules api|control|worker|all
 ```
+
+Keep the users with `meshcore redis acl apply`, run as a Redis administrator
+(a user that may run `ACL`), which no serving role ever gets:
+
+- `MESHTRANSIT_REDIS_ADDRESS`, `MESHTRANSIT_REDIS_CA_FILE`;
+- `MESHTRANSIT_REDIS_ADMIN_USERNAME`, `MESHTRANSIT_REDIS_ADMIN_PASSWORD_FILE`;
+- `MESHTRANSIT_REDIS_ACL_PASSWORD_FILES`, for example
+  `api=/run/secrets/redis-api,control=/run/secrets/redis-control,worker=/run/secrets/redis-worker`
+  (each password 32–256 printable characters, no spaces);
+- `MESHTRANSIT_REDIS_ACL_ROTATE=true` only to replace a password on purpose:
+  without it a user whose stored password differs is refused, since running
+  pods still use the stored one.
+
+The command stores each password only as its SHA-256 (the password never
+reaches Redis), resets each user to exactly its rules, then runs `ACL SAVE` and
+checks each user with `ACL DRYRUN`. Redis must run with an `aclfile` it can
+write (not a read-only mount): otherwise the command fails, since a restart
+would lose the users. Each role then sets `MESHTRANSIT_REDIS_USERNAME` to its
+user and `MESHTRANSIT_REDIS_PASSWORD_FILE` to its password.
+
+Read-only paths run their scripts with `EVALSHA_RO`, so a user written by hand
+for an older Core also needs `+evalsha_ro +eval_ro` before this Core starts.
 
 Turn the `default` user off. Core uses a single Redis node (no Cluster or
 Sentinel). Redis holds only short-lived state and needs no persistence for

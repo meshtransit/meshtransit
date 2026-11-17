@@ -193,6 +193,10 @@ type gatewayScriptFunc func(ctx context.Context, script *redisclient.Script, key
 
 func runGatewayScript(client redisclient.Scripter) gatewayScriptFunc {
 	return func(ctx context.Context, script *redisclient.Script, keys []string, args ...any) ([]int64, error) {
+		if script == checkGatewayRotationScript {
+			// Read-only: a role's read-only key rules allow EVALSHA_RO only.
+			return script.RunRO(ctx, client, keys, args...).Int64Slice()
+		}
 		return script.Run(ctx, client, keys, args...).Int64Slice()
 	}
 }

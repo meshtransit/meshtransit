@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | bootstrap check | bootstrap apply | setup init|secrets|approve-identity|render|check|apply|migrate|renew-tls [--config F] [--state-dir D] | account revoke-sessions|quarantine|release <principal-id> | workspace feature grant <workspace-id> connection_logs <note> | workspace feature revoke <workspace-id> connection_logs | workspace feature list <workspace-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored --actor A --change-ref R | kubernetes-ca reconcile-after-restore --actor A --change-ref R --roots-checked-since T]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | migrate verify | migrate operator status | migrate operator apply [--dry-run] [--after-rollout] [--through N] | redis acl apply | redis acl rules api|control|worker|all | bootstrap check | bootstrap apply | setup init|secrets|approve-identity|render|check|apply|migrate|renew-tls [--config F] [--state-dir D] | account revoke-sessions|quarantine|release <principal-id> | workspace feature grant <workspace-id> connection_logs <note> | workspace feature revoke <workspace-id> connection_logs | workspace feature list <workspace-id> | kubernetes-ca status|rewrap|rotate-data-key|retire-ca --workspace W --network N [--ca C --reason R] [--actor A --change-ref R] | kubernetes-ca guard | kubernetes-ca mark-restored --actor A --change-ref R | kubernetes-ca reconcile-after-restore --actor A --change-ref R --roots-checked-since T]\n"
 
 func execute(
 	ctx context.Context,
@@ -32,6 +33,8 @@ func execute(
 		return runMigrate(ctx, args[1], lookup, output, errorOutput, openMigrationService)
 	case len(args) >= 2 && args[0] == "migrate" && args[1] == "operator":
 		return runMigrateOperator(ctx, args[2:], lookup, output, errorOutput, openOperatorService)
+	case len(args) >= 2 && args[0] == "redis" && args[1] == "acl":
+		return runRedisACL(ctx, args[2:], lookup, output, errorOutput, redisadapter.ApplyACL)
 	case len(args) == 2 && args[0] == "bootstrap" && (args[1] == "check" || args[1] == "apply"):
 		return runBootstrap(ctx, args[1], lookup, output, errorOutput)
 	case len(args) >= 2 && args[0] == "setup":

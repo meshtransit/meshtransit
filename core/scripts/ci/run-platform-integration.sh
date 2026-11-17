@@ -159,6 +159,9 @@ run_go() {
 		--env MESHTRANSIT_REDIS_PASSWORD_FILE \
 		--env MESHTRANSIT_REDIS_CA_FILE \
 		--env MESHTRANSIT_REDIS_POOL_SIZE \
+		--env MESHTRANSIT_REDIS_ADMIN_USERNAME \
+		--env MESHTRANSIT_REDIS_ADMIN_PASSWORD_FILE \
+		--env MESHTRANSIT_REDIS_DISPOSABLE \
 		--env MESHTRANSIT_RELAY_DIRECTORY_FILE \
 		--env MESHTRANSIT_RELAY_DIRECTORY_SHA256 \
 		--env MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID \
@@ -250,6 +253,7 @@ printf '%s\n' "${runtime_password}" >"${fixture_dir}/runtime-password"
 printf '%s\n' "${worker_password}" >"${fixture_dir}/worker-password"
 printf '%s\n' "${postgres_password}" >"${fixture_dir}/postgres-admin-password"
 printf 'redis-%s\n' "${redis_password}" >"${fixture_dir}/redis-password"
+printf 'redisadmin-%s\n' "${redis_password}" >"${fixture_dir}/redis-admin-password"
 printf '%s\n' "${enrollment_digest_key}" >"${fixture_dir}/enrollment-digest-key"
 printf '%s\n' "${account_session_digest_key}" >"${fixture_dir}/account-session-digest-key"
 printf '%s\n' "${idempotency_digest_key}" >"${fixture_dir}/idempotency-digest-key"
@@ -264,6 +268,7 @@ chmod 0600 "${fixture_dir}/runtime-password"
 chmod 0600 "${fixture_dir}/worker-password"
 chmod 0600 "${fixture_dir}/postgres-admin-password"
 chmod 0600 "${fixture_dir}/redis-password"
+chmod 0600 "${fixture_dir}/redis-admin-password"
 chmod 0600 "${fixture_dir}/enrollment-digest-key"
 chmod 0600 "${fixture_dir}/account-session-digest-key"
 chmod 0600 "${fixture_dir}/idempotency-digest-key"
@@ -368,6 +373,29 @@ docker cp "${fixture_dir}/server.key" "${redis_container}:/tmp/server.key"
 docker exec --user root "${redis_container}" chown redis:redis \
 	/tmp/ca.crt /tmp/server.crt /tmp/server.key
 docker exec --user root "${redis_container}" chmod 0600 /tmp/server.key
+# Redis keeps its users in an aclfile it writes (ACL SAVE, role isolation
+# S6): default off, an administrator for TestRedisACLRoleUsers, and
+# mesh_it_runtime for the other tests (not mesh_worker, a role user).
+redis_sha() { printf '%s' "$1" | openssl dgst -sha256 -r | awk '{print $1}'; }
+{
+	echo 'user default off'
+	echo "user mesh_it_admin on #$(redis_sha "redisadmin-${redis_password}") ~* &* +@all"
+	echo "user mesh_it_runtime on #$(redis_sha "redis-${redis_password}") resetkeys resetchannels -@all" \
+		'+ping +publish +subscribe +unsubscribe +eval +evalsha +eval_ro +evalsha_ro' \
+		'+hget +hset +hmget +exists +pexpire +del +get +set +time +hgetall +hdel' \
+		'+hscan +zadd +zrem +zcount +zremrangebyscore' \
+		'~meshtransit:v1:presence:node:* ~meshtransit:v1:control:replicas' \
+		'~meshtransit:v1:kubeca:* ~meshtransit:v1:ratelimit:kubeops:*' \
+		'~meshtransit:v1:endpoints:node:* ~meshtransit:v1:delivery:node:*' \
+		'~meshtransit:v1:site-selection:* ~meshtransit:v1:dns-index:*' \
+		'~meshtransit:v1:ratelimit:management:*' \
+		'&meshtransit:v1:wakeup:network_revision_advanced &meshtransit:v1:wakeup:connectivity_changed' \
+		'&meshtransit:v1:wakeup:site_health_failed &meshtransit:v1:wakeup:kube_cert_queued' \
+		'&meshtransit:v1:wakeup:kube_cert_settled &meshtransit:v1:wakeup:device_alias_claimed'
+} >"${fixture_dir}/redis-users.acl"
+docker cp "${fixture_dir}/redis-users.acl" "${redis_container}:/tmp/users.acl"
+docker exec --user root "${redis_container}" chown redis:redis /tmp/users.acl
+docker exec --user root "${redis_container}" chmod 0600 /tmp/users.acl
 docker exec --detach --user redis "${redis_container}" redis-server \
 	--bind 0.0.0.0 \
 	--port 0 \
@@ -376,33 +404,13 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	--tls-key-file /tmp/server.key \
 	--tls-ca-cert-file /tmp/ca.crt \
 	--tls-auth-clients no \
-	--user default off \
-	--user mesh_worker on ">redis-${redis_password}" resetkeys resetchannels \
-	"+ping" "+publish" "+subscribe" "+eval" "+evalsha" \
-	"+hget" "+hset" "+hmget" "+exists" "+pexpire" "+del" \
-	"+get" "+set" "+time" "+hgetall" "+hdel" \
-	"+hscan" "+zadd" "+zrem" "+zcount" "+zremrangebyscore" \
-	"~meshtransit:v1:presence:node:*" \
-	"~meshtransit:v1:control:replicas" \
-	"~meshtransit:v1:kubeca:*" \
-	"~meshtransit:v1:ratelimit:kubeops:*" \
-	"~meshtransit:v1:endpoints:node:*" \
-	"~meshtransit:v1:delivery:node:*" \
-	"~meshtransit:v1:site-selection:*" \
-	"~meshtransit:v1:dns-index:*" \
-	"~meshtransit:v1:ratelimit:management:*" \
-	"&meshtransit:v1:wakeup:network_revision_advanced" \
-	"&meshtransit:v1:wakeup:connectivity_changed" \
-	"&meshtransit:v1:wakeup:site_health_failed" \
-	"&meshtransit:v1:wakeup:kube_cert_queued" \
-	"&meshtransit:v1:wakeup:kube_cert_settled" \
-	"&meshtransit:v1:wakeup:device_alias_claimed"
+	--aclfile /tmp/users.acl
 
 for _ in $(seq 1 60); do
 	if docker exec "${redis_container}" redis-cli \
 		--tls \
 		--cacert /tmp/ca.crt \
-		--user mesh_worker \
+		--user mesh_it_runtime \
 		--pass "redis-${redis_password}" \
 		--no-auth-warning \
 		ping \
@@ -414,7 +422,7 @@ done
 docker exec "${redis_container}" redis-cli \
 	--tls \
 	--cacert /tmp/ca.crt \
-	--user mesh_worker \
+	--user mesh_it_runtime \
 	--pass "redis-${redis_password}" \
 	--no-auth-warning \
 	ping \
@@ -446,7 +454,10 @@ export MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE="${fixture_dir}/runtime-passwo
 export MESHTRANSIT_POSTGRES_CA_FILE="${fixture_dir}/ca.crt"
 export MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS=2
 export MESHTRANSIT_REDIS_ADDRESS="${redis_address}"
-export MESHTRANSIT_REDIS_USERNAME=mesh_worker
+export MESHTRANSIT_REDIS_USERNAME=mesh_it_runtime
+export MESHTRANSIT_REDIS_ADMIN_USERNAME=mesh_it_admin
+export MESHTRANSIT_REDIS_ADMIN_PASSWORD_FILE="${fixture_dir}/redis-admin-password"
+export MESHTRANSIT_REDIS_DISPOSABLE=1
 export MESHTRANSIT_REDIS_PASSWORD_FILE="${fixture_dir}/redis-password"
 export MESHTRANSIT_REDIS_CA_FILE="${fixture_dir}/ca.crt"
 export MESHTRANSIT_REDIS_POOL_SIZE=1
@@ -554,7 +565,7 @@ run_go test \
 	-tags=integration \
 	-count=1 \
 	-race \
-	-run '^(TestTLSAuthenticatedDependencies|TestRoleControlProcessRegistrationConvergesAcrossRestart|TestRoleControlProcessRestartsAfterGracefulShutdown|TestRoleControlProcessRejectsInvalidConfigurationBeforeListening|TestRoleWorkerProcessExpiryConvergesAcrossRestart)$' \
+	-run '^(TestTLSAuthenticatedDependencies|TestRedisACLRoleUsers|TestRoleControlProcessRegistrationConvergesAcrossRestart|TestRoleControlProcessRestartsAfterGracefulShutdown|TestRoleControlProcessRejectsInvalidConfigurationBeforeListening|TestRoleWorkerProcessExpiryConvergesAcrossRestart)$' \
 	-timeout=5m \
 	./core/test/integration
 # Retroactive guardrails end to end: a share built through the production

@@ -150,6 +150,9 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 				"--aclfile", secret("redis-users.acl"), "--dir", "/data", "--appendonly", "yes"},
 			"volumes": append([]string{filepath.Join(stateDir, "redis") + ":/data"},
 				readOnly(secret("redis.crt"), secret("redis.key"), secret("ca.crt"), secret("redis-users.acl"))...),
+			// Redis reads its users only at start: a new command list
+			// changes this label, so compose recreates Redis with it.
+			"labels":   map[string]string{"net.meshtransit.redis-acl": redisACLRevision()},
 			"networks": network(redisIP, "redis."+internalDomain),
 		},
 		"migrate": map[string]any{

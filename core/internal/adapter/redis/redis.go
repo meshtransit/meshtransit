@@ -210,7 +210,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			endpointKey string,
 			generation int64,
 		) ([]byte, error) {
-			payload, err := loadEndpointsScript.Run(
+			payload, err := loadEndpointsScript.RunRO(
 				loadCtx,
 				client,
 				[]string{endpointKey},
@@ -230,7 +230,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			for index, generation := range generations {
 				arguments[index] = generation
 			}
-			return loadConnectivityScript.Run(loadCtx, client, keys, arguments...).Slice()
+			return loadConnectivityScript.RunRO(loadCtx, client, keys, arguments...).Slice()
 		},
 		applyRateLimit: func(
 			rateLimitCtx context.Context,
@@ -360,7 +360,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				ttl.Milliseconds(), nodeID, dnsIndexPrefix, dnsIndexTTL.Milliseconds()).Int64()
 		},
 		loadDeliveries: func(loadCtx context.Context, keys []string) ([]any, error) {
-			return loadDeliveriesScript.Run(loadCtx, client, keys).Slice()
+			return loadDeliveriesScript.RunRO(loadCtx, client, keys).Slice()
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,
