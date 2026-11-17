@@ -45,6 +45,7 @@ type operatorCommandOutput struct {
 	Pending              []string                              `json:"pending"`
 	RoleMemberships      []string                              `json:"role_memberships,omitempty"`
 	Logins               []postgresadapter.OperatorLoginResult `json:"logins,omitempty"`
+	Groups               []postgresadapter.OperatorGroupResult `json:"groups,omitempty"`
 	Steps                []operatorStepOutput                  `json:"steps,omitempty"`
 }
 
@@ -130,6 +131,7 @@ func runMigrateOperator(
 		}
 		result.Pending = operatorPendingOutput(applied.Report)
 		result.Logins = applied.Logins
+		result.Groups = applied.Groups
 	}
 	if err := json.NewEncoder(output).Encode(result); err != nil {
 		logger.ErrorContext(ctx, "operator migration failed", "error_code", "operator_output_failure")

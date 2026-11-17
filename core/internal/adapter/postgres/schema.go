@@ -62,6 +62,14 @@ const runtimeSchemaCompatibilitySQL = `SELECT
               AND NOT (runtime_role.rolname || ' is a member of ' || granted_role.rolname = ANY($2::TEXT[])
                   AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)
         )
+        -- A group role ($3, TD-SEC-90 S2) is a member of nothing: a login
+        -- that may be in one would inherit whatever the group were given.
+        AND NOT EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_auth_members AS membership
+            JOIN pg_catalog.pg_roles AS group_role ON group_role.oid = membership.member
+            WHERE group_role.rolname = ANY($3::TEXT[])
+        )
         AND NOT EXISTS (
             SELECT 1
             FROM pg_catalog.pg_database AS database
@@ -137,7 +145,7 @@ func checkRuntimeSchemaCompatibility(
 
 	var compatibility runtimeSchemaCompatibility
 	if err := querier.QueryRow(ctx, runtimeSchemaCompatibilitySQL, checksums,
-		migrations.OperatorAllowedMemberships()).Scan(
+		migrations.OperatorAllowedMemberships(), migrations.OperatorGroupRoles()).Scan(
 		&compatibility.currentVersion,
 		&compatibility.minimumReaderGeneration,
 		&compatibility.maximumReaderGeneration,

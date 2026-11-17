@@ -179,6 +179,12 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 		if err != nil {
 			return err
 		}
+		// Group roles first: a step may grant to one, a login join one.
+		groups, err := ensureOperatorGroups(ctx, transaction)
+		if err != nil {
+			return err
+		}
+		result.Groups = groups
 		for _, name := range plan.Run {
 			if err := transaction.Exec(ctx, byName[name].Body()); err != nil {
 				failed := &OperatorStepFailedError{Step: name, Err: err}

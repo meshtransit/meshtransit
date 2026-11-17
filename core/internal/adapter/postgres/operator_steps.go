@@ -147,6 +147,8 @@ type OperatorApplyResult struct {
 	Report OperatorReport
 	// Logins is what the apply did to each login it was given a password for.
 	Logins []OperatorLoginResult
+	// Groups is what the apply did to each group role (S2, release N0).
+	Groups []OperatorGroupResult
 }
 
 type operatorPlan struct {

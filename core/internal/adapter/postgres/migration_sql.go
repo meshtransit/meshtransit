@@ -66,6 +66,13 @@ const (
               AND member_role.rolname <> CURRENT_USER AND granted_role.rolname <> CURRENT_USER
               AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)
     )
+    -- A group role ($4, TD-SEC-90 S2) is a member of nothing.
+    AND NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS group_role ON group_role.oid = membership.member
+        WHERE group_role.rolname = ANY($4::text[])
+    )
 FROM pg_catalog.pg_roles AS role
 WHERE role.rolname = CURRENT_USER`
 	migrationObjectsSQL = `SELECT

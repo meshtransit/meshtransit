@@ -76,7 +76,8 @@ func operatorFunctionOwner(signature string) string {
 }
 
 // OperatorManagedRoles returns every MeshTransit role: the application
-// roles and the owner roles the role steps create. It
+// roles, the group roles (operator_logins.go) and the owner roles the role
+// steps create. It
 // fails when the catalog does not parse, so a caller never works from a
 // partial list.
 func OperatorManagedRoles() ([]string, error) {
@@ -84,7 +85,8 @@ func OperatorManagedRoles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(slices.Clone(operatorApplicationRoles), operatorStepRoles(steps)...), nil
+	roles := append(slices.Clone(operatorApplicationRoles), operatorGroupRoles...)
+	return append(roles, operatorStepRoles(steps)...), nil
 }
 
 // OperatorApplicationRoles returns the roles that log in: the migrator and
@@ -110,14 +112,17 @@ func operatorStepRoles(steps []OperatorStep) []string {
 // superuser or any role outside MeshTransit.
 func validateOperatorRoles(steps []OperatorStep) error {
 	owners := operatorStepRoles(steps)
-	grantees := append(slices.Clone(operatorApplicationRoles), owners...)
+	// A step may grant to a group role (S2.2), never create or own with one:
+	// the operator command keeps the groups itself.
+	grantees := append(append(slices.Clone(operatorApplicationRoles), operatorGroupRoles...), owners...)
 	for _, step := range steps {
 		for _, effect := range step.Effects {
 			allowed := false
 			switch effect.Kind {
 			case OperatorEffectRole:
 				allowed = step.Kind == OperatorStepRole && operatorRoleName.MatchString(effect.Role) &&
-					!slices.Contains(operatorApplicationRoles, effect.Role)
+					!slices.Contains(operatorApplicationRoles, effect.Role) &&
+					!slices.Contains(operatorGroupRoles, effect.Role)
 			case OperatorEffectOwner:
 				allowed = slices.Contains(owners, effect.Role) && operatorFunctionOwner(effect.Function) == effect.Role
 			case OperatorEffectExecute:

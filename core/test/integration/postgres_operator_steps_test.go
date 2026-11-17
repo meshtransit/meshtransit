@@ -170,6 +170,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 	}
 
 	assertOperatorLogins(ctx, t, admin, operator, freshAdmin, freshMigration)
+	assertOperatorGroups(ctx, t, admin, operator, freshMigration)
 	assertCreateRoleOperator(ctx, t, admin, freshAdmin, freshMigration)
 
 	// The runtime role is never an operator.
@@ -570,4 +571,133 @@ WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &me
 		postgresadapter.ErrInvalidOperatorOptions) {
 		t.Fatalf("Apply(password for a non-login role) = %v, want ErrInvalidOperatorOptions", err)
 	}
+}
+
+// Release N0 of S2 (role isolation design §3.5): apply keeps the two group
+// roles NOLOGIN with no special right, no member and no grant; the
+// memberships S2.2 adds pass the migrator's checks already (inherit only),
+// while a crossed pair, SET or ADMIN, or a group that is itself a member of
+// something is refused.
+func assertOperatorGroups(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	operator *postgresadapter.OperatorRunner, migrationConfig config.MigrationConfig) {
+	t.Helper()
+	apply := func(dryRun bool) []postgresadapter.OperatorGroupResult {
+		t.Helper()
+		result, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true, DryRun: dryRun})
+		if err != nil {
+			t.Fatalf("Apply(groups, dry run %v) = %v", dryRun, err)
+		}
+		return result.Groups
+	}
+	exec := func(statement string) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	count := func(query string) int {
+		t.Helper()
+		var value int
+		if err := admin.QueryRow(ctx, query).Scan(&value); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		return value
+	}
+	const groupNames = `('mesh_api_rights', 'mesh_control_rights')`
+	// A dry run leaves no group behind.
+	exec("DROP ROLE IF EXISTS mesh_api_rights")
+	exec("DROP ROLE IF EXISTS mesh_control_rights")
+	if groups := apply(true); len(groups) != 2 || !groups[0].Created || !groups[1].Created {
+		t.Fatalf("dry-run groups = %+v", groups)
+	}
+	if n := count(`SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_roles WHERE rolname IN ` + groupNames); n != 0 {
+		t.Fatalf("a dry run left %d group roles", n)
+	}
+	if groups := apply(false); len(groups) != 2 || groups[0].Name != "mesh_api_rights" ||
+		groups[1].Name != "mesh_control_rights" || !groups[0].Created {
+		t.Fatalf("groups = %+v", groups)
+	}
+	if groups := apply(false); groups[0].Created || groups[1].Created {
+		t.Fatalf("repeat groups apply = %+v, want no creation", groups)
+	}
+	plain := func() bool {
+		t.Helper()
+		return count(`SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_roles AS role
+WHERE role.rolname IN `+groupNames+` AND NOT role.rolcanlogin AND NOT role.rolsuper AND NOT role.rolcreatedb
+  AND NOT role.rolcreaterole AND NOT role.rolreplication AND NOT role.rolbypassrls AND role.rolconnlimit = -1
+  AND role.rolconfig IS NULL
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_db_role_setting AS setting WHERE setting.setrole = role.oid)`) == 2
+	}
+	if !plain() {
+		t.Fatal("group roles are not plain NOLOGIN roles")
+	}
+	// N0 grants nothing to a group and adds no member.
+	if n := count(`SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_auth_members AS membership
+JOIN pg_catalog.pg_roles AS role ON role.oid IN (membership.roleid, membership.member)
+WHERE role.rolname IN ` + groupNames); n != 0 {
+		t.Fatalf("group roles take part in %d memberships", n)
+	}
+	if n := count(`SELECT (SELECT pg_catalog.count(*) FROM information_schema.role_table_grants
+    WHERE grantee IN ` + groupNames + `) + (SELECT pg_catalog.count(*) FROM information_schema.role_routine_grants
+    WHERE grantee IN ` + groupNames + `)`); n != 0 {
+		t.Fatalf("group roles hold %d grants", n)
+	}
+	// Drift is reset: attributes and settings.
+	exec("ALTER ROLE mesh_api_rights LOGIN CREATEDB CONNECTION LIMIT 3")
+	exec("ALTER ROLE mesh_control_rights SET work_mem = '8MB'")
+	var database string
+	if err := admin.QueryRow(ctx, "SELECT pg_catalog.current_database()").Scan(&database); err != nil {
+		t.Fatal(err)
+	}
+	exec("ALTER ROLE mesh_api_rights IN DATABASE " + pgx.Identifier{database}.Sanitize() + " SET work_mem = '8MB'")
+	apply(false)
+	if !plain() {
+		t.Fatal("apply did not reset a changed group role")
+	}
+	verify := func() error {
+		t.Helper()
+		_, err := openIntegrationMigrationRunner(ctx, t, migrationConfig).Verify(ctx)
+		return err
+	}
+	t.Cleanup(func() {
+		for _, statement := range []string{"REVOKE mesh_api_rights FROM mesh_runtime",
+			"REVOKE mesh_control_rights FROM mesh_runtime", "REVOKE pg_read_all_data FROM mesh_api_rights"} {
+			_, _ = admin.Exec(context.WithoutCancel(ctx), statement)
+		}
+	})
+	// The membership S2.2 adds is accepted before it exists in production…
+	exec("GRANT mesh_api_rights TO mesh_runtime WITH INHERIT TRUE, SET FALSE")
+	if err := verify(); err != nil {
+		t.Fatalf("Verify() with mesh_runtime in mesh_api_rights = %v", err)
+	}
+	if report, err := operator.Status(ctx); err != nil || len(report.Memberships) != 0 {
+		t.Fatalf("operator status with mesh_runtime in mesh_api_rights = %v, %v", report.Memberships, err)
+	}
+	// …but not with SET or ADMIN,…
+	for _, statement := range []string{"GRANT mesh_api_rights TO mesh_runtime WITH SET TRUE",
+		"GRANT mesh_api_rights TO mesh_runtime WITH ADMIN OPTION"} {
+		exec(statement)
+		if err := verify(); !errors.Is(err, postgresadapter.ErrMigrationPreflight) {
+			t.Fatalf("Verify() after %q = %v, want preflight refusal", statement, err)
+		}
+		exec("REVOKE mesh_api_rights FROM mesh_runtime")
+		exec("GRANT mesh_api_rights TO mesh_runtime WITH INHERIT TRUE, SET FALSE")
+	}
+	// …nor with the group itself a member of something,…
+	exec("GRANT pg_read_all_data TO mesh_api_rights")
+	if err := verify(); !errors.Is(err, postgresadapter.ErrMigrationPreflight) {
+		t.Fatalf("Verify() with mesh_api_rights in pg_read_all_data = %v, want preflight refusal", err)
+	}
+	exec("REVOKE pg_read_all_data FROM mesh_api_rights")
+	// …and the crossed pair is refused and reported.
+	exec("GRANT mesh_control_rights TO mesh_runtime WITH INHERIT TRUE, SET FALSE")
+	if err := verify(); !errors.Is(err, postgresadapter.ErrMigrationPreflight) {
+		t.Fatalf("Verify() with mesh_runtime in mesh_control_rights = %v, want preflight refusal", err)
+	}
+	if report, err := operator.Status(ctx); err != nil ||
+		!slices.Contains(report.Memberships, "mesh_runtime is a member of mesh_control_rights") {
+		t.Fatalf("operator status with the crossed pair = %v, %v", report.Memberships, err)
+	}
+	exec("REVOKE mesh_control_rights FROM mesh_runtime")
+	exec("REVOKE mesh_api_rights FROM mesh_runtime")
 }
