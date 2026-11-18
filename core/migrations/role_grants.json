@@ -194,6 +194,7 @@
       "mesh_ops.lock_browser_registration_approval_authority_v1",
       "mesh_ops.lock_browser_registration_approval_authority_v2",
       "mesh_ops.lock_device_resource_rebind_v1",
+      "mesh_ops.lock_device_revocation_target_v1",
       "mesh_ops.lock_kubernetes_join_key_v1",
       "mesh_ops.lock_kubernetes_replica_request_v2",
       "mesh_ops.lock_network_revision",
@@ -353,9 +354,6 @@
     ],
     "deletes": [],
     "locks": [
-      "mesh.device",
-      "mesh.device_machine_key_epoch",
-      "mesh.device_node_key_epoch",
       "mesh.enrollment_profile",
       "mesh.pending_registration"
     ],

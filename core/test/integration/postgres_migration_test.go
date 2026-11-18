@@ -124,10 +124,6 @@ func TestPostgreSQLMigrations(t *testing.T) {
 			t.Errorf("runtime compatibility pool Close() error = %v", err)
 		}
 	})
-	if err := runtimePool.Check(ctx); err != nil {
-		t.Fatalf("runtime compatibility pool Check() error = %v", err)
-	}
-
 	adminConfig := loadIntegrationAdminConfig(t)
 	adminConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -139,6 +135,12 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConfig.PostgreSQL.CAFile,
 		adminConfig.ConnectTimeout,
 	)
+	// What the operator command keeps (role isolation S2.2): the api's login
+	// in its group. A serving login outside its groups stays closed.
+	grantIntegrationRuntimeGroups(ctx, t, adminConnection, runtimePostgreSQL.User)
+	if err := runtimePool.Check(ctx); err != nil {
+		t.Fatalf("runtime compatibility pool Check() error = %v", err)
+	}
 	for range 2 {
 		if _, err := adminConnection.Exec(ctx, migrations.ImportedPolicySimulationReaderOwnershipSQL()); err != nil {
 			t.Fatalf("apply idempotent Imported policy baseline reader ownership: %v", err)
@@ -258,6 +260,10 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasPendingWorkOwnershipSQL()); err != nil {
 		t.Fatalf("harden pending-only alias worker loader: %v", err)
 	}
+	// Role isolation S2.2: the group roles' owner-held functions, as far as
+	// the steps applied so far gave them to mesh_runtime (an operator apply
+	// runs step 298 after every earlier step).
+	applyGroupFunctionGrantsSoFar(ctx, t, adminConnection)
 	if _, err := adminConnection.Exec(ctx, migrations.TrustContractDeviceRemovalOwnershipSQL()); err != nil {
 		t.Fatalf("harden Trust Contract device removal entry points: %v", err)
 	}
@@ -285,12 +291,17 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLRegistrationReplay(ctx, t, registrationReplayStore, registrationReplayCommand)
 	assertPostgreSQLMapSessionSnapshot(ctx, t, runtimePool, registrationReplayCommand)
 
+	// The schema assertions' raw SQL runs as mesh_runtime, which holds every
+	// object the schema grants; the stores (runtimePool) run as the
+	// configured login, mesh_all with RUNTIME_LOGIN=mesh_all, so the code's
+	// own SQL proves the group roles suffice (role isolation S2.2).
+	schemaUser := integrationSchemaRuntimeUser(runtimePostgreSQL.User)
 	runtimeConnection := openIntegrationPostgreSQLConnection(
 		ctx,
 		t,
 		postgresConfig.Address,
 		postgresConfig.Database,
-		runtimePostgreSQL.User,
+		schemaUser,
 		runtimePostgreSQL.PasswordFile,
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
@@ -300,7 +311,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t,
 		postgresConfig.Address,
 		postgresConfig.Database,
-		runtimePostgreSQL.User,
+		schemaUser,
 		runtimePostgreSQL.PasswordFile,
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
@@ -525,6 +536,12 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLDeviceDNSLabels(ctx, t, adminConnection)
 	assertDeletedNetworkMapSessionRevoked(ctx, t, adminConnection)
 	assertNetworkDeletionWorkerRevokesDevices(ctx, t, adminConnection, workerPool)
+	// After every hand-applied operator step, step 298 as the operator runs
+	// it: the groups are a projection of mesh_runtime (role isolation S2.2).
+	if _, err := adminConnection.Exec(ctx, migrations.GroupFunctionGrantsSQL()); err != nil {
+		t.Fatalf("grant the group roles the owner-held functions: %v", err)
+	}
+	assertGroupRolesWithinRuntime(ctx, t, adminConnection)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)

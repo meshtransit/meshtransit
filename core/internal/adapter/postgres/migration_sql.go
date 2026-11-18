@@ -60,6 +60,16 @@ const (
            -- inherit what mesh_runtime holds
            OR member_role.rolname = ANY($3::text[])
            OR granted_role.rolname = ANY($3::text[]))
+          -- Only the ADMIN-only grant PostgreSQL 16 records for a CREATEROLE
+          -- role on each role it creates (grantor the bootstrap superuser,
+          -- OID 10), such as the group roles an operator created, is left
+          -- out: it lets that operator act as no one. Any other grant, and
+          -- any grant to the migrator or a MeshTransit role, counts.
+          AND NOT (NOT membership.inherit_option AND NOT membership.set_option
+              AND member_role.rolcreaterole AND membership.grantor = 10::OID
+              AND member_role.rolname <> CURRENT_USER
+              AND member_role.rolname <> ALL($1::text[])
+              AND member_role.rolname <> ALL($3::text[]))
           -- The operator logins' own memberships ($2, TD-SEC-90 S1) are
           -- meant: inherit only, never SET or ADMIN, never the migrator.
           AND NOT (member_role.rolname || ' is a member of ' || granted_role.rolname = ANY($2::text[])

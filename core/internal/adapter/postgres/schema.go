@@ -97,7 +97,17 @@ const runtimeSchemaCompatibilitySQL = `SELECT
             WHERE routine.proowner = runtime_role.oid
               AND namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
         )
-    ) AS runtime_role_safe
+    ) AS runtime_role_safe,
+    -- Role isolation S2.2 (§3.5, decision D2): the login is a member of the
+    -- group roles its role's grants go to ($4); without them the serving role
+    -- would miss what only a group holds, so it stays closed instead.
+    NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.unnest($4::TEXT[]) AS wanted(group_name)
+        LEFT JOIN pg_catalog.pg_roles AS group_role ON group_role.rolname = wanted.group_name
+        WHERE group_role.oid IS NULL
+           OR NOT pg_catalog.pg_has_role(runtime_role.oid, group_role.oid, 'USAGE')
+    ) AS runtime_groups_held
 FROM mesh_ops.schema_compatibility AS compatibility
 JOIN mesh_ops.schema_migration AS migration
     ON migration.version = compatibility.current_schema_version
@@ -127,7 +137,13 @@ type runtimeSchemaCompatibility struct {
 	knownHistoryValid       bool
 	currentUser             string
 	runtimeRoleSafe         bool
+	runtimeGroupsHeld       bool
 }
+
+// ErrRuntimeGroupsMissing reports a serving login that is not a member of
+// its role's group roles: the operator command (migrate operator apply)
+// grants them (role isolation S2.2).
+var ErrRuntimeGroupsMissing = errors.New("postgres login lacks its group roles; run migrate operator apply")
 
 func checkRuntimeSchemaCompatibility(
 	ctx context.Context,
@@ -145,7 +161,8 @@ func checkRuntimeSchemaCompatibility(
 
 	var compatibility runtimeSchemaCompatibility
 	if err := querier.QueryRow(ctx, runtimeSchemaCompatibilitySQL, checksums,
-		migrations.OperatorAllowedMemberships(), migrations.OperatorGroupRoles()).Scan(
+		migrations.OperatorAllowedMemberships(), migrations.OperatorGroupRoles(),
+		migrations.OperatorRequiredGroups(expectedUser)).Scan(
 		&compatibility.currentVersion,
 		&compatibility.minimumReaderGeneration,
 		&compatibility.maximumReaderGeneration,
@@ -157,6 +174,7 @@ func checkRuntimeSchemaCompatibility(
 		&compatibility.knownHistoryValid,
 		&compatibility.currentUser,
 		&compatibility.runtimeRoleSafe,
+		&compatibility.runtimeGroupsHeld,
 	); err != nil {
 		return errors.Join(ErrSchemaIncompatible, err)
 	}
@@ -205,6 +223,9 @@ func validateRuntimeSchemaCompatibility(
 	if compatibility.currentVersion == latestVersion &&
 		compatibility.currentChecksum != catalog[latestVersion-1].Checksum {
 		return ErrSchemaIncompatible
+	}
+	if !compatibility.runtimeGroupsHeld {
+		return errors.Join(ErrSchemaIncompatible, ErrRuntimeGroupsMissing)
 	}
 	return nil
 }

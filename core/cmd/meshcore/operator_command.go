@@ -36,17 +36,18 @@ type operatorWaitingOutput struct {
 }
 
 type operatorCommandOutput struct {
-	Operation            string                                `json:"operation"`
-	DryRun               bool                                  `json:"dry_run,omitempty"`
-	CurrentSchemaVersion int64                                 `json:"current_schema_version"`
-	Applied              []string                              `json:"applied,omitempty"`
-	Replayed             []string                              `json:"replayed,omitempty"`
-	Waiting              []operatorWaitingOutput               `json:"waiting,omitempty"`
-	Pending              []string                              `json:"pending"`
-	RoleMemberships      []string                              `json:"role_memberships,omitempty"`
-	Logins               []postgresadapter.OperatorLoginResult `json:"logins,omitempty"`
-	Groups               []postgresadapter.OperatorGroupResult `json:"groups,omitempty"`
-	Steps                []operatorStepOutput                  `json:"steps,omitempty"`
+	Operation            string                                     `json:"operation"`
+	DryRun               bool                                       `json:"dry_run,omitempty"`
+	CurrentSchemaVersion int64                                      `json:"current_schema_version"`
+	Applied              []string                                   `json:"applied,omitempty"`
+	Replayed             []string                                   `json:"replayed,omitempty"`
+	Waiting              []operatorWaitingOutput                    `json:"waiting,omitempty"`
+	Pending              []string                                   `json:"pending"`
+	RoleMemberships      []string                                   `json:"role_memberships,omitempty"`
+	Logins               []postgresadapter.OperatorLoginResult      `json:"logins,omitempty"`
+	Groups               []postgresadapter.OperatorGroupResult      `json:"groups,omitempty"`
+	Memberships          []postgresadapter.OperatorMembershipResult `json:"memberships,omitempty"`
+	Steps                []operatorStepOutput                       `json:"steps,omitempty"`
 }
 
 // runMigrateOperator runs "meshcore migrate operator status|apply" with the
@@ -132,6 +133,7 @@ func runMigrateOperator(
 		result.Pending = operatorPendingOutput(applied.Report)
 		result.Logins = applied.Logins
 		result.Groups = applied.Groups
+		result.Memberships = applied.Memberships
 	}
 	if err := json.NewEncoder(output).Encode(result); err != nil {
 		logger.ErrorContext(ctx, "operator migration failed", "error_code", "operator_output_failure")

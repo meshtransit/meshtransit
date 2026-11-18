@@ -42,6 +42,9 @@ var secretCatalog = []secretSpec{
 	{name: "postgres-migrator-password", kind: secretPassword},
 	{name: "postgres-runtime-password", kind: secretPassword},
 	{name: "postgres-worker-password", kind: secretPassword},
+	// mesh_all, the login the one Core process serves with (role isolation
+	// S2.2); "migrate operator apply" creates it and keeps its memberships.
+	{name: "postgres-all-password", kind: secretPassword},
 	{name: "identity-migrator-password", kind: secretPassword},
 	{name: "identity-runtime-password", kind: secretPassword},
 	{name: "redis-password", kind: secretPassword},

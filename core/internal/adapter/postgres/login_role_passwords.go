@@ -22,7 +22,8 @@ type RoleVerifier struct {
 // SetLoginRolePasswords stores each role's SCRAM verifier, as the bundled
 // database's superuser (options), in one transaction. Only existing roles
 // with the exact names given change; the verifier text is checked before it
-// reaches SQL, and the password itself never does.
+// reaches SQL, and the password itself never does. It then reloads the
+// server configuration, so a login setup added to pg_hba.conf may connect.
 func SetLoginRolePasswords(ctx context.Context, options MigrationOptions, roles []RoleVerifier) (resultErr error) {
 	if ctx == nil || len(roles) == 0 {
 		return ErrInvalidMigrationOptions
@@ -60,6 +61,13 @@ func SetLoginRolePasswords(ctx context.Context, options MigrationOptions, roles 
 			if _, err := tx.Exec(ctx, statement); err != nil {
 				return errors.Join(ErrLoginRolePasswords, err)
 			}
+		}
+		// pg_hba.conf is a file setup renders; Postgres reads it again only
+		// on reload, and a new release may add a login to it (mesh_all, role
+		// isolation S2.2).
+		var reloaded bool
+		if err := tx.QueryRow(ctx, "SELECT pg_catalog.pg_reload_conf()").Scan(&reloaded); err != nil || !reloaded {
+			return errors.Join(ErrLoginRolePasswords, errors.New("reload PostgreSQL configuration"), err)
 		}
 		return nil
 	})

@@ -176,6 +176,11 @@ func migrationSupportRoles() []string {
 		"mesh_audit_writer",
 		"mesh_share_writer",
 		"mesh_observer",
+		// The group roles of role isolation S2 (§3.5 S2.2): every grant of a
+		// serving role goes to its group, so they exist before migrations
+		// grant to them. The operator command creates them (since N0).
+		"mesh_api_rights",
+		"mesh_control_rights",
 	}
 }
 

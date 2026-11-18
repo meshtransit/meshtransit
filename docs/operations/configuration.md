@@ -96,7 +96,7 @@ the runtime user, `worker` uses the worker user, `all` both.
 | `MESHTRANSIT_POSTGRES_ADDRESS` | required | address | TLS endpoint |
 | `MESHTRANSIT_POSTGRES_DATABASE` | required | name | Database |
 | `MESHTRANSIT_POSTGRES_CA_FILE` | required | path | CA bundle |
-| `MESHTRANSIT_POSTGRES_RUNTIME_USER` | required (`api`, `control`) | must be `mesh_runtime`: migrations grant to that name | Runtime role |
+| `MESHTRANSIT_POSTGRES_RUNTIME_USER` | required (`api`, `control`) | `mesh_runtime` (api), `mesh_control` (control) or `mesh_all` (self-host): a login of [deployment](deployment.md) that holds its role's group roles | Runtime role |
 | `MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE` | required (`api`, `control`) | path | Its password |
 | `MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS` | `10` | 1–50 | Pool size |
 | `MESHTRANSIT_POSTGRES_WORKER_USER` | required (`worker`) | must be `mesh_worker` | Worker role |

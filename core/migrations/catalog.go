@@ -702,6 +702,9 @@ func Catalog() []Migration {
 		newMigration(295, "Device actions within the owner's role ceiling; relays are network_admin's",
 			deviceOwnerCeilingSQL),
 		newMigration(296, "Device revocation through a function that checks its authority", revokeDeviceFunctionSQL),
+		newMigration(297, "Device revocation locks its rows through a function", lockDeviceRevocationTargetSQL),
+		newMigration(298, "The group roles receive what their role uses, as mesh_runtime holds it", groupRoleGrantsSQL),
+		newMigration(299, "Row-level security policies apply to the group roles", groupRolePoliciesSQL),
 	}
 }
 
@@ -1369,3 +1372,12 @@ var deviceOwnerCeilingSQL string
 
 //go:embed 000296_revoke_device_function.up.sql
 var revokeDeviceFunctionSQL string
+
+//go:embed 000297_lock_device_revocation_target.up.sql
+var lockDeviceRevocationTargetSQL string
+
+//go:embed 000298_group_role_grants.up.sql
+var groupRoleGrantsSQL string
+
+//go:embed 000299_group_role_policies.up.sql
+var groupRolePoliciesSQL string

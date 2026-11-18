@@ -56,36 +56,14 @@ FROM mesh_ops.load_network_idempotency($1::UUID, $2::TEXT, $3::TEXT, $4::BYTEA)`
 const lockDeviceRevocationRevisionSQL = `SELECT *
 FROM mesh_ops.lock_network_revision()`
 
+// lockDeviceRevocationTargetSQL (schema 297, role isolation S2.2) locks the
+// Device and its current key epochs through a definer, so the api needs no
+// UPDATE on those tables to hold the lock.
 const lockDeviceRevocationTargetSQL = `SELECT
-    device.id,
-    device.version,
-    device.session_generation,
-    device.state,
-    device.current_machine_key_epoch,
-    machine_key.id,
-    machine_key.version,
-    machine_key.state,
-    machine_key.valid_from,
-    device.current_node_key_epoch,
-    node_key.id,
-    node_key.version,
-    node_key.state,
-    node_key.valid_from
-FROM mesh.device AS device
-JOIN mesh.device_machine_key_epoch AS machine_key
-  ON machine_key.workspace_id = device.workspace_id
- AND machine_key.network_id = device.network_id
- AND machine_key.device_id = device.id
- AND machine_key.epoch = device.current_machine_key_epoch
-JOIN mesh.device_node_key_epoch AS node_key
-  ON node_key.workspace_id = device.workspace_id
- AND node_key.network_id = device.network_id
- AND node_key.device_id = device.id
- AND node_key.epoch = device.current_node_key_epoch
-WHERE device.workspace_id = $1::BIGINT
-  AND device.network_id = $2::BIGINT
-  AND device.public_id = $3::UUID
-FOR UPDATE OF device, machine_key, node_key`
+    device_id, device_version, session_generation, device_state,
+    machine_key_epoch, machine_key_id, machine_key_version, machine_key_state, machine_key_valid_from,
+    node_key_epoch, node_key_id, node_key_version, node_key_state, node_key_valid_from
+FROM mesh_ops.lock_device_revocation_target_v1($1::BIGINT, $2::BIGINT, $3::UUID)`
 
 const lockDeviceRevocationAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
 FROM mesh_audit.lock_network_stream_head()`

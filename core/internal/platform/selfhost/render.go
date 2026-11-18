@@ -219,8 +219,8 @@ func coreSettings(config Config, state State, layout Layout, relayDigest string)
 		"MESHTRANSIT_POSTGRES_ADDRESS":                           postgresAddress,
 		"MESHTRANSIT_POSTGRES_DATABASE":                          coreDatabase,
 		"MESHTRANSIT_POSTGRES_CA_FILE":                           secret("ca.crt"),
-		"MESHTRANSIT_POSTGRES_RUNTIME_USER":                      "mesh_runtime",
-		"MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE":             secret("postgres-runtime-password"),
+		"MESHTRANSIT_POSTGRES_RUNTIME_USER":                      "mesh_all",
+		"MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE":             secret("postgres-all-password"),
 		"MESHTRANSIT_POSTGRES_WORKER_USER":                       "mesh_worker",
 		"MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE":              secret("postgres-worker-password"),
 		"MESHTRANSIT_REDIS_ADDRESS":                              redisAddress,
@@ -326,6 +326,11 @@ func operatorSettings(layout Layout) map[string]string {
 		"MESHTRANSIT_OPERATOR_POSTGRES_USER":          "postgres",
 		"MESHTRANSIT_OPERATOR_POSTGRES_PASSWORD_FILE": secret("postgres-superuser-password"),
 		"MESHTRANSIT_OPERATOR_POSTGRES_CA_FILE":       secret("ca.crt"),
+		// The one Core process serves as mesh_all (role isolation S2.2): the
+		// operator command keeps it and its group memberships, and follows
+		// its password file as setup migrate does for the other logins.
+		"MESHTRANSIT_OPERATOR_LOGIN_PASSWORD_FILES": "mesh_all=" + secret("postgres-all-password"),
+		"MESHTRANSIT_OPERATOR_LOGIN_ROTATE":         "true",
 	}
 }
 

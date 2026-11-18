@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,8 +133,21 @@ func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 			t.Errorf("bootstrap.env holds %s", name)
 		}
 	}
-	if parseEnv(t, rendered.Files["migrate.env"])["MESHTRANSIT_OPERATOR_POSTGRES_USER"] != "postgres" {
+	migrate := parseEnv(t, rendered.Files["migrate.env"])
+	if migrate["MESHTRANSIT_OPERATOR_POSTGRES_USER"] != "postgres" {
 		t.Error("migrate.env lacks the operator")
+	}
+	// Role isolation S2.2: Core serves as mesh_all, which the operator
+	// command keeps from its own password file.
+	allPassword := filepath.Join(testLayout.SecretsDir, "postgres-all-password")
+	if migrate["MESHTRANSIT_OPERATOR_LOGIN_PASSWORD_FILES"] != "mesh_all="+allPassword ||
+		migrate["MESHTRANSIT_OPERATOR_LOGIN_ROTATE"] != "true" {
+		t.Errorf("migrate.env does not keep mesh_all: %v", migrate)
+	}
+	coreEnv := parseEnv(t, rendered.Files["core.env"])
+	if coreEnv["MESHTRANSIT_POSTGRES_RUNTIME_USER"] != "mesh_all" ||
+		coreEnv["MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE"] != allPassword {
+		t.Errorf("core.env runtime login = %s", coreEnv["MESHTRANSIT_POSTGRES_RUNTIME_USER"])
 	}
 }
 

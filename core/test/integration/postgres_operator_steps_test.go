@@ -116,6 +116,9 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatalf("Apply(after rollout) = applied %v, waiting %+v, %v", result.Applied, result.Waiting, err)
 	}
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
+	// A new installation: migrations ran before any operator step, and the
+	// group roles still end as a projection of mesh_runtime (S2.2).
+	assertGroupRolesWithinRuntime(ctx, t, openFreshAdmin(ctx, t, admin, database))
 	waitOperatorStepGauge(ctx, t, worker, 0)
 	if version := aliasWorkerVersion(ctx, t, worker); version != 6 {
 		t.Fatalf("alias worker version after the operator steps = %v", version)
@@ -502,6 +505,26 @@ WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &me
 	if err != nil || len(verification.Operator.Memberships) != 0 {
 		t.Fatalf("Verify() with the mesh_control login = %+v, %v", verification.Operator.Memberships, err)
 	}
+	// S2.2 (review blocker): mesh_runtime is a creation-only membership.
+	// Once removed (S2.3), an apply of this release keeps it removed, while
+	// the group membership comes back.
+	if _, err := admin.Exec(ctx, "REVOKE mesh_runtime FROM mesh_control; REVOKE mesh_control_rights FROM mesh_control"); err != nil {
+		t.Fatal(err)
+	}
+	keep(first)
+	var inRuntime, inGroup bool
+	if err := admin.QueryRow(ctx, `SELECT
+    EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS m WHERE m.member = 'mesh_control'::REGROLE AND m.roleid = 'mesh_runtime'::REGROLE),
+    EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS m WHERE m.member = 'mesh_control'::REGROLE AND m.roleid = 'mesh_control_rights'::REGROLE)`).Scan(
+		&inRuntime, &inGroup); err != nil {
+		t.Fatal(err)
+	}
+	if inRuntime || !inGroup {
+		t.Fatalf("apply after S2.3 removed mesh_runtime: in mesh_runtime %v, in mesh_control_rights %v", inRuntime, inGroup)
+	}
+	if _, err := admin.Exec(ctx, "GRANT mesh_runtime TO mesh_control WITH INHERIT TRUE, SET FALSE"); err != nil {
+		t.Fatal(err)
+	}
 	// A different password is refused: the running pods use the stored one.
 	second := strings.Repeat("Zr4m", 10)
 	if _, err := keepOrRotate(second, false); !errors.Is(err, postgresadapter.ErrOperatorLoginPasswordDiffers) {
@@ -573,21 +596,25 @@ WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &me
 	}
 }
 
-// Release N0 of S2 (role isolation design §3.5): apply keeps the two group
-// roles NOLOGIN with no special right, no member and no grant; the
-// memberships S2.2 adds pass the migrator's checks already (inherit only),
-// while a crossed pair, SET or ADMIN, or a group that is itself a member of
-// something is refused.
+// Role isolation S2 (design §3.5): apply keeps the two group roles NOLOGIN
+// with no special right (N0) and, from S2.2, mesh_runtime a member of the
+// api's group, inherit only, restoring it when removed or changed; the
+// migrator's checks accept that membership, while a crossed pair, SET or
+// ADMIN, or a group that is itself a member of something is refused.
 func assertOperatorGroups(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	operator *postgresadapter.OperatorRunner, migrationConfig config.MigrationConfig) {
 	t.Helper()
-	apply := func(dryRun bool) []postgresadapter.OperatorGroupResult {
+	applyResult := func(dryRun bool) postgresadapter.OperatorApplyResult {
 		t.Helper()
 		result, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true, DryRun: dryRun})
 		if err != nil {
 			t.Fatalf("Apply(groups, dry run %v) = %v", dryRun, err)
 		}
-		return result.Groups
+		return result
+	}
+	apply := func(dryRun bool) []postgresadapter.OperatorGroupResult {
+		t.Helper()
+		return applyResult(dryRun).Groups
 	}
 	exec := func(statement string) {
 		t.Helper()
@@ -604,21 +631,11 @@ func assertOperatorGroups(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		return value
 	}
 	const groupNames = `('mesh_api_rights', 'mesh_control_rights')`
-	// A dry run leaves no group behind.
-	exec("DROP ROLE IF EXISTS mesh_api_rights")
-	exec("DROP ROLE IF EXISTS mesh_control_rights")
-	if groups := apply(true); len(groups) != 2 || !groups[0].Created || !groups[1].Created {
-		t.Fatalf("dry-run groups = %+v", groups)
-	}
-	if n := count(`SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_roles WHERE rolname IN ` + groupNames); n != 0 {
-		t.Fatalf("a dry run left %d group roles", n)
-	}
+	// The groups exist (migrations grant to them since S2.2): apply keeps
+	// them and creates nothing.
 	if groups := apply(false); len(groups) != 2 || groups[0].Name != "mesh_api_rights" ||
-		groups[1].Name != "mesh_control_rights" || !groups[0].Created {
+		groups[1].Name != "mesh_control_rights" || groups[0].Created || groups[1].Created {
 		t.Fatalf("groups = %+v", groups)
-	}
-	if groups := apply(false); groups[0].Created || groups[1].Created {
-		t.Fatalf("repeat groups apply = %+v, want no creation", groups)
 	}
 	plain := func() bool {
 		t.Helper()
@@ -631,16 +648,59 @@ WHERE role.rolname IN `+groupNames+` AND NOT role.rolcanlogin AND NOT role.rolsu
 	if !plain() {
 		t.Fatal("group roles are not plain NOLOGIN roles")
 	}
-	// N0 grants nothing to a group and adds no member.
+	// A group is a member of nothing.
 	if n := count(`SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_auth_members AS membership
-JOIN pg_catalog.pg_roles AS role ON role.oid IN (membership.roleid, membership.member)
+JOIN pg_catalog.pg_roles AS role ON role.oid = membership.member
 WHERE role.rolname IN ` + groupNames); n != 0 {
-		t.Fatalf("group roles take part in %d memberships", n)
+		t.Fatalf("group roles are members of %d roles", n)
 	}
-	if n := count(`SELECT (SELECT pg_catalog.count(*) FROM information_schema.role_table_grants
-    WHERE grantee IN ` + groupNames + `) + (SELECT pg_catalog.count(*) FROM information_schema.role_routine_grants
-    WHERE grantee IN ` + groupNames + `)`); n != 0 {
-		t.Fatalf("group roles hold %d grants", n)
+	// S2.2: mesh_runtime joins the api's group, inherit only; a removed or
+	// changed membership is restored, a dry run commits nothing.
+	membership := func() (present, inherit, set, adminOption bool) {
+		t.Helper()
+		err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) = 1, COALESCE(pg_catalog.bool_and(membership.inherit_option), FALSE),
+    COALESCE(pg_catalog.bool_or(membership.set_option), FALSE), COALESCE(pg_catalog.bool_or(membership.admin_option), FALSE)
+FROM pg_catalog.pg_auth_members AS membership
+JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+WHERE member_role.rolname = 'mesh_runtime' AND granted_role.rolname = 'mesh_api_rights'`).Scan(
+			&present, &inherit, &set, &adminOption)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return present, inherit, set, adminOption
+	}
+	held := func() bool {
+		t.Helper()
+		present, inherit, set, adminOption := membership()
+		return present && inherit && !set && !adminOption
+	}
+	if !held() {
+		t.Fatal("apply did not make mesh_runtime an inheriting member of mesh_api_rights")
+	}
+	if result := applyResult(false); len(result.Memberships) != 1 || result.Memberships[0].Granted {
+		t.Fatalf("repeat membership apply = %+v, want no change", result.Memberships)
+	}
+	exec("REVOKE mesh_api_rights FROM mesh_runtime")
+	if result := applyResult(true); len(result.Memberships) != 1 || !result.Memberships[0].Granted {
+		t.Fatalf("dry-run membership apply = %+v", result.Memberships)
+	}
+	if present, _, _, _ := membership(); present {
+		t.Fatal("a dry run left the membership behind")
+	}
+	if result := applyResult(false); len(result.Memberships) != 1 || !result.Memberships[0].Granted || !held() {
+		t.Fatalf("membership apply after a removal = %+v", result.Memberships)
+	}
+	for _, statement := range []string{"GRANT mesh_api_rights TO mesh_runtime WITH SET TRUE",
+		"GRANT mesh_api_rights TO mesh_runtime WITH ADMIN OPTION",
+		"GRANT mesh_api_rights TO mesh_runtime WITH INHERIT FALSE"} {
+		exec(statement)
+		if held() {
+			t.Fatalf("%q did not change the membership", statement)
+		}
+		if result := applyResult(false); !result.Memberships[0].Granted || !held() {
+			t.Fatalf("apply after %q = %+v", statement, result.Memberships)
+		}
 	}
 	// Drift is reset: attributes and settings.
 	exec("ALTER ROLE mesh_api_rights LOGIN CREATEDB CONNECTION LIMIT 3")
@@ -660,12 +720,12 @@ WHERE role.rolname IN ` + groupNames); n != 0 {
 		return err
 	}
 	t.Cleanup(func() {
-		for _, statement := range []string{"REVOKE mesh_api_rights FROM mesh_runtime",
-			"REVOKE mesh_control_rights FROM mesh_runtime", "REVOKE pg_read_all_data FROM mesh_api_rights"} {
+		for _, statement := range []string{"REVOKE mesh_control_rights FROM mesh_runtime",
+			"REVOKE pg_read_all_data FROM mesh_api_rights"} {
 			_, _ = admin.Exec(context.WithoutCancel(ctx), statement)
 		}
 	})
-	// The membership S2.2 adds is accepted before it exists in production…
+	// The membership S2.2 keeps passes the migrator's checks…
 	exec("GRANT mesh_api_rights TO mesh_runtime WITH INHERIT TRUE, SET FALSE")
 	if err := verify(); err != nil {
 		t.Fatalf("Verify() with mesh_runtime in mesh_api_rights = %v", err)
@@ -699,5 +759,9 @@ WHERE role.rolname IN ` + groupNames); n != 0 {
 		t.Fatalf("operator status with the crossed pair = %v, %v", report.Memberships, err)
 	}
 	exec("REVOKE mesh_control_rights FROM mesh_runtime")
-	exec("REVOKE mesh_api_rights FROM mesh_runtime")
+	// The kept membership stays for what follows (a CREATEROLE operator
+	// without ADMIN on the group cannot grant it again).
+	if !held() {
+		t.Fatal("the membership S2.2 keeps is gone")
+	}
 }

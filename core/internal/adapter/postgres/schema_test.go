@@ -23,6 +23,7 @@ func TestValidateRuntimeSchemaCompatibility(t *testing.T) {
 		knownHistoryValid:       true,
 		currentUser:             "mesh_runtime",
 		runtimeRoleSafe:         true,
+		runtimeGroupsHeld:       true,
 	}
 	tests := []struct {
 		name          string
@@ -38,6 +39,7 @@ func TestValidateRuntimeSchemaCompatibility(t *testing.T) {
 		{name: "known history drift", compatibility: withRuntimeHistoryValidity(valid, false), wantErr: true},
 		{name: "unexpected runtime user", compatibility: withRuntimeUser(valid, "mesh_migrator"), wantErr: true},
 		{name: "unsafe runtime role", compatibility: withRuntimeRoleSafety(valid, false), wantErr: true},
+		{name: "login outside its groups", compatibility: withRuntimeGroupsHeld(valid, false), wantErr: true},
 		{
 			name:          "compatible future schema",
 			compatibility: withRuntimeVersion(valid, migrations.LatestVersion()+1, "future-checksum"),
@@ -154,5 +156,13 @@ func withRuntimeRoleSafety(
 	safe bool,
 ) runtimeSchemaCompatibility {
 	value.runtimeRoleSafe = safe
+	return value
+}
+
+func withRuntimeGroupsHeld(
+	value runtimeSchemaCompatibility,
+	held bool,
+) runtimeSchemaCompatibility {
+	value.runtimeGroupsHeld = held
 	return value
 }

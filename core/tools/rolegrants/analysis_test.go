@@ -161,20 +161,22 @@ func TestDirectWritesByRole(t *testing.T) {
 		t.Error("control's registration locks enrollment_profile FOR UPDATE; the lock needs UPDATE")
 	}
 	// Schema 296 (S3): the api revokes a Device only through
-	// mesh_ops.revoke_device_v2, never by writing these tables itself. Its
-	// revocation still locks the rows FOR UPDATE while it resolves, which
-	// needs UPDATE: S2 moves that lock into a definer before it takes the
-	// api's UPDATE away.
+	// mesh_ops.revoke_device_v2, never by writing these tables itself, and
+	// since schema 297 (S2.2) it locks them while it resolves only through
+	// mesh_ops.lock_device_revocation_target_v1: it needs no UPDATE on them,
+	// which S2.3 takes away.
 	api := result.Roles["api"]
-	if !slices.Contains(api.Functions, "mesh_ops.revoke_device_v2") {
-		t.Error("api does not revoke Devices through mesh_ops.revoke_device_v2")
+	for _, function := range []string{"mesh_ops.revoke_device_v2", "mesh_ops.lock_device_revocation_target_v1"} {
+		if !slices.Contains(api.Functions, function) {
+			t.Errorf("api does not call %s", function)
+		}
 	}
 	for _, table := range []string{"mesh.device", "mesh.device_machine_key_epoch", "mesh.device_node_key_epoch"} {
 		if slices.Contains(api.Updates, table) {
 			t.Errorf("api updates %s directly; revocation goes through mesh_ops.revoke_device_v2", table)
 		}
-		if !slices.Contains(api.Locks, table) {
-			t.Errorf("api no longer locks %s: S2 may take its UPDATE away (update the design)", table)
+		if slices.Contains(api.Locks, table) {
+			t.Errorf("api locks %s directly; revocation locks through mesh_ops.lock_device_revocation_target_v1", table)
 		}
 	}
 }

@@ -109,3 +109,63 @@ func ensureOperatorGroups(ctx context.Context, transaction migrationTransaction)
 	}
 	return results, nil
 }
+
+// OperatorMembershipResult is what one apply did to one membership of an
+// existing role.
+type OperatorMembershipResult struct {
+	Member  string `json:"member"`
+	Of      string `json:"of"`
+	Granted bool   `json:"granted"`
+}
+
+// operatorMembershipStateSQL reports whether both roles exist and whether
+// the membership is already exactly INHERIT without SET or ADMIN.
+const operatorMembershipStateSQL = `SELECT
+    EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1)
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $2),
+    EXISTS (
+        SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+        JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+        WHERE member_role.rolname = $1 AND granted_role.rolname = $2
+          AND membership.inherit_option AND NOT membership.set_option AND NOT membership.admin_option)`
+
+// ensureOperatorRoleMemberships keeps each membership of an existing role
+// (role isolation S2.2: mesh_runtime, the api's login, joins mesh_api_rights)
+// as INHERIT without SET or ADMIN. A role that does not exist yet is left
+// alone: the database that lacks mesh_runtime serves no api.
+func ensureOperatorRoleMemberships(
+	ctx context.Context,
+	transaction migrationTransaction,
+) ([]OperatorMembershipResult, error) {
+	memberships := migrations.OperatorRoleMemberships()
+	results := make([]OperatorMembershipResult, 0, len(memberships))
+	for _, membership := range memberships {
+		if !loginName.MatchString(membership.Member) || !loginName.MatchString(membership.Of) {
+			return nil, fmt.Errorf("%w: membership %s of %s", ErrOperatorCatalog, membership.Of, membership.Member)
+		}
+		var present, held bool
+		if err := transaction.QueryRow(ctx, operatorMembershipStateSQL, membership.Member, membership.Of).Scan(
+			&present, &held); err != nil {
+			return nil, fmt.Errorf("read membership %s of %s: %w", membership.Of, membership.Member, err)
+		}
+		result := OperatorMembershipResult{Member: membership.Member, Of: membership.Of}
+		if present && !held {
+			member := pgx.Identifier{membership.Member}.Sanitize()
+			granted := pgx.Identifier{membership.Of}.Sanitize()
+			for _, statement := range []string{
+				"GRANT " + granted + " TO " + member + " WITH INHERIT TRUE, SET FALSE",
+				"REVOKE ADMIN OPTION FOR " + granted + " FROM " + member,
+			} {
+				if err := transaction.Exec(ctx, statement); err != nil {
+					return nil, fmt.Errorf("grant %s to %s: %w", membership.Of, membership.Member, err)
+				}
+			}
+			result.Granted = true
+		}
+		if present {
+			results = append(results, result)
+		}
+	}
+	return results, nil
+}

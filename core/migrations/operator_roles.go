@@ -13,7 +13,7 @@ var (
 	// to or revoke from them, never own with or reset them. Every NOLOGIN
 	// owner comes from a role step, the first two (mesh_audit_writer,
 	// mesh_share_writer) from version 2's.
-	operatorApplicationRoles = []string{"mesh_migrator", "mesh_runtime", "mesh_worker", "mesh_observer", "mesh_control"}
+	operatorApplicationRoles = []string{"mesh_migrator", "mesh_runtime", "mesh_worker", "mesh_observer", "mesh_control", "mesh_all"}
 )
 
 // operatorFunctionOwners maps each function family (the name without its

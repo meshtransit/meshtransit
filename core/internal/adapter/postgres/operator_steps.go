@@ -149,6 +149,9 @@ type OperatorApplyResult struct {
 	Logins []OperatorLoginResult
 	// Groups is what the apply did to each group role (S2, release N0).
 	Groups []OperatorGroupResult
+	// Memberships is what the apply did to each membership of an existing
+	// role (S2.2).
+	Memberships []OperatorMembershipResult
 }
 
 type operatorPlan struct {
@@ -238,6 +241,20 @@ const operatorRequirementsSQL = `SELECT COALESCE(pg_catalog.array_agg(
         WHERE role.rolname = requirement.role_name
           AND NOT role.rolcanlogin AND NOT role.rolsuper AND NOT role.rolcreatedb
           AND NOT role.rolcreaterole AND NOT role.rolreplication AND NOT role.rolbypassrls)
+    -- Role isolation S2.2 (§3.5, D1): a step's EXECUTE for mesh_runtime
+    -- holds when any role that inherits mesh_runtime's work ($4) may run
+    -- the function, directly or through a group; S2.3 takes the direct grant
+    -- away and a later apply must not give it back.
+    -- Grants only: PUBLIC's EXECUTE does not count.
+    WHEN 'reach' THEN EXISTS (
+        SELECT 1 FROM pg_catalog.pg_proc AS routine
+        CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS grant_entry
+        JOIN pg_catalog.pg_roles AS holder ON holder.oid = grant_entry.grantee
+        WHERE routine.oid = pg_catalog.to_regprocedure(requirement.routine_signature)
+          AND grant_entry.privilege_type = 'EXECUTE'
+          AND holder.rolname = ANY($4::TEXT[]))
+    -- A retired grant (no role calls the function) holds as it is.
+    WHEN 'held' THEN TRUE
     WHEN 'owner' THEN EXISTS (
         SELECT 1 FROM pg_catalog.pg_proc AS routine
         JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
@@ -311,12 +328,13 @@ func readOperatorReport(
 	functions := make([]string, len(requirements))
 	roles := make([]string, len(requirements))
 	for index, requirement := range requirements {
-		kinds[index] = string(requirement.Effect.Kind)
+		kinds[index] = operatorRequirementKind(requirement.Effect)
 		functions[index] = requirement.Effect.Function
 		roles[index] = requirement.Effect.Role
 	}
 	var satisfied []bool
-	if err := queryRow(ctx, operatorRequirementsSQL, kinds, functions, roles).Scan(&satisfied); err != nil {
+	if err := queryRow(ctx, operatorRequirementsSQL, kinds, functions, roles,
+		migrations.OperatorRuntimeHolders()).Scan(&satisfied); err != nil {
 		return OperatorReport{}, fmt.Errorf("read operator step state: %w", err)
 	}
 	report, err := summarizeOperatorSteps(steps, requirements, satisfied, schemaVersion)
@@ -332,6 +350,20 @@ func readOperatorReport(
 		return OperatorReport{}, fmt.Errorf("read role memberships: %w", err)
 	}
 	return report, nil
+}
+
+// operatorRequirementKind is how operatorRequirementsSQL judges an effect:
+// an EXECUTE for mesh_runtime counts through every role that inherits its
+// work, or holds as it is once retired (role isolation S2.2, D1); any other
+// effect by its kind.
+func operatorRequirementKind(effect migrations.OperatorEffect) string {
+	if effect.Kind != migrations.OperatorEffectExecute || effect.Role != "mesh_runtime" {
+		return string(effect.Kind)
+	}
+	if migrations.OperatorRuntimeRetired(effect.Function) {
+		return "held"
+	}
+	return "reach"
 }
 
 // readOperatorSchemaVersion returns the applied schema version, 0 on a

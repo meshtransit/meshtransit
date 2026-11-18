@@ -24,10 +24,11 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 			DependsOn map[string]struct {
 				Condition string `yaml:"condition"`
 			} `yaml:"depends_on"`
-			Volumes     []any    `yaml:"volumes"`
-			CapDrop     []string `yaml:"cap_drop"`
-			CapAdd      []string `yaml:"cap_add"`
-			SecurityOpt []string `yaml:"security_opt"`
+			Volumes     []any             `yaml:"volumes"`
+			CapDrop     []string          `yaml:"cap_drop"`
+			CapAdd      []string          `yaml:"cap_add"`
+			SecurityOpt []string          `yaml:"security_opt"`
+			Labels      map[string]string `yaml:"labels"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(rendered.Files["compose.yaml"], &compose); err != nil {
@@ -78,7 +79,13 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 		}
 	}
 	hba := string(rendered.Files["pg_hba.conf"])
+	// Compose recreates PostgreSQL when its rules change (single-file mount).
+	if label := compose.Services["postgres"].Labels["net.meshtransit.pg-hba"]; label != pgHBARevision() ||
+		len(label) != 16 {
+		t.Errorf("postgres pg-hba label = %q, want %s", label, pgHBARevision())
+	}
 	if !strings.Contains(hba, "hostssl meshtransit postgres 172.30.0.12/32 scram-sha-256") ||
+		!strings.Contains(hba, "mesh_migrator,mesh_runtime,mesh_worker,mesh_all ") ||
 		strings.Contains(hba, "mesh_observer") || strings.Contains(hba, " all all ") && !strings.Contains(hba, "local all all") ||
 		strings.Contains(hba, "trust") || strings.Contains(hba, "\nhost ") || strings.Count(hba, "postgres") != 1 {
 		t.Errorf("pg_hba.conf = %s", hba)

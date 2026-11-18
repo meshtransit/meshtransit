@@ -68,14 +68,34 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;  -- version 1.7 or 1.8
 `pg_hba.conf` reject it.
 
 Every role must be `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-NOBYPASSRLS` (the defaults) and no role may be a member of another: the
-migrator checks this before every run and refuses otherwise, and the serving
-roles' readiness checks it again.
+NOBYPASSRLS` (the defaults) and no role may be a member of another, except the
+memberships the operator command keeps (below): the migrator checks this
+before every run and refuses otherwise, and the serving roles' readiness
+checks it again.
+
+Role isolation (TD-SEC-90): grants go to two NOLOGIN group roles,
+`mesh_api_rights` and `mesh_control_rights`, and each serving login holds them
+through membership (inherit only, never `SET` or `ADMIN`). The operator
+command creates the groups and keeps the memberships; migrations need the
+groups to exist, so it runs before `migrate up`:
+
+| Login | Member of (kept by `migrate operator apply`) |
+|---|---|
+| `mesh_runtime` (api) | `mesh_api_rights` |
+| `mesh_control` (control) | `mesh_control_rights`, `mesh_runtime` (until the narrowing release) |
+| `mesh_all` (self-host, one process) | `mesh_api_rights`, `mesh_control_rights`, `mesh_runtime` (until the narrowing release) |
+
+A serving login outside its groups stays closed (readiness error
+`postgres login lacks its group roles`). The operator keeps `mesh_control` and
+`mesh_all` only when given their passwords
+(`MESHTRANSIT_OPERATOR_LOGIN_PASSWORD_FILES`); it needs to be a superuser for
+logins, and the `ADMIN` option on a group (or superuser) to add a membership.
 
 | Role | Used by | Holds |
 |---|---|---|
 | `mesh_migrator` | `meshcore migrate` | Owns the database and every object migrations create |
-| `mesh_runtime` | `api`, `control` | Reads through row-level security and calls functions; owns nothing |
+| `mesh_runtime` | `api` (and `control` before role isolation) | Reads through row-level security and calls functions; owns nothing |
+| `mesh_control`, `mesh_all` | `control`; self-host's one process | Logins of the operator command: privileges through the group roles |
 | `mesh_worker` | `worker` | As above, plus outbox delivery |
 | The NOLOGIN roles | — | Own the functions that need a particular privilege; runtime roles may only execute them |
 

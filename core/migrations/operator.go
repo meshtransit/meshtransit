@@ -305,3 +305,10 @@ var deviceAliasPendingWorkOwnershipSQL string
 // DeviceAliasPendingWorkOwnershipSQL hands load_device_alias_work_v5 to the
 // alias writer and grants it to the worker (schema 276).
 func DeviceAliasPendingWorkOwnershipSQL() string { return deviceAliasPendingWorkOwnershipSQL }
+
+//go:embed operator/000298_group_function_grants_ownership.sql
+var groupFunctionGrantsSQL string
+
+// GroupFunctionGrantsSQL grants the group roles the owner-held functions
+// their role calls, as mesh_runtime holds them (role isolation S2.2).
+func GroupFunctionGrantsSQL() string { return groupFunctionGrantsSQL }

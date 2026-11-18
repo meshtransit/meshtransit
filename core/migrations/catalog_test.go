@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 296 {
-		t.Fatalf("len(Catalog()) = %d, want 296", len(catalog))
+	if len(catalog) != 299 {
+		t.Fatalf("len(Catalog()) = %d, want 299", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 296 {
-		t.Fatalf("LatestVersion() = %d, want 296", LatestVersion())
+	if LatestVersion() != 299 {
+		t.Fatalf("LatestVersion() = %d, want 299", LatestVersion())
 	}
 }
 
@@ -8749,5 +8749,38 @@ func TestRevokeDeviceFunctionChecksItsOwnAuthority(t *testing.T) {
 	if strings.Index(sql, "resolve_network_permission_v2(") > strings.Index(sql, "UPDATE mesh.device AS device") ||
 		strings.Index(sql, "device_actor_within_ceiling_v1(") > strings.Index(sql, "UPDATE mesh.device AS device") {
 		t.Error("schema 296 writes before it checks its authority")
+	}
+}
+
+// Schema 297 (role isolation S2.2): the revocation's row lock moves into a
+// definer bound to the transaction's own scope; it changes nothing and only
+// the api's group may call it.
+func TestLockDeviceRevocationTargetStaysInScope(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[296]
+	if migration.Version != 297 {
+		t.Fatalf("migration 297 version = %d", migration.Version)
+	}
+	sql := migration.SQL
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_device_revocation_target_v1(",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog",
+		"v_workspace BIGINT := mesh_ops.current_workspace_id()",
+		"v_network BIGINT := mesh_ops.current_network_id()",
+		"p_workspace_id IS DISTINCT FROM v_workspace OR p_network_id IS DISTINCT FROM v_network",
+		"WHERE device.workspace_id = v_workspace",
+		"FOR UPDATE OF device, machine_key, node_key",
+		"TO mesh_api_rights;",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("schema 297 lacks %q", required)
+		}
+	}
+	for _, forbidden := range []string{"UPDATE mesh.", "INSERT INTO", "DELETE FROM", "SECURITY INVOKER",
+		"TO mesh_runtime", "TO mesh_control_rights"} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("schema 297 contains %q", forbidden)
+		}
 	}
 }

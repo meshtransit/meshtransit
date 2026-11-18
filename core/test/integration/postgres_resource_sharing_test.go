@@ -346,6 +346,7 @@ func assertPostgreSQLResourceSharing(
 	if _, err := admin.Exec(ctx, migrations.DeviceSharedOnceOwnershipSQL()); err != nil {
 		t.Fatalf("harden single-share decisions: %v", err)
 	}
+	applyGroupFunctionGrantsSoFar(ctx, t, admin)
 	assertDeviceSharedOncePrivileges(ctx, t, admin)
 	assertDuplicateDeviceShareRollsBack(ctx, t, admin, service, session, providerScope, consumerScope, resourceID,
 		maximumTraffic, reason)

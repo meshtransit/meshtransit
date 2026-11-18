@@ -156,7 +156,13 @@ func ensureOperatorLogin(
 			return result, fmt.Errorf("keep login %s: %w", login.Name, err)
 		}
 	}
-	for _, role := range login.MemberOf {
+	// A creation-only membership (mesh_runtime, until S2.3) is granted to a
+	// new login only: never added back to an existing one.
+	memberships := slices.Clone(login.MemberOf)
+	if result.Created {
+		memberships = append(memberships, login.CreatedMemberOf...)
+	}
+	for _, role := range memberships {
 		if !loginName.MatchString(role) {
 			return result, fmt.Errorf("%w: member role %q", ErrOperatorCatalog, role)
 		}
@@ -269,13 +275,12 @@ func hmacSHA256(key []byte, message string) []byte {
 	return mac.Sum(nil)
 }
 
-// operatorLoginNames returns the names of the operator logins, and mesh_all,
-// the self-host login a later release adds (S2.2): the migrator refuses a
-// role granted any of them before they exist.
+// operatorLoginNames returns the names of the operator logins: the
+// migrator refuses a role granted any of them before they exist.
 func operatorLoginNames() []string {
 	names := []string{}
 	for _, login := range migrations.OperatorLogins() {
 		names = append(names, login.Name)
 	}
-	return append(names, "mesh_all")
+	return names
 }
