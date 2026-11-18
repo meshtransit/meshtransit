@@ -282,19 +282,25 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertBrowserRegistrationSchemaIsolation(ctx, t, adminConnection)
 	assertCompiledPacketPolicyPrivilegeContract(ctx, t, adminConnection)
 	assertPolicyApprovalPersistencePrivilegeContract(ctx, t, adminConnection)
+	// S2.1: with MESHTRANSIT_TEST_ROLE_SPLIT=1 the database reaches the
+	// state S2.3 aims for, and control's flows run on their own pool.
+	controlPool := openIntegrationRoleSplit(ctx, t, adminConnection, runtimePool, postgresConfig.Address,
+		postgresConfig.Database, runtimePostgreSQL.PasswordFile, postgresConfig.CAFile,
+		processConfig.Dependencies.CheckTimeout)
 	registrationReplayCommand := seedRegistrationAuthority(ctx, t, adminConnection)
 	assertRegistrationSchemaConstraints(ctx, t, adminConnection)
-	registrationReplayStore, err := postgresadapter.NewRegistrationReplayStore(runtimePool)
+	registrationReplayStore, err := postgresadapter.NewRegistrationReplayStore(controlPool)
 	if err != nil {
 		t.Fatalf("postgres.NewRegistrationReplayStore() error = %v", err)
 	}
 	assertPostgreSQLRegistrationReplay(ctx, t, registrationReplayStore, registrationReplayCommand)
-	assertPostgreSQLMapSessionSnapshot(ctx, t, runtimePool, registrationReplayCommand)
+	assertPostgreSQLMapSessionSnapshot(ctx, t, controlPool, registrationReplayCommand)
 
 	// The schema assertions' raw SQL runs as mesh_runtime, which holds every
-	// object the schema grants; the stores (runtimePool) run as the
-	// configured login, mesh_all with RUNTIME_LOGIN=mesh_all, so the code's
-	// own SQL proves the group roles suffice (role isolation S2.2).
+	// object the schema grants (mesh_it_schema, holding the same, with
+	// RUNTIME_LOGIN=split); the stores (runtimePool) run as the configured
+	// login, mesh_all with RUNTIME_LOGIN=mesh_all, so the code's own SQL
+	// proves the group roles suffice (role isolation S2.2).
 	schemaUser := integrationSchemaRuntimeUser(runtimePostgreSQL.User)
 	runtimeConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -317,7 +323,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		processConfig.Dependencies.CheckTimeout,
 	)
 	assertPostgreSQLDeviceAliasClientVersion(ctx, t, adminConnection, runtimeConnection, runtimePool, registrationReplayCommand)
-	assertPostgreSQLMTCPTimestamp(ctx, t, runtimePool, registrationReplayCommand)
+	assertPostgreSQLMTCPTimestamp(ctx, t, controlPool, registrationReplayCommand)
 	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeNetworkRevisionLock(ctx, t, runtimeConnection, runtimeContenderConnection)
@@ -357,23 +363,23 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		ctx,
 		t,
 		adminConnection,
-		runtimePool,
+		controlPool,
 		openRegistrationCommand,
 	)
 	assertPostgreSQLRegistrationServiceResume(
 		ctx,
 		t,
 		adminConnection,
-		runtimePool,
+		controlPool,
 	)
-	assertPostgreSQLRegistrationServiceRefusesForeignKey(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLRegistrationServiceRefusesForeignKey(ctx, t, adminConnection, controlPool)
 	assertPostgreSQLRegistrationServiceConcurrency(
 		ctx,
 		t,
 		adminConnection,
-		runtimePool,
+		controlPool,
 	)
-	assertPostgreSQLRegistrationIntake(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLRegistrationIntake(ctx, t, adminConnection, controlPool)
 	adminContenderConnection := openIntegrationPostgreSQLConnection(
 		ctx,
 		t,
@@ -389,9 +395,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t,
 		adminConnection,
 		adminContenderConnection,
-		runtimePool,
+		controlPool,
 	)
-	assertPostgreSQLMapDeviceNames(ctx, t, adminConnection, runtimePool, peerIdentity)
+	assertPostgreSQLMapDeviceNames(ctx, t, adminConnection, controlPool, peerIdentity)
 	assertCompiledPacketPolicyRuleImmutability(ctx, t, adminConnection)
 	assertPostgreSQLPolicyPublication(ctx, t, adminConnection, runtimePool, peerIdentity)
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
@@ -417,7 +423,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLNetworkSummary(ctx, t, adminConnection, workerPool)
 	assertPostgreSQLConsoleNetworkSummaries(ctx, t, adminConnection, workerPool, runtimePool)
 	assertPostgreSQLDeviceEnforcementLedger(ctx, t, adminConnection, workerPool, runtimePool)
-	assertPostgreSQLRelayRevocations(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLRelayRevocations(ctx, t, adminConnection, controlPool)
 	assertWorkspaceOwnerAuthority(ctx, t, adminConnection)
 	assertBuiltinWorkspaceRoles(ctx, t, adminConnection)
 	assertTenantDisplayIdentities(ctx, t, adminConnection)

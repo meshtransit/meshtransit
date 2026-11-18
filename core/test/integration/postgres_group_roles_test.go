@@ -4,12 +4,17 @@ package integration
 
 import (
 	"context"
+	_ "embed"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/platform/config"
 
 	"meshtransit.net/core/migrations"
 )
@@ -23,6 +28,69 @@ func integrationSchemaRuntimeUser(runtimeUser string) string {
 		return user
 	}
 	return runtimeUser
+}
+
+//go:embed testdata/role_split_narrowing.sql
+var roleSplitNarrowingSQL string
+
+// openIntegrationRoleSplit returns the pool control's flows run on. With
+// MESHTRANSIT_TEST_ROLE_SPLIT=1 (role isolation S2.1) it narrows the database
+// as S2.3 will (testdata/role_split_narrowing.sql), so mesh_runtime holds only
+// the api's group, and opens a pool as MESHTRANSIT_TEST_POSTGRES_CONTROL_USER,
+// a login holding only control's group. A flow on the wrong pool fails when
+// it uses an object only the other role's group holds (most map reads are
+// both roles'). Not all control flows are moved yet: see the S2.1 handoff.
+// Otherwise it returns runtimePool.
+func openIntegrationRoleSplit(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+	address, database string, passwordFile config.SecretFile, caFile config.TrustFile,
+	timeout time.Duration) *postgresadapter.Pool {
+	t.Helper()
+	if os.Getenv("MESHTRANSIT_TEST_ROLE_SPLIT") != "1" {
+		return runtimePool
+	}
+	user := os.Getenv("MESHTRANSIT_TEST_POSTGRES_CONTROL_USER")
+	if user == "" {
+		t.Fatal("MESHTRANSIT_TEST_ROLE_SPLIT needs MESHTRANSIT_TEST_POSTGRES_CONTROL_USER")
+	}
+	if _, err := admin.Exec(ctx, roleSplitNarrowingSQL); err != nil {
+		t.Fatalf("narrow the database as S2.3 will: %v", err)
+	}
+	var directGrants, policies int
+	var controlInRuntime bool
+	if err := admin.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_proc AS routine
+        CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE)
+    + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_class AS relation
+        CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE)
+    + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_attribute AS attribute
+        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE),
+    (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_policy AS policy
+        WHERE 'mesh_runtime'::REGROLE = ANY(policy.polroles)),
+    pg_catalog.pg_has_role('mesh_control', 'mesh_runtime', 'MEMBER')`).Scan(
+		&directGrants, &policies, &controlInRuntime); err != nil {
+		t.Fatal(err)
+	}
+	if directGrants != 0 || policies != 0 || controlInRuntime {
+		t.Fatalf("narrowed state: mesh_runtime direct grants %d, policies %d, mesh_control in mesh_runtime %v",
+			directGrants, policies, controlInRuntime)
+	}
+	grantIntegrationRuntimeGroups(ctx, t, admin, user)
+	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role: postgresadapter.PoolRoleRuntime, Address: address, Database: database, User: user,
+		PasswordFile: passwordFile, CAFile: caFile, MaxConnections: 2, ConnectTimeout: timeout,
+	})
+	if err != nil {
+		t.Fatalf("open the control pool as %s: %v", user, err)
+	}
+	t.Cleanup(func() {
+		if err := pool.Close(); err != nil {
+			t.Errorf("control pool Close() error = %v", err)
+		}
+	})
+	if err := pool.Check(ctx); err != nil {
+		t.Fatalf("control pool Check() error = %v", err)
+	}
+	return pool
 }
 
 // grantIntegrationRuntimeGroups does what the operator command keeps for a
