@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 303 {
-		t.Fatalf("len(Catalog()) = %d, want 303", len(catalog))
+	if len(catalog) != 304 {
+		t.Fatalf("len(Catalog()) = %d, want 304", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 303 {
-		t.Fatalf("LatestVersion() = %d, want 303", LatestVersion())
+	if LatestVersion() != 304 {
+		t.Fatalf("LatestVersion() = %d, want 304", LatestVersion())
 	}
 }
 
@@ -8867,5 +8867,34 @@ func TestEndRefusedBrowserIntent(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "mesh_runtime") || strings.Contains(migration.SQL, "mesh_api_rights") {
 		t.Error("schema 303 must grant only control's group")
+	}
+}
+
+// Schema 304: the member directory adds the verified email and the join time,
+// behind the same member.read check as v1, and only api's group runs it.
+func TestMemberDirectoryEmail(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[303]
+	if migration.Version != 304 {
+		t.Fatalf("migration 304 version = %d", migration.Version)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.list_workspace_members_v2(",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"p_workspace_public_id, 'member.read', evaluated_at",
+		"'email', account_email.email,",
+		"'joined_at', membership.created_at,",
+		"LEFT JOIN mesh.account_email AS account_email",
+		"AND account_email.account_id = account.id",
+		") FROM PUBLIC;",
+		") TO mesh_api_rights;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 304 lacks %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "mesh_runtime") || strings.Contains(migration.SQL, "DROP FUNCTION") {
+		t.Error("schema 304 must grant only api's group and keep v1 for rollback")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 	"meshtransit.net/core/internal/domain/workspace/roles"
 )
 
@@ -53,6 +54,7 @@ func assertPostgreSQLWorkspaceRoles(ctx context.Context, t *testing.T, admin *pg
 	if _, err := service.ListMembers(ctx, roles.ListCommand{Session: member, WorkspaceID: workspaceID}); !errors.Is(err, roles.ErrForbidden) {
 		t.Fatalf("plain member listed members: %v", err)
 	}
+	assertMemberDirectoryEmail(ctx, t, admin, service, owner, workspaceID, memberPrincipal, directory)
 
 	itAdmin := newAssignCommand(t, owner, workspaceID, memberPrincipal, authorization.BuiltinRoleITAdmin, network.ID{})
 	assigned, err := service.Assign(ctx, itAdmin)
@@ -195,4 +197,63 @@ func memberAssignments(directory roles.Directory, principal publicid.ID) []roles
 		}
 	}
 	return nil
+}
+
+// assertMemberDirectoryEmail checks schema 304: every member carries a join
+// time, nobody has an email until Core stored a verified one, and a stored
+// email shows on its own member only.
+func assertMemberDirectoryEmail(ctx context.Context, t *testing.T, admin *pgx.Conn, service *roles.Service,
+	owner accountsession.Session, workspaceID workspace.ID, memberPrincipal publicid.ID, directory roles.Directory) {
+	t.Helper()
+	// Later checks count rows; leave the fixture as it was.
+	defer execFixtureWithoutTriggers(ctx, t, admin,
+		`DELETE FROM mesh.account_email WHERE public_id = '01890f00-0000-7000-8000-0000000003a4'::UUID`)
+	for _, listed := range directory.Members {
+		if listed.JoinedAt.IsZero() {
+			t.Fatalf("member %s has no join time", listed.PrincipalID)
+		}
+	}
+	const email = "member-304@example.com"
+	execFixtureWithoutTriggers(ctx, t, admin, `INSERT INTO mesh.account_email
+		(public_id, deployment_id, account_id, email, verified_at, version, created_at, updated_at)
+		SELECT '01890f00-0000-7000-8000-0000000003a4'::UUID, account.deployment_id, account.id, $2,
+			pg_catalog.now(), 1, pg_catalog.now(), pg_catalog.now()
+		FROM mesh.account AS account
+		JOIN mesh.principal AS principal
+		  ON principal.deployment_id = account.deployment_id AND principal.id = account.principal_id
+		WHERE principal.public_id = $1`, memberPrincipal.String(), email)
+	listed, err := service.ListMembers(ctx, roles.ListCommand{Session: owner, WorkspaceID: workspaceID})
+	if err != nil {
+		t.Fatalf("list members with an email: %v", err)
+	}
+	for _, entry := range listed.Members {
+		switch {
+		case entry.PrincipalID == memberPrincipal && entry.Email != email:
+			t.Fatalf("member email = %q, want %q", entry.Email, email)
+		case entry.PrincipalID != memberPrincipal && entry.Email == email:
+			t.Fatalf("member %s shows another person's email", entry.PrincipalID)
+		}
+	}
+}
+
+// execFixtureWithoutTriggers writes one fixture row of an authority table
+// with its triggers off: this read-path test needs a stored email, and the
+// write path that appends its evidence (RecordEmail) is
+// assertPostgreSQLAccountEmail's to prove.
+func execFixtureWithoutTriggers(ctx context.Context, t *testing.T, admin *pgx.Conn, statement string, arguments ...any) {
+	t.Helper()
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin fixture write: %v", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if _, err := transaction.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatalf("turn triggers off: %v", err)
+	}
+	if tag, err := transaction.Exec(ctx, statement, arguments...); err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("fixture write %q: %d rows, %v", statement, tag.RowsAffected(), err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit fixture write: %v", err)
+	}
 }

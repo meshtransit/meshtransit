@@ -37,7 +37,8 @@ func NewWorkspaceRoleStore(pool *Pool, options AccountSessionOptions) (*Workspac
 
 const sessionArguments = `$1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::BIGINT,$8::BIGINT,$9::BIGINT`
 
-const listWorkspaceMembersSQL = `SELECT mesh_ops.list_workspace_members_v1(` + sessionArguments + `,$10::UUID)::TEXT`
+// Schema 304: v2 adds each member's verified email and join time.
+const listWorkspaceMembersSQL = `SELECT mesh_ops.list_workspace_members_v2(` + sessionArguments + `,$10::UUID)::TEXT`
 
 const assignWorkspaceRoleSQL = `SELECT assignment_public_id::TEXT, assignment_version, assignment_created_at, replayed,
  COALESCE(actor_binding_public_id::TEXT,''), COALESCE(actor_role_public_id::TEXT,''),
@@ -107,6 +108,8 @@ type workspaceDirectoryRecord struct {
 		DisplayName         string     `json:"display_name"`
 		MembershipState     string     `json:"membership_state"`
 		MembershipExpiresAt *time.Time `json:"membership_expires_at"`
+		Email               *string    `json:"email"`
+		JoinedAt            time.Time  `json:"joined_at"`
 		Owner               bool       `json:"owner"`
 		RoleAssignments     []struct {
 			AssignmentID string     `json:"assignment_id"`
@@ -162,6 +165,10 @@ func (record workspaceDirectoryRecord) directory() (roles.Directory, error) {
 		if decoded.MembershipExpiresAt != nil {
 			member.MembershipExpiresAt = decoded.MembershipExpiresAt.UTC()
 		}
+		if decoded.Email != nil {
+			member.Email = *decoded.Email
+		}
+		member.JoinedAt = decoded.JoinedAt.UTC()
 		for _, raw := range decoded.RoleAssignments {
 			assignment, err := decodeAssignment(raw.AssignmentID, raw.Role, raw.NetworkID, raw.ExpiresAt, raw.Version, raw.CreatedAt)
 			if err != nil {

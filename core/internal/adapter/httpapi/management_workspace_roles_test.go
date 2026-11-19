@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ func (stub *workspaceRoleManagerStub) ListMembers(_ context.Context, command rol
 	stub.calls++
 	return roles.Directory{WorkspaceID: command.WorkspaceID, Members: []roles.Member{{
 		PrincipalID: publicid.ID(command.Session.PrincipalID()), DisplayName: "Owner", MembershipState: "active", Owner: true,
+		Email: "owner@example.com", JoinedAt: time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC),
 	}}}, stub.err
 }
 
@@ -178,6 +180,11 @@ func TestWorkspaceMembersHTTPBoundary(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Data.Members) != 1 ||
 		!body.Data.Members[0].Owner || body.Data.Members[0].RoleAssignments == nil {
 		t.Fatalf("members body %s: %v", response.Body, err)
+	}
+	// Schema 304: the verified email and the join time, as the profile names them.
+	if !strings.Contains(response.Body.String(), `"email":"owner@example.com"`) ||
+		!strings.Contains(response.Body.String(), `"joined_at":"2026-07-01T09:00:00Z"`) {
+		t.Fatalf("members body lacks email or joined_at: %s", response.Body)
 	}
 	post := newManagementRequest(t, http.MethodPost, path, `{}`)
 	response = httptest.NewRecorder()

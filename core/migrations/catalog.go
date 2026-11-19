@@ -709,6 +709,7 @@ func Catalog() []Migration {
 		newMigration(301, "No MeshTransit function is open to PUBLIC", closePublicFunctionsSQL),
 		newMigration(302, "Groups cannot change enrollment credentials or profiles", narrowEnrollmentWritesSQL),
 		newMigration(303, "A refused browser sign-in ends at once", endRefusedBrowserIntentSQL),
+		newMigration(304, "The member directory names email and join time", memberDirectoryEmailSQL),
 	}
 }
 
@@ -1397,3 +1398,6 @@ var narrowEnrollmentWritesSQL string
 
 //go:embed 000303_end_refused_browser_intent.up.sql
 var endRefusedBrowserIntentSQL string
+
+//go:embed 000304_member_directory_email.up.sql
+var memberDirectoryEmailSQL string

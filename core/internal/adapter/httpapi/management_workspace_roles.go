@@ -97,6 +97,8 @@ type workspaceMemberData struct {
 	DisplayName         string                        `json:"display_name"`
 	MembershipState     string                        `json:"membership_state"`
 	MembershipExpiresAt *time.Time                    `json:"membership_expires_at,omitempty"`
+	Email               string                        `json:"email,omitempty"`
+	JoinedAt            time.Time                     `json:"joined_at"`
 	Owner               bool                          `json:"owner"`
 	RoleAssignments     []workspaceRoleAssignmentData `json:"role_assignments"`
 }
@@ -173,6 +175,7 @@ func (handler *ManagementHandler) listWorkspaceMembers(ctx context.Context, resp
 	for _, member := range directory.Members {
 		data := workspaceMemberData{PrincipalID: member.PrincipalID.String(), DisplayName: member.DisplayName,
 			MembershipState: member.MembershipState, Owner: member.Owner,
+			Email: member.Email, JoinedAt: member.JoinedAt.UTC(),
 			RoleAssignments: make([]workspaceRoleAssignmentData, 0, len(member.Assignments))}
 		if !member.MembershipExpiresAt.IsZero() {
 			expires := member.MembershipExpiresAt

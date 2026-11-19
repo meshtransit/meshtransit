@@ -7,6 +7,7 @@ package roles
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -58,19 +59,43 @@ type Member struct {
 	DisplayName         string
 	MembershipState     string
 	MembershipExpiresAt time.Time
-	Owner               bool
-	Assignments         []Assignment
+	// Email is the verified email Core last stored for the person's Account
+	// (schema 288), empty when it has none. Display data only.
+	Email string
+	// JoinedAt is when the person's Workspace membership was created.
+	JoinedAt    time.Time
+	Owner       bool
+	Assignments []Assignment
 }
 
 // IsValid checks one decoded member.
 func (member Member) IsValid() bool {
 	if !member.PrincipalID.IsValid() || member.DisplayName == "" || len(member.DisplayName) > 256 ||
 		!utf8.ValidString(member.DisplayName) ||
-		(member.MembershipState != "active" && member.MembershipState != "suspended") {
+		(member.MembershipState != "active" && member.MembershipState != "suspended") ||
+		member.JoinedAt.IsZero() || !validMemberEmail(member.Email) {
 		return false
 	}
 	for _, assignment := range member.Assignments {
 		if !assignment.IsValid() {
+			return false
+		}
+	}
+	return true
+}
+
+// validMemberEmail accepts no email, or what schema 288 stores: 3–254
+// printable ASCII characters with one '@' and text on both sides.
+func validMemberEmail(email string) bool {
+	if email == "" {
+		return true
+	}
+	if len(email) < 3 || len(email) > 254 || strings.Count(email, "@") != 1 ||
+		strings.HasPrefix(email, "@") || strings.HasSuffix(email, "@") {
+		return false
+	}
+	for _, character := range email {
+		if character < '!' || character > '~' || character == '"' || character == '<' || character == '>' {
 			return false
 		}
 	}

@@ -7746,7 +7746,8 @@
                               "display_name",
                               "membership_state",
                               "owner",
-                              "role_assignments"
+                              "role_assignments",
+                              "joined_at"
                             ],
                             "properties": {
                               "principal_id": {
@@ -7768,6 +7769,17 @@
                               "membership_expires_at": {
                                 "type": "string",
                                 "format": "date-time"
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 254,
+                                "description": "The verified email Core last stored for the person; absent when it has none. Display data only."
+                              },
+                              "joined_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "When the person joined the Workspace."
                               },
                               "owner": {
                                 "type": "boolean"
