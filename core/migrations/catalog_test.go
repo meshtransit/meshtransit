@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 302 {
-		t.Fatalf("len(Catalog()) = %d, want 302", len(catalog))
+	if len(catalog) != 303 {
+		t.Fatalf("len(Catalog()) = %d, want 303", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 302 {
-		t.Fatalf("LatestVersion() = %d, want 302", LatestVersion())
+	if LatestVersion() != 303 {
+		t.Fatalf("LatestVersion() = %d, want 303", LatestVersion())
 	}
 }
 
@@ -8841,5 +8841,31 @@ func TestNarrowEnrollmentWrites(t *testing.T) {
 			strings.Contains(line, "mesh_control_rights") && strings.Contains(line, "device_id") {
 			t.Error("schema 302 must leave control's completion columns, which registration writes")
 		}
+	}
+}
+
+// Schema 303 (TD-CORE-150 M1): ending a refused sign-in is control's, needs a
+// change, and never touches a registration that made a Device.
+func TestEndRefusedBrowserIntent(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[302]
+	if migration.Version != 303 {
+		t.Fatalf("migration 303 version = %d", migration.Version)
+	}
+	for _, required := range []string{
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"'ending a refused browser intent needs a change'",
+		"AND registration.device_id IS NULL",
+		"AND registration.network_id = mesh_ops.current_network_id()",
+		"REVOKE ALL ON FUNCTION mesh_ops.end_refused_browser_intent_v1(UUID, UUID, BYTEA, BYTEA, BYTEA) FROM PUBLIC;",
+		"TO mesh_control_rights;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 303 lacks %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "mesh_runtime") || strings.Contains(migration.SQL, "mesh_api_rights") {
+		t.Error("schema 303 must grant only control's group")
 	}
 }

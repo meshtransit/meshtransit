@@ -273,13 +273,29 @@ func assertPostgreSQLApprovalHeldElsewhereEnds(ctx context.Context, t *testing.T
 	if approved, err := approval.ApproveInWorkspace(ctx, digest, refused.Encoded(), otherWorkspace, otherNetwork); err != nil || !approved {
 		t.Fatalf("approve another Network = %v/%v", approved, err)
 	}
-	if _, found, err := completion.Complete(ctx, identity, hostname, refused.Encoded()); found || !refusedForGood(err) {
+	_, found, err := completion.Complete(ctx, identity, hostname, refused.Encoded())
+	if found || !refusedForGood(err) {
 		t.Fatalf("completion into another Network = %v/%v, want a lasting refusal", found, err)
+	}
+	// Schema 303 (TD-CORE-150 M1): the refusal ended the approval at once.
+	var ending *registration.RefusedIntentError
+	if !errors.As(err, &ending) || !ending.Ended || ending.EndErr != nil ||
+		ending.IntentID != "01890f00-0000-7000-8000-000000001911" {
+		var endErr error
+		if ending != nil {
+			endErr = ending.EndErr
+		}
+		t.Fatalf("refusal = %#v (%v; ending: %v), want the approval ended", ending, err, endErr)
 	}
 	var registrationID string
 	if err := admin.QueryRow(ctx, `SELECT pending_registration_public_id::TEXT FROM mesh.browser_registration_intent
 WHERE public_id='01890f00-0000-7000-8000-000000001911'`).Scan(&registrationID); err != nil {
 		t.Fatal(err)
+	}
+	assertRefusedApprovalEnded(ctx, t, admin, "01890f00-0000-7000-8000-000000001911", registrationID)
+	// A second check of the refused URL finds nothing left to end.
+	if _, found, err := completion.Complete(ctx, identity, hostname, refused.Encoded()); found || err != nil {
+		t.Fatalf("refused approval checked again = %v/%v, want not found", found, err)
 	}
 	// The next sign-in (meshd ended the refused one) gets a new approval.
 	fresh := issue("01890f00-0000-7000-8000-000000001912")
@@ -294,22 +310,28 @@ WHERE intent.public_id='01890f00-0000-7000-8000-000000001911'`).Scan(&intentStat
 		intentState != "expired" || registrationState != "expired" {
 		t.Fatalf("refused approval = %s/%s/%v, want expired/expired", intentState, registrationState, err)
 	}
-	var changes int
-	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh_audit.authority_mutation
-WHERE change_public_id='01890f00-0000-7000-8000-000000001912'::UUID
-  AND row_public_id IN ('01890f00-0000-7000-8000-000000001911'::UUID, $1::UUID)`, registrationID).Scan(&changes); err != nil || changes != 2 {
-		t.Fatalf("ending the refused approval not under the new intent's change: %d/%v", changes, err)
-	}
 	// The same Network again: its expired registration no longer holds the
 	// machine's slot.
 	if approved, err := approval.ApproveInWorkspace(ctx, digest, fresh.Encoded(), otherWorkspace, otherNetwork); err != nil || !approved {
 		t.Fatalf("approve the same Network again = %v/%v", approved, err)
 	}
-	if _, found, err := completion.Complete(ctx, identity, hostname, fresh.Encoded()); found || !refusedForGood(err) {
+	// Control cannot end this one (its function withheld): the refusal still
+	// stands, and the next sign-in ends the approval instead (schema 289).
+	restore := withholdFunction(ctx, t, admin, "mesh_ops.end_refused_browser_intent_v1(UUID, UUID, BYTEA, BYTEA, BYTEA)")
+	_, found, err = completion.Complete(ctx, identity, hostname, fresh.Encoded())
+	restore()
+	if found || !refusedForGood(err) {
 		t.Fatalf("second completion into another Network = %v/%v", found, err)
+	}
+	if !errors.As(err, &ending) || ending.Ended || ending.EndErr == nil {
+		t.Fatalf("refusal with the ending withheld = %#v, want not ended", ending)
 	}
 	// The Device's own Network: the sign-in completes into it.
 	home := issue("01890f00-0000-7000-8000-000000001913")
+	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.browser_registration_intent
+WHERE public_id='01890f00-0000-7000-8000-000000001912'`).Scan(&intentState); err != nil || intentState != "expired" {
+		t.Fatalf("approval the refusal could not end = %s/%v, want ended by the next sign-in", intentState, err)
+	}
 	if approved, err := approval.ApproveInWorkspace(ctx, digest, home.Encoded(), homeWorkspace, homeNetwork); err != nil || !approved {
 		t.Fatalf("approve the Device's Network = %v/%v", approved, err)
 	}
@@ -418,6 +440,8 @@ WHERE machine.public_key=$1::BYTEA`, machineMaterial[:]).Scan(&sourceID); err !=
 	if _, found, err := completion.Complete(ctx, original, hostname, old.Encoded()); found ||
 		!errors.Is(err, registration.ErrMoveNeedsNewClient) {
 		t.Fatalf("old client move = %v/%v", found, err)
+	} else {
+		assertRefusalEnded(t, "old client", err)
 	}
 	// A new key without the page's confirmation is refused, and moves nothing.
 	moving := withNodeKey(0xe3)
@@ -428,6 +452,8 @@ WHERE machine.public_key=$1::BYTEA`, machineMaterial[:]).Scan(&sourceID); err !=
 	if _, found, err := completion.Complete(ctx, moving, hostname, unconfirmed.Encoded()); found ||
 		!errors.Is(err, registration.ErrMoveNotConfirmed) {
 		t.Fatalf("unconfirmed move = %v/%v", found, err)
+	} else {
+		assertRefusalEnded(t, "unconfirmed move", err)
 	}
 	// Confirmed: the Device moves to 203.
 	confirmed := issue("01890f00-0000-7000-8000-000000001924", moving)
@@ -536,6 +562,78 @@ FROM mesh.device WHERE public_id=$1::UUID`, returned.NodeID().String()); err != 
 // refusedForGood: the keys holding the Workspace 102 Device, or, first, the
 // new-Device allowance in Network 203 that earlier fixtures used up. Schema
 // 289 ends the approval on the keys alone, whichever refusal the node got.
+// assertRefusedApprovalEnded checks a refused approval ended under one
+// change with registration.expired in its Network's stream, naming why.
+func assertRefusedApprovalEnded(ctx context.Context, t *testing.T, admin *pgx.Conn, intentID, registrationID string) {
+	t.Helper()
+	var intentState, registrationState, reason string
+	var changes, events int
+	if err := admin.QueryRow(ctx, `SELECT intent.state, registration.state,
+  (SELECT pg_catalog.count(DISTINCT mutation.change_public_id) FROM mesh_audit.authority_mutation AS mutation
+   WHERE mutation.row_public_id IN (intent.public_id, registration.public_id)
+     AND mutation.change_public_id = (SELECT identity.change_public_id FROM mesh_audit.audit_event AS event
+       JOIN mesh_audit.audit_event_identity AS identity ON identity.id = event.event_identity_id
+       WHERE event.target_public_id = registration.public_id AND event.action = 'registration.expired')),
+  (SELECT pg_catalog.count(*) FROM mesh_audit.audit_event AS event
+   WHERE event.target_public_id = registration.public_id AND event.action = 'registration.expired'
+     AND event.network_id = registration.network_id),
+  (SELECT event.payload->>'reason' FROM mesh_audit.audit_event AS event
+   WHERE event.target_public_id = registration.public_id AND event.action = 'registration.expired')
+FROM mesh.browser_registration_intent AS intent
+JOIN mesh.pending_registration AS registration ON registration.public_id = intent.pending_registration_public_id
+WHERE intent.public_id = $1::UUID AND registration.public_id = $2::UUID`, intentID, registrationID).Scan(
+		&intentState, &registrationState, &changes, &events, &reason); err != nil {
+		t.Fatalf("refused approval: %v", err)
+	}
+	if intentState != "expired" || registrationState != "expired" || changes != 1 || events != 1 || reason == "" {
+		t.Fatalf("refused approval = %s/%s, %d changes, %d events, reason %q; want expired/expired, 1, 1, a reason",
+			intentState, registrationState, changes, events, reason)
+	}
+}
+
+// withholdFunction takes EXECUTE on function from every role that holds it
+// and returns how to give it back, so a test can make one call fail.
+func withholdFunction(ctx context.Context, t *testing.T, admin *pgx.Conn, function string) func() {
+	t.Helper()
+	rows, err := admin.Query(ctx, `SELECT acl.grantee::REGROLE::TEXT FROM pg_catalog.pg_proc AS routine
+CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS acl
+WHERE routine.oid = $1::REGPROCEDURE AND acl.privilege_type = 'EXECUTE' AND acl.grantee <> routine.proowner`, function)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantees, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(grantees) == 0 {
+		t.Fatalf("grantees of %s = %v/%v", function, grantees, err)
+	}
+	for _, grantee := range grantees {
+		if _, err := admin.Exec(ctx, "REVOKE EXECUTE ON FUNCTION "+function+" FROM "+grantee); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return func() {
+		t.Helper()
+		for _, grantee := range grantees {
+			if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+function+" TO "+grantee); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// assertRefusalEnded checks a lasting refusal ended its approval at once
+// (schema 303), so the node's next sign-in gets a new one.
+func assertRefusalEnded(t *testing.T, label string, err error) {
+	t.Helper()
+	var refused *registration.RefusedIntentError
+	if !errors.As(err, &refused) || !refused.Ended || refused.EndErr != nil || refused.IntentID == "" {
+		var endErr error
+		if refused != nil {
+			endErr = refused.EndErr
+		}
+		t.Fatalf("%s refusal = %#v (ending: %v), want its approval ended", label, refused, endErr)
+	}
+}
+
 func refusedForGood(err error) bool {
-	return errors.Is(err, registration.ErrKeysHeldElsewhere) || errors.Is(err, registration.ErrNewDeviceLimit)
+	return registration.RefusedForGood(err)
 }

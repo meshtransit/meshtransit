@@ -349,10 +349,28 @@ type browserApprovalEvidence struct {
 	requestHash     [sha256.Size]byte
 	beforeHash      [sha256.Size]byte
 	expired         bool
+	// reason names a refusal that ended the approval (TD-CORE-150 M1).
+	reason string
 }
+
+// evidenceRow is a one-row result of the api's session transactions and of
+// control's registration transactions alike.
+type evidenceRow interface {
+	Scan(...any) error
+}
+
+type evidenceQueryRow func(context.Context, string, ...any) evidenceRow
 
 func appendBrowserApprovalEvidence(
 	ctx context.Context, transaction accountSessionTransaction,
+	value browserApprovalEvidence,
+) error {
+	return appendBrowserApprovalEvidenceRows(ctx, func(ctx context.Context, query string, args ...any) evidenceRow {
+		return transaction.QueryRow(ctx, query, args...)
+	}, value)
+}
+
+func appendBrowserApprovalEvidenceRows(ctx context.Context, queryRow evidenceQueryRow,
 	value browserApprovalEvidence,
 ) error {
 	action := "registration.browser.approved"
@@ -366,7 +384,7 @@ func appendBrowserApprovalEvidence(
 	}
 	var streamID, sequence int64
 	var previousBytes []byte
-	if err := transaction.QueryRow(ctx, lockBrowserApprovalAuditSQL).Scan(
+	if err := queryRow(ctx, lockBrowserApprovalAuditSQL).Scan(
 		&streamID, &sequence, &previousBytes,
 	); err != nil || streamID <= 0 || sequence <= 0 || len(previousBytes) != sha256.Size {
 		return errors.Join(ErrBrowserApprovalEvidence, err)
@@ -379,10 +397,11 @@ func appendBrowserApprovalEvidence(
 		SessionID      string `json:"session_id"`
 		NetworkID      string `json:"network_id"`
 		WorkspaceID    string `json:"workspace_id,omitempty"`
+		Reason         string `json:"reason,omitempty"`
 	}{
 		IntentID: value.intentID.String(), RegistrationID: value.registrationID.String(),
 		SessionID: value.sessionID.String(), NetworkID: value.networkID.String(),
-		WorkspaceID: browserApprovalWorkspaceID(value.workspaceID),
+		WorkspaceID: browserApprovalWorkspaceID(value.workspaceID), Reason: value.reason,
 	})
 	if err != nil {
 		return fmt.Errorf("encode browser approval audit payload: %w", err)
@@ -409,7 +428,7 @@ func appendBrowserApprovalEvidence(
 		return errors.Join(ErrBrowserApprovalEvidence, err)
 	}
 	var appendedSequence int64
-	if err := transaction.QueryRow(ctx, appendBrowserApprovalEvidenceSQL,
+	if err := queryRow(ctx, appendBrowserApprovalEvidenceSQL,
 		streamID, value.eventID.String(), value.outboxID.String(), sequence,
 		previousHash[:], eventHash[:], value.registrationID.String(),
 		value.version, value.networkRevision, value.principalID.String(),

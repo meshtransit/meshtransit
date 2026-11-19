@@ -57,6 +57,55 @@ var (
 		ErrKeysHeldElsewhere)
 )
 
+// RefusalReason names why a browser sign-in was refused for good, for logs
+// and audit; it never names a key, a host name or another Device.
+func RefusalReason(err error) string {
+	switch {
+	case errors.Is(err, ErrMachineOfAnotherAccount):
+		return "machine_of_another_account"
+	case errors.Is(err, ErrMachineNotMovable):
+		return "machine_not_movable"
+	case errors.Is(err, ErrMoveNotConfirmed):
+		return "move_not_confirmed"
+	case errors.Is(err, ErrMoveNeedsNewClient):
+		return "move_needs_new_client"
+	case errors.Is(err, ErrSiblingConflict):
+		return "sibling_conflict"
+	case errors.Is(err, ErrKeysHeldElsewhere):
+		return "keys_held_elsewhere"
+	case errors.Is(err, ErrNewDeviceLimit):
+		return "new_device_limit"
+	}
+	return ""
+}
+
+// RefusedForGood reports a completion refusal asking again within the
+// approval never changes: the node ends its sign-in, and Core ends the
+// approval (TD-CORE-150 M1).
+func RefusedForGood(err error) bool {
+	return errors.Is(err, ErrKeysHeldElsewhere) || errors.Is(err, ErrNewDeviceLimit)
+}
+
+// RefusedIntentError is a browser sign-in refused for good
+// (RefusedForGood), with the approval it refused and whether Core
+// ended that approval at once (TD-CORE-150 M1). It unwraps to the refusal
+// only: a failure to end the approval never turns the refusal into a retry,
+// and the approval then ends on the next sign-in or when it expires.
+type RefusedIntentError struct {
+	IntentID string
+	Ended    bool
+	EndErr   error
+	Err      error
+}
+
+func (refused *RefusedIntentError) Error() string {
+	return refused.Err.Error()
+}
+
+func (refused *RefusedIntentError) Unwrap() error {
+	return refused.Err
+}
+
 // JoinedExistingError is a sign-in the approver ended with "Use that
 // account" (duplicate-device design §8.2): no Device was made, and the node
 // switches to the profile whose machine key SiblingMachineKey is.

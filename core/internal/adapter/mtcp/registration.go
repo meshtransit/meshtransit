@@ -306,6 +306,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 			return conversation.reject(networkFull)
 		case errors.Is(err, registration.ErrNewDeviceLimit):
 			options.Metrics.browserCompletion(completionRefused)
+			conversation.newDeviceLimit(ctx, err)
 			return conversation.reject(newDeviceLimit)
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):
 			conversation.keysHeldElsewhere(ctx, err)
@@ -429,15 +430,41 @@ func keysHeldRejection(err error) rejection {
 // keysHeldElsewhere records an approval refused because the node's keys hold
 // another Device: an operator sees it, and no key or name is logged.
 func (conversation *conversation) keysHeldElsewhere(ctx context.Context, err error) {
+	attributes := conversation.refusalEnded(ctx, err)
 	if errors.Is(err, registration.ErrSiblingConflict) {
 		conversation.application.options.Metrics.browserCompletion(completionSiblingConflict)
 		conversation.application.options.Logger.InfoContext(ctx,
-			"browser registration refused: a sibling profile is already the person's Device in that Network")
+			"browser registration refused: a sibling profile is already the person's Device in that Network",
+			attributes...)
 		return
 	}
 	conversation.application.options.Metrics.browserCompletion(completionKeysHeldElsewhere)
 	conversation.application.options.Logger.WarnContext(ctx,
-		"browser registration refused: the machine key holds another Device")
+		"browser registration refused: the machine key holds another Device", attributes...)
+}
+
+// refusalEnded returns the log attributes of a refusal for good and logs
+// once when Core could not end its approval: the refusal stands, and the
+// approval then ends on the next sign-in or when it expires.
+func (conversation *conversation) refusalEnded(ctx context.Context, err error) []any {
+	attributes := []any{"reason", registration.RefusalReason(err)}
+	var refused *registration.RefusedIntentError
+	if errors.As(err, &refused) {
+		attributes = append(attributes, "intent_id", refused.IntentID, "approval_ended", refused.Ended)
+		if refused.EndErr != nil {
+			conversation.application.options.Logger.WarnContext(ctx,
+				"browser registration refused, but its approval could not be ended", "error", refused.EndErr)
+		}
+	}
+	return attributes
+}
+
+// newDeviceLimit records a sign-in refused because the person reached the
+// Network's new-Device limit.
+func (conversation *conversation) newDeviceLimit(ctx context.Context, err error) {
+	conversation.application.options.Logger.InfoContext(ctx,
+		"browser registration refused: the person reached the Network's new-Device limit",
+		conversation.refusalEnded(ctx, err)...)
 }
 
 // wait replaces the pending approval the session watches.
@@ -553,6 +580,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending *ap
 			return true
 		case errors.Is(err, registration.ErrNewDeviceLimit):
 			conversation.application.options.Metrics.browserCompletion(completionRefused)
+			conversation.newDeviceLimit(ctx, err)
 			_ = conversation.reject(newDeviceLimit)
 			return true
 		case errors.Is(err, registration.ErrKeysHeldElsewhere):

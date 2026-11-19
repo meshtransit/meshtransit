@@ -155,5 +155,7 @@ JOIN mesh.browser_registration_intent intent ON intent.id=sibling.intent_id WHER
 	if _, found, err := completion.CompleteWithSiblings(ctx, late, hostname, lateToken,
 		[][32]byte{siblingKey}); found || !errors.Is(err, registration.ErrSiblingConflict) {
 		t.Fatalf("completion with a proven sibling in that Network = %v/%v", found, err)
+	} else {
+		assertRefusalEnded(t, "sibling in that Network", err)
 	}
 }

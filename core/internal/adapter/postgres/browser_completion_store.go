@@ -187,6 +187,21 @@ func (store *BrowserCompletionStore) Complete(
 func (store *BrowserCompletionStore) CompleteWithSiblings(
 	ctx context.Context, identityValue node.RegistrationIdentity,
 	hostname node.Hostname, encodedToken string, siblings [][32]byte,
+) (registration.Result, bool, error) {
+	result, found, err := store.completeWithSiblings(ctx, identityValue, hostname, encodedToken, siblings)
+	if registration.RefusedForGood(err) {
+		// The completion's transaction rolled back; a second one ends the
+		// approval so asking again does not hand the node the same refusal.
+		if digest, digestErr := enrollment.DigestPresentedBrowserIntentToken(encodedToken); digestErr == nil {
+			return result, found, store.refused(ctx, identityValue, hostname, digest, err)
+		}
+	}
+	return result, found, err
+}
+
+func (store *BrowserCompletionStore) completeWithSiblings(
+	ctx context.Context, identityValue node.RegistrationIdentity,
+	hostname node.Hostname, encodedToken string, siblings [][32]byte,
 ) (_ registration.Result, found bool, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil ||
 		!validRegistrationTransactionOptions(store.options) ||

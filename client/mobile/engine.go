@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
@@ -678,9 +679,65 @@ func (engine *Engine) CompleteLogin() (registered bool, err error) {
 			return nil
 		}
 		registered = loginErr == nil
-		return loginErr
+		return refusalError(loginErr)
 	})
 	return registered, err
+}
+
+// RefusalPrefix starts the error of a sign-in Core refused for good, as
+// "registration_<code>: <Core's sentence>", like the local API's 409 code: the
+// sign-in has ended, and the app shows the sentence at once instead of
+// checking again (TD-CORE-150).
+const RefusalPrefix = "registration_"
+
+func refusalError(err error) error {
+	// The core also failed to end the sign-in (another error joined to the
+	// rejection): it still waits for the approval, so the app must not treat
+	// it as ended.
+	if !onlyRejection(err) {
+		return err
+	}
+	rejected, ok := errors.AsType[*controlplane.RejectedError](err)
+	if !ok || !errors.Is(err, daemon.ErrRegistration) || !refusalCode(rejected.Code) {
+		return err
+	}
+	return fmt.Errorf("%s%s: %s", RefusalPrefix, rejected.Code, rejected.Message)
+}
+
+// onlyRejection reports an error tree made of Core's rejection and the
+// registration sentinels that wrap it, and nothing else.
+func onlyRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := err.(*controlplane.RejectedError); ok {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range wrapped.Unwrap() {
+			if !onlyRejection(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return onlyRejection(wrapped.Unwrap())
+	}
+	return errors.Is(err, daemon.ErrRegistration) || errors.Is(err, controlplane.ErrRegistration)
+}
+
+// refusalCode is a Core rejection code (mtcp-v1 §6.1): lower case and short.
+func refusalCode(code string) bool {
+	if code == "" || len(code) > 32 {
+		return false
+	}
+	for _, character := range code {
+		if (character < 'a' || character > 'z') && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // Up connects the active profile and keeps it connected across restarts.

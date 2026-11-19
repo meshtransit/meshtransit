@@ -412,6 +412,7 @@
       "mesh_ops.current_network_id",
       "mesh_ops.current_workspace_id",
       "mesh_ops.delete_kubernetes_cluster_v1",
+      "mesh_ops.end_refused_browser_intent_v1",
       "mesh_ops.enqueue_kubernetes_gateway_certificate_v1",
       "mesh_ops.ensure_kubernetes_cluster_policy_group_v1",
       "mesh_ops.finalize_browser_move_v1",
