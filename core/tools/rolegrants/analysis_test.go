@@ -62,6 +62,9 @@ func analyzed(t *testing.T) Result {
 	if testing.Short() {
 		t.Skip("whole-program analysis takes about a minute")
 	}
+	if raceEnabled {
+		t.Skip("whole-program analysis runs in the test run without -race")
+	}
 	analysisOnce.Do(func() { analysisResult, analysisErr = Analyze(moduleRoot) })
 	if analysisErr != nil {
 		t.Fatal(analysisErr)

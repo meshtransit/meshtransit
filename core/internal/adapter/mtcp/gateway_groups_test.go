@@ -121,12 +121,18 @@ func TestGatewayGroupReportIsKept(t *testing.T) {
 		t.Fatalf("kept %+v", kept)
 	}
 	// A second report within 30 s waits for the next slot; a newer one
-	// replaces it there.
+	// replaces it there. The newer one comes before the slot: once the clock
+	// reaches it, the writer may already have written the one waiting.
 	c.send(sharedmtcp.MessageGatewayGroupReport, sampleGroupReport())
 	c.ping()
-	f.clock.advance(2 * gatewayGroupReportEvery)
 	c.send(sharedmtcp.MessageGatewayGroupReport, &mtcpv1.GatewayGroupReport{Truncated: true})
 	c.ping()
+	f.clock.advance(2 * gatewayGroupReportEvery)
+	// The writer sleeps on a real timer: wake it to see the moved clock.
+	select {
+	case f.server.groupReports.wake <- struct{}{}:
+	default:
+	}
 	if kept := recorder.waitFor(t, 2); len(kept) != 2 || !kept[1].Truncated {
 		t.Fatalf("kept %+v", kept)
 	}

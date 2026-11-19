@@ -135,7 +135,9 @@ func TestDiscoveryDiscoverReturnsPartialResult(t *testing.T) {
 	expected := netip.MustParseAddrPort("198.51.100.3:41641")
 	transport := newFakeDiscoveryTransport()
 	transport.mapped[responsiveServer] = expected
-	discovery, err := newDiscovery(transport, 30*time.Millisecond, 5*time.Millisecond)
+	// The window only bounds the silent server; a short one failed the
+	// responsive server too when a loaded machine answered late.
+	discovery, err := newDiscovery(transport, 500*time.Millisecond, 5*time.Millisecond)
 	if err != nil {
 		t.Fatalf("newDiscovery() error = %v", err)
 	}

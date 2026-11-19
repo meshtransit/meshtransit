@@ -584,10 +584,14 @@ func TestFitCeilingLargeIsLinear(t *testing.T) {
 		ceiling.Groups = append(ceiling.Groups, measured)
 	}
 	limit := sharedmtcp.MessageGatewayGroupCeiling.Limit()
+	bound := 5 * time.Second
+	if raceEnabled {
+		bound = time.Minute
+	}
 	started := time.Now()
 	fitCeiling(ceiling, limit)
-	if took := time.Since(started); took > 5*time.Second {
-		t.Fatalf("took %v", took)
+	if took := time.Since(started); took > bound {
+		t.Fatalf("took %v, want at most %v", took, bound)
 	}
 	if size := proto.Size(ceiling); size > limit || !ceiling.GetTruncated() ||
 		sharedmtcp.ValidateGatewayGroupCeiling(ceiling) != nil {

@@ -5,7 +5,9 @@ LINT_GOOS ?= windows
 LINT_GOARCH ?= amd64
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-GO_FILES := $(shell find core client api shared relay test -type f -name '*.go' 2>/dev/null)
+# gofmt walks these itself: a list of every file is one shell argument longer
+# than Linux allows (128 KiB), so make fmt-check failed in CI.
+GO_DIRS := $(wildcard core client api shared relay test)
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
 CONTAINER_IMAGE ?= meshtransit/mesh-core
@@ -99,10 +101,10 @@ scan-secrets:
 	bash hack/security/scan-secrets.sh
 
 fmt:
-	gofmt -w $(GO_FILES)
+	gofmt -w $(GO_DIRS)
 
 fmt-check:
-	@unformatted="$$(gofmt -l $(GO_FILES))"; \
+	@unformatted="$$(gofmt -l $(GO_DIRS))"; \
 		test -z "$$unformatted" || { echo "unformatted Go files:"; echo "$$unformatted"; exit 1; }
 
 tidy-check:

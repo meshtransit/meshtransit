@@ -545,7 +545,6 @@ func TestAMeasurementHoldsLivenessOffItsPeer(t *testing.T) {
 	if !sent {
 		t.Fatal("no liveness PING was sent")
 	}
-	livenessAt := time.Now()
 
 	done := measureAsync(t.Context(), runtime, peerID)
 	// The next relay PING is the measurement's, a margin past the peer's pacing.
@@ -553,7 +552,9 @@ func TestAMeasurementHoldsLivenessOffItsPeer(t *testing.T) {
 	if !ok {
 		t.Fatal("the measurement sent no relay PING")
 	}
-	if elapsed := time.Since(livenessAt); elapsed < relayMeasurementWait-20*time.Millisecond {
+	// Spacing on the sender's clock (SentAt, Unix ms): when the test reads the
+	// liveness PING late under load, the time it saw would look too short.
+	if elapsed := time.Duration(measured.SentAt-liveness.SentAt) * time.Millisecond; elapsed < relayMeasurementWait-20*time.Millisecond {
 		t.Fatalf("the measurement PING left %v after liveness, want at least %v", elapsed, relayMeasurementWait)
 	}
 	if measured.TxID == liveness.TxID {
