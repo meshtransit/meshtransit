@@ -583,6 +583,22 @@ func (f *conversationFixture) expect(want sharedmtcp.MessageType) any {
 	return m
 }
 
+// expectPastMaps is expect for a message that may come after map messages
+// the stream still sends: a running stream and an answer race (TD-TEST-72).
+func (f *conversationFixture) expectPastMaps(want sharedmtcp.MessageType) any {
+	f.t.Helper()
+	for {
+		t, m := f.next()
+		if t >= sharedmtcp.MessageMapSnapshot && t <= sharedmtcp.MessageMapFresh && want != t {
+			continue
+		}
+		if t != want {
+			f.t.Fatalf("got %#x %v, want %#x", uint8(t), m, uint8(want))
+		}
+		return m
+	}
+}
+
 func (f *conversationFixture) expectStream(nodeKey node.Key) {
 	f.t.Helper()
 	select {
@@ -1073,7 +1089,7 @@ func TestLogout(t *testing.T) {
 	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{}); err != nil {
 		t.Fatal(err)
 	}
-	if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_NOT_AUTHORIZED {
+	if m := f.expectPastMaps(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_NOT_AUTHORIZED {
 		t.Fatalf("failed logout answered %v", m)
 	}
 	f.expectStream(helloKey)
@@ -1082,7 +1098,7 @@ func TestLogout(t *testing.T) {
 	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageLogout, &mtcpv1.Logout{}); !errors.Is(err, errLoggedOut) {
 		t.Fatalf("logout returned %v; the session must end", err)
 	}
-	if m := f.expect(sharedmtcp.MessageLifecycle).(*mtcpv1.Lifecycle); m.GetState() != mtcpv1.Lifecycle_LOGGED_OUT {
+	if m := f.expectPastMaps(sharedmtcp.MessageLifecycle).(*mtcpv1.Lifecycle); m.GetState() != mtcpv1.Lifecycle_LOGGED_OUT {
 		t.Fatalf("logout sent %v", m)
 	}
 	if len(f.logout.keys) != 2 || f.logout.keys[1] != helloKey {
