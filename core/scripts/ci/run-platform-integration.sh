@@ -18,6 +18,18 @@ scale_mode="${PLATFORM_SCALE:-0}"
 # PLATFORM_SHARE_SCALE=N builds N Device shares on the migrated fixture
 # database and measures map reads (TestPostgreSQLShareScale), then stops.
 share_scale="${PLATFORM_SHARE_SCALE:-0}"
+# PLATFORM_RUNTIME_LOGIN=mesh_all runs the migration and operator-step tests
+# with the stores as mesh_all, the self-host login holding both groups
+# (role isolation S2.2, TD-TEST-73), then stops.
+runtime_login="${PLATFORM_RUNTIME_LOGIN:-mesh_runtime}"
+case "${runtime_login}" in
+	mesh_runtime | mesh_all) ;;
+	*) echo "PLATFORM_RUNTIME_LOGIN must be mesh_runtime or mesh_all" >&2; exit 2 ;;
+esac
+if [[ "${runtime_login}" == mesh_all && ( "${scale_mode}" != 0 || "${share_scale}" != 0 ) ]]; then
+	echo "PLATFORM_RUNTIME_LOGIN=mesh_all runs alone, without PLATFORM_SCALE or PLATFORM_SHARE_SCALE" >&2
+	exit 2
+fi
 postgres_shm_size="${POSTGRES_SHM_SIZE:-64m}"
 # POSTGRES_MEMORY caps the fixture database's memory (docker --memory, for
 # example 768m as on POC); unset leaves it uncapped.
@@ -329,8 +341,10 @@ for _ in $(seq 1 60); do
 	fi
 	sleep 1
 done
-# The scale modes exit before the gate, so they are not sampled.
-if [[ "${backend_gate_mb}" != 0 && "${scale_mode}" == 0 && "${share_scale}" == 0 ]]; then
+# The scale modes and the mesh_all lane exit before the gate, so they are not
+# sampled.
+if [[ "${backend_gate_mb}" != 0 && "${scale_mode}" == 0 && "${share_scale}" == 0 &&
+	"${runtime_login}" == mesh_runtime ]]; then
 	"$(dirname "${BASH_SOURCE[0]}")/pg-backend-sampler.sh" "${fixture_dir}/postgres-backends.txt" \
 		-- docker exec "${postgres_container}" &
 	sampler_pid=$!
@@ -352,6 +366,17 @@ printf \
 		"${postgres_container}" \
 		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
 		>/dev/null
+if [[ "${runtime_login}" == mesh_all ]]; then
+	printf \
+		"CREATE ROLE mesh_all LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nGRANT mesh_api_rights, mesh_control_rights TO mesh_all WITH INHERIT TRUE, SET FALSE;\n" \
+		"${runtime_password}" \
+		| docker exec \
+			--interactive \
+			--env "PGPASSWORD=${postgres_password}" \
+			"${postgres_container}" \
+			psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+			>/dev/null
+fi
 docker exec \
 	--env "PGPASSWORD=${postgres_password}" \
 	"${postgres_container}" \
@@ -455,7 +480,7 @@ export MESHTRANSIT_MIGRATION_STATEMENT_TIMEOUT=30s
 export MESHTRANSIT_ROLE=api
 export MESHTRANSIT_POSTGRES_ADDRESS="${postgres_address}"
 export MESHTRANSIT_POSTGRES_DATABASE=meshtransit
-export MESHTRANSIT_POSTGRES_RUNTIME_USER=mesh_runtime
+export MESHTRANSIT_POSTGRES_RUNTIME_USER="${runtime_login}"
 export MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE="${fixture_dir}/runtime-password"
 export MESHTRANSIT_POSTGRES_CA_FILE="${fixture_dir}/ca.crt"
 export MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS=2
@@ -507,6 +532,9 @@ run_go test \
 	-run '^TestPostgreSQLOperatorSteps$' \
 	-timeout=5m \
 	./core/test/integration
+if [[ "${runtime_login}" == mesh_all ]]; then
+	exit 0
+fi
 
 if [[ "${memory_gate_mb}" != 0 ]]; then
 	docker logs "${postgres_container}" > "${fixture_dir}/postgres-statements.log" 2>&1

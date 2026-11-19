@@ -101,6 +101,29 @@ jobs:
       - name: Run migration, authority, outbox and wakeup checks
         run: make integration-platform-container
 
+  platform-integration-selfhost:
+    name: Platform integration as the self-host login (mesh_all)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # The stores run as mesh_all, which holds the api's and control's
+      # groups, as a self-hosted Core does (TD-TEST-73).
+      - name: Run migration and operator-step checks as mesh_all
+        env:
+          PLATFORM_RUNTIME_LOGIN: mesh_all
+        run: make integration-platform-container
+
   container:
     name: Container build and security gates
     runs-on: ubuntu-24.04
