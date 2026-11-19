@@ -17,3 +17,6 @@
 *.prof
 /core/meshcore
 /pgmemgate
+
+# Binaries built in place (go build in core/cmd/meshcore), TD-CODE-15.
+/core/cmd/meshcore/meshcore
