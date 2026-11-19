@@ -705,6 +705,7 @@ func Catalog() []Migration {
 		newMigration(297, "Device revocation locks its rows through a function", lockDeviceRevocationTargetSQL),
 		newMigration(298, "The group roles receive what their role uses, as mesh_runtime holds it", groupRoleGrantsSQL),
 		newMigration(299, "Row-level security policies apply to the group roles", groupRolePoliciesSQL),
+		newMigration(300, "mesh_runtime holds only what its group holds", narrowRuntimeToGroupsSQL),
 	}
 }
 
@@ -1381,3 +1382,6 @@ var groupRoleGrantsSQL string
 
 //go:embed 000299_group_role_policies.up.sql
 var groupRolePoliciesSQL string
+
+//go:embed 000300_narrow_runtime_to_groups.up.sql
+var narrowRuntimeToGroupsSQL string

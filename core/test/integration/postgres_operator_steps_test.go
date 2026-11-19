@@ -73,6 +73,13 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		refused.Step != "000051_resource_sharing_function_ownership" {
 		t.Fatalf("Apply(through 80) before migration 51 = %v", err)
 	}
+	// As the main database: a legacy copy at schema 299 keeps the group
+	// checks meaningful after S2.3 narrows mesh_runtime (migration 300).
+	if _, err := openIntegrationMigrationRunner(ctx, t, freshMigration).UpThrough(ctx,
+		integrationLegacyCopyVersion); err != nil {
+		t.Fatalf("migrate the operator step database through %d: %v", integrationLegacyCopyVersion, err)
+	}
+	copyIntegrationLegacyRuntime(ctx, t, database)
 	if _, err := openIntegrationMigrationRunner(ctx, t, freshMigration).Up(ctx); err != nil {
 		t.Fatalf("migrate the operator step database: %v", err)
 	}
@@ -118,7 +125,9 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
 	// A new installation: migrations ran before any operator step, and the
 	// group roles still end as a projection of mesh_runtime (S2.2).
-	assertGroupRolesWithinRuntime(ctx, t, openFreshAdmin(ctx, t, admin, database))
+	freshDatabase := openFreshAdmin(ctx, t, admin, database)
+	grantLegacyCatalogRuntimeFunctions(ctx, t, freshDatabase)
+	assertGroupRolesWithinRuntime(ctx, t, freshDatabase)
 	waitOperatorStepGauge(ctx, t, worker, 0)
 	if version := aliasWorkerVersion(ctx, t, worker); version != 6 {
 		t.Fatalf("alias worker version after the operator steps = %v", version)
@@ -496,13 +505,15 @@ func assertOperatorLogins(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	var superuser, inherits, setsRole, member bool
 	if err := admin.QueryRow(ctx, `SELECT role.rolsuper OR role.rolcreaterole OR role.rolbypassrls OR NOT role.rolcanlogin,
     membership.inherit_option, membership.set_option,
-    pg_catalog.pg_has_role('mesh_control', 'mesh_runtime', 'USAGE')
+    pg_catalog.pg_has_role('mesh_control', 'mesh_control_rights', 'USAGE')
+        AND NOT pg_catalog.pg_has_role('mesh_control', 'mesh_runtime', 'MEMBER')
 FROM pg_catalog.pg_roles AS role
 JOIN pg_catalog.pg_auth_members AS membership ON membership.member = role.oid
-JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid AND granted.rolname = 'mesh_runtime'
+JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid AND granted.rolname = 'mesh_control_rights'
 WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &member); err != nil {
 		t.Fatal(err)
 	}
+	// S2.3: control's login holds its group only, never mesh_runtime.
 	if superuser || !inherits || setsRole || !member {
 		t.Fatalf("mesh_control attributes: privileged %v inherit %v set %v member %v", superuser, inherits, setsRole, member)
 	}
@@ -510,10 +521,9 @@ WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &me
 	if err != nil || len(verification.Operator.Memberships) != 0 {
 		t.Fatalf("Verify() with the mesh_control login = %+v, %v", verification.Operator.Memberships, err)
 	}
-	// S2.2 (review blocker): mesh_runtime is a creation-only membership.
-	// Once removed (S2.3), an apply of this release keeps it removed, while
-	// the group membership comes back.
-	if _, err := admin.Exec(ctx, "REVOKE mesh_runtime FROM mesh_control; REVOKE mesh_control_rights FROM mesh_control"); err != nil {
+	// S2.3: a login S2.2 left in mesh_runtime leaves it on the next apply,
+	// and a removed group membership comes back.
+	if _, err := admin.Exec(ctx, "GRANT mesh_runtime TO mesh_control WITH INHERIT TRUE, SET FALSE; REVOKE mesh_control_rights FROM mesh_control"); err != nil {
 		t.Fatal(err)
 	}
 	keep(first)
@@ -525,10 +535,7 @@ WHERE role.rolname = 'mesh_control'`).Scan(&superuser, &inherits, &setsRole, &me
 		t.Fatal(err)
 	}
 	if inRuntime || !inGroup {
-		t.Fatalf("apply after S2.3 removed mesh_runtime: in mesh_runtime %v, in mesh_control_rights %v", inRuntime, inGroup)
-	}
-	if _, err := admin.Exec(ctx, "GRANT mesh_runtime TO mesh_control WITH INHERIT TRUE, SET FALSE"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("apply after S2.2: in mesh_runtime %v, in mesh_control_rights %v", inRuntime, inGroup)
 	}
 	// A different password is refused: the running pods use the stored one.
 	second := strings.Repeat("Zr4m", 10)

@@ -312,3 +312,10 @@ var groupFunctionGrantsSQL string
 // GroupFunctionGrantsSQL grants the group roles the owner-held functions
 // their role calls, as mesh_runtime holds them (role isolation S2.2).
 func GroupFunctionGrantsSQL() string { return groupFunctionGrantsSQL }
+
+//go:embed operator/000300_runtime_function_grants_ownership.sql
+var runtimeFunctionGrantsSQL string
+
+// RuntimeFunctionGrantsSQL takes the owner-held functions away from
+// mesh_runtime itself (role isolation S2.3).
+func RuntimeFunctionGrantsSQL() string { return runtimeFunctionGrantsSQL }

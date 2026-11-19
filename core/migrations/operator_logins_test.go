@@ -117,10 +117,10 @@ func TestOperatorS22Memberships(t *testing.T) {
 		if !slices.Equal(login.MemberOf, want[login.Name]) {
 			t.Errorf("%s is a member of %v, want %v", login.Name, login.MemberOf, want[login.Name])
 		}
-		// mesh_runtime only when the apply creates the login: never added
-		// back after S2.3 removed it (review blocker).
-		if !slices.Equal(login.CreatedMemberOf, []string{"mesh_runtime"}) {
-			t.Errorf("%s joins %v on creation, want mesh_runtime", login.Name, login.CreatedMemberOf)
+		// S2.3: mesh_runtime is never granted and is taken away.
+		if len(login.CreatedMemberOf) != 0 || !slices.Equal(login.NotMemberOf, []string{"mesh_runtime"}) {
+			t.Errorf("%s joins %v on creation and leaves %v, want none and mesh_runtime", login.Name,
+				login.CreatedMemberOf, login.NotMemberOf)
 		}
 	}
 	for _, membership := range []string{"mesh_control is a member of mesh_runtime", "mesh_all is a member of mesh_runtime"} {

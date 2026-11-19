@@ -97,7 +97,12 @@ func TestOperatorStepsBeforeTheRolloutRevokeOnlyNewFunctions(t *testing.T) {
 		if step.Kind != OperatorStepOwnership || step.AfterRollout {
 			continue
 		}
-		for _, problem := range protectedRevokeProblems(step.Effects, firstCreatedBy(t, step.Name[:6])) {
+		// A function a group still holds (S2.3) the previous release reaches
+		// through its group.
+		effects := slices.DeleteFunc(slices.Clone(step.Effects), func(effect OperatorEffect) bool {
+			return runtimeRevokeKeepsRollback(steps, effect)
+		})
+		for _, problem := range protectedRevokeProblems(effects, firstCreatedBy(t, step.Name[:6])) {
 			t.Errorf("%s: rollout=before but %s; mark it rollout=after", step.Name, problem)
 		}
 	}

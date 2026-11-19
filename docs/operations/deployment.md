@@ -82,8 +82,13 @@ groups to exist, so it runs before `migrate up`:
 | Login | Member of (kept by `migrate operator apply`) |
 |---|---|
 | `mesh_runtime` (api) | `mesh_api_rights` |
-| `mesh_control` (control) | `mesh_control_rights`, `mesh_runtime` (until the narrowing release) |
-| `mesh_all` (self-host, one process) | `mesh_api_rights`, `mesh_control_rights`, `mesh_runtime` (until the narrowing release) |
+| `mesh_control` (control) | `mesh_control_rights` only (schema 300 and later; the operator removes a membership of `mesh_runtime` an older release left) |
+| `mesh_all` (self-host, one process) | `mesh_api_rights`, `mesh_control_rights` (likewise) |
+
+From schema 300 (role isolation S2.3) `mesh_runtime` holds nothing directly:
+the api reaches exactly what `mesh_api_rights` holds, control what
+`mesh_control_rights` holds, and no row-level security policy names
+`mesh_runtime`. Operator step 300 takes the owner-held functions away from it.
 
 A serving login outside its groups stays closed (readiness error
 `postgres login lacks its group roles`). The operator keeps `mesh_control` and

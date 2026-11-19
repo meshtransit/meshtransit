@@ -343,7 +343,7 @@ func assertPostgreSQLResourceSharing(
 	// The fixtures above share this Device repeatedly into the same Network,
 	// which schema 151 refuses once its operator step runs; sameWorkspaceShare
 	// is still live here.
-	if _, err := admin.Exec(ctx, migrations.DeviceSharedOnceOwnershipSQL()); err != nil {
+	if _, err := execOperatorStep(ctx, admin, migrations.DeviceSharedOnceOwnershipSQL()); err != nil {
 		t.Fatalf("harden single-share decisions: %v", err)
 	}
 	applyGroupFunctionGrantsSoFar(ctx, t, admin)

@@ -190,6 +190,9 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 			return err
 		}
 		result.Memberships = memberships
+		if err := ensureOperatorLoginRemovals(ctx, transaction); err != nil {
+			return err
+		}
 		for _, name := range plan.Run {
 			if err := transaction.Exec(ctx, byName[name].Body()); err != nil {
 				failed := &OperatorStepFailedError{Step: name, Err: err}

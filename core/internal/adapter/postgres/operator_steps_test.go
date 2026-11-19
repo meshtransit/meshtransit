@@ -253,3 +253,39 @@ func TestOperatorReportCountsMembershipsAsIncomplete(t *testing.T) {
 		t.Fatal("a membership of a MeshTransit role must make verification incomplete")
 	}
 }
+
+// Role isolation S2.2/S2.3: how a requirement on mesh_runtime is judged.
+func TestOperatorRequirementKind(t *testing.T) {
+	t.Parallel()
+	groupHeld := operatorGroupHeldFunctions([]migrations.OperatorRequirement{{Effect: migrations.OperatorEffect{
+		Kind: migrations.OperatorEffectExecute, Role: "mesh_api_rights",
+		Function: "mesh_ops.decide_resource_share_offer_v6(UUID)"}}})
+	for _, test := range []struct {
+		name   string
+		effect migrations.OperatorEffect
+		want   string
+	}{
+		{"execute for mesh_runtime counts through the groups",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectExecute, Role: "mesh_runtime",
+				Function: "mesh_ops.decide_resource_share_offer_v6(UUID)"}, "reach"},
+		{"a retired execute for mesh_runtime holds",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectExecute, Role: "mesh_runtime",
+				Function: "mesh_ops.revoke_resource_share_v1(UUID)"}, "held"},
+		{"a revoke from mesh_runtime needs no grant of its own",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectNoExecute, Role: "mesh_runtime",
+				Function: "mesh_ops.decide_resource_share_offer_v6(UUID)"}, "unheld"},
+		{"a revoke of a function no group holds stays strict",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectNoExecute, Role: "mesh_runtime",
+				Function: "mesh_ops.revoke_resource_share_v1(UUID)"}, string(migrations.OperatorEffectNoExecute)},
+		{"other roles keep their kind",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectNoExecute, Role: "mesh_worker",
+				Function: "mesh_ops.decide_resource_share_offer_v6(UUID)"}, string(migrations.OperatorEffectNoExecute)},
+		{"a group keeps its kind",
+			migrations.OperatorEffect{Kind: migrations.OperatorEffectExecute, Role: "mesh_api_rights",
+				Function: "mesh_ops.decide_resource_share_offer_v6(UUID)"}, string(migrations.OperatorEffectExecute)},
+	} {
+		if got := operatorRequirementKind(test.effect, groupHeld); got != test.want {
+			t.Errorf("%s: %s, want %s", test.name, got, test.want)
+		}
+	}
+}

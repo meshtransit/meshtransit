@@ -10,23 +10,23 @@ import (
 // password, and the privileges of the roles it is a member of (INHERIT, no
 // SET). A login is kept only when the apply is given its password.
 //
-// Step S2.2 (§3.5) adds the group roles: each login is a member of its
-// role's group (MemberOf, kept on every apply) and, when the apply creates
-// it, of mesh_runtime too (CreatedMemberOf), so the privileges in effect do
-// not change in this release. A creation-only membership is kept but never
-// added again: step S2.3 removes it, and an apply of this release after a
-// rollback must not give it back (control would inherit the api's rights).
+// Step S2.2 (§3.5) made each login a member of its role's group (MemberOf,
+// kept on every apply). Step S2.3 takes away the membership of mesh_runtime
+// S2.2 still gave a new login (NotMemberOf, revoked on every apply), so
+// control no longer inherits the api's rights. CreatedMemberOf, granted only
+// to a login the apply creates, is empty from S2.3.
 type OperatorLogin struct {
 	Name            string
 	MemberOf        []string
 	CreatedMemberOf []string
+	NotMemberOf     []string
 }
 
 var operatorLogins = []OperatorLogin{
-	{Name: "mesh_control", MemberOf: []string{"mesh_control_rights"}, CreatedMemberOf: []string{"mesh_runtime"}},
+	{Name: "mesh_control", MemberOf: []string{"mesh_control_rights"}, NotMemberOf: []string{"mesh_runtime"}},
 	// mesh_all is the self-host login: one process runs every role.
 	{Name: "mesh_all", MemberOf: []string{"mesh_api_rights", "mesh_control_rights"},
-		CreatedMemberOf: []string{"mesh_runtime"}},
+		NotMemberOf: []string{"mesh_runtime"}},
 }
 
 // OperatorLogins returns the logins the operator command keeps, in order.
@@ -34,7 +34,7 @@ func OperatorLogins() []OperatorLogin {
 	logins := make([]OperatorLogin, len(operatorLogins))
 	for index, login := range operatorLogins {
 		logins[index] = OperatorLogin{Name: login.Name, MemberOf: slices.Clone(login.MemberOf),
-			CreatedMemberOf: slices.Clone(login.CreatedMemberOf)}
+			CreatedMemberOf: slices.Clone(login.CreatedMemberOf), NotMemberOf: slices.Clone(login.NotMemberOf)}
 	}
 	return logins
 }
@@ -81,8 +81,10 @@ func OperatorAllowedMemberships() []string {
 			allowed = append(allowed, membership)
 		}
 	}
+	// A membership S2.3 takes away stays allowed one more release: the
+	// database of a release rolled back to S2.2 may still hold it.
 	for _, login := range operatorLogins {
-		for _, role := range slices.Concat(login.MemberOf, login.CreatedMemberOf) {
+		for _, role := range slices.Concat(login.MemberOf, login.CreatedMemberOf, login.NotMemberOf) {
 			add(login.Name + " is a member of " + role)
 		}
 	}

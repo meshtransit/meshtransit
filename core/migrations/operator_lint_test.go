@@ -45,10 +45,35 @@ func TestOperatorStepsKeepPreviousVersionsForRollback(t *testing.T) {
 		if number <= lastContractWindow || step.Kind != OperatorStepOwnership {
 			continue
 		}
-		for _, problem := range protectedRevokeProblems(step.Effects, firstCreatedBy(t, number)) {
+		effects := slices.DeleteFunc(slices.Clone(step.Effects), func(effect OperatorEffect) bool {
+			return runtimeRevokeKeepsRollback(steps, effect)
+		})
+		for _, problem := range protectedRevokeProblems(effects, firstCreatedBy(t, number)) {
 			t.Errorf("%s: %s", step.Name, problem)
 		}
 	}
+}
+
+// runtimeRevokeKeepsRollback reports a step taking a function away from
+// mesh_runtime (role isolation S2.3) that the previous release can still
+// run: a group role holds it (operator step 298), so the api and control
+// reach it through their groups, or no role calls it any more (retired).
+func runtimeRevokeKeepsRollback(steps []OperatorStep, effect OperatorEffect) bool {
+	if effect.Kind != OperatorEffectNoExecute || effect.Role != "mesh_runtime" {
+		return false
+	}
+	if OperatorRuntimeRetired(effect.Function) {
+		return true
+	}
+	// The final state: a group that a later step took the function from
+	// does not count.
+	for _, requirement := range OperatorRequirements(steps) {
+		if requirement.Effect.Kind == OperatorEffectExecute && requirement.Effect.Function == effect.Function &&
+			slices.Contains(operatorGroupRoles, requirement.Effect.Role) {
+			return true
+		}
+	}
+	return false
 }
 
 // Role steps run before their migration and may run again on a database that

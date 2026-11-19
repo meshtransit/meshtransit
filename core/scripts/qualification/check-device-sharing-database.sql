@@ -1,5 +1,8 @@
 -- Read-only qualification gate. Run as the database operator after all schema
 -- migrations and operator ownership scripts, before enabling Device sharing.
+-- From schema 300 (role isolation S2.3) mesh_runtime, the api login, reaches
+-- the share functions through mesh_api_rights only; retired versions reach no
+-- serving role.
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '10s';
 DO $gate$
@@ -22,16 +25,16 @@ BEGIN
     END IF;
     FOR expected IN SELECT * FROM (VALUES
         ('create_resource_share_offer_v1', FALSE),
-        ('create_resource_share_offer_v2', TRUE),
+        ('create_resource_share_offer_v2', FALSE),
         ('create_resource_share_offer_v3', TRUE),
         ('decide_resource_share_offer_v2', FALSE),
         ('decide_resource_share_offer_base_v2', FALSE),
-        ('decide_resource_share_offer_v3', TRUE),
+        ('decide_resource_share_offer_v3', FALSE),
         ('decide_resource_share_offer_v4', TRUE),
-        ('activate_resource_share_v2', TRUE),
+        ('activate_resource_share_v2', FALSE),
         ('activate_resource_share_v3', FALSE),
         ('activate_resource_share_v4', TRUE),
-        ('revoke_resource_share_v4', TRUE),
+        ('revoke_resource_share_v4', FALSE),
         ('revoke_resource_share_v5', FALSE),
         ('revoke_resource_share_v6', TRUE),
         ('resolve_imported_policy_destinations_v1', TRUE),
@@ -68,23 +71,53 @@ BEGIN
             RAISE EXCEPTION 'Device sharing function profile failed: %', expected.name;
         END IF;
     END LOOP;
-    FOR expected IN SELECT name FROM (VALUES
-        ('resource_export'), ('resource_export_constraint'), ('share_offer'),
-        ('share_offer_locator'), ('trust_contract'), ('imported_resource'),
-        ('imported_resource_access_name'), ('direct_device_endpoint'),
-        ('compiled_policy_imported_resource_destination')
-    ) AS tables(name) LOOP
+    -- The api reads the first seven itself; the last two only through
+    -- definer functions (schema 300: nothing reaches them otherwise).
+    FOR expected IN SELECT * FROM (VALUES
+        ('resource_export', TRUE), ('resource_export_constraint', TRUE), ('share_offer', TRUE),
+        ('share_offer_locator', TRUE), ('trust_contract', TRUE), ('imported_resource', TRUE),
+        ('imported_resource_access_name', TRUE), ('direct_device_endpoint', FALSE),
+        ('compiled_policy_imported_resource_destination', FALSE)
+    ) AS tables(name, runtime_reads) LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_catalog.pg_class AS relation
             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
             WHERE namespace.nspname = 'mesh' AND relation.relname = expected.name
               AND relation.relrowsecurity AND relation.relforcerowsecurity
-              AND pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
+              AND pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT') = expected.runtime_reads
               AND NOT pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT,UPDATE,DELETE,TRUNCATE')
+              AND NOT pg_catalog.has_table_privilege('mesh_control_rights', relation.oid,
+                  'INSERT,UPDATE,DELETE,TRUNCATE')
         ) THEN
             RAISE EXCEPTION 'Device sharing table confinement failed: %', expected.name;
         END IF;
     END LOOP;
+    -- Schema 300 (role isolation S2.3): mesh_runtime holds nothing directly
+    -- in the MeshTransit schemas, no policy names it, and control's and the
+    -- self-host logins no longer inherit it.
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS routine
+            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+            CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS acl
+            WHERE namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
+              AND acl.grantee = 'mesh_runtime'::REGROLE)
+        OR EXISTS (SELECT 1 FROM pg_catalog.pg_class AS relation
+            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl
+            WHERE namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
+              AND acl.grantee = 'mesh_runtime'::REGROLE)
+        OR EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS attribute
+            JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
+            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl
+            WHERE namespace.nspname IN ('mesh', 'mesh_ops', 'mesh_audit')
+              AND acl.grantee = 'mesh_runtime'::REGROLE)
+        OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy AS policy
+            WHERE 'mesh_runtime'::REGROLE = ANY(policy.polroles))
+        OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles AS login
+            WHERE login.rolname IN ('mesh_control', 'mesh_all')
+              AND pg_catalog.pg_has_role(login.oid, 'mesh_runtime'::REGROLE, 'MEMBER')) THEN
+        RAISE EXCEPTION 'mesh_runtime is not narrowed to its group (schema 300, operator step 300)';
+    END IF;
     IF NOT pg_catalog.has_table_privilege('mesh_share_writer',
         'mesh.compiled_policy_imported_resource_destination', 'SELECT')
       OR pg_catalog.has_table_privilege('mesh_share_writer',

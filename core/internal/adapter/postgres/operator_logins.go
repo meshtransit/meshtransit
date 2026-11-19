@@ -70,6 +70,42 @@ const operatorLoginSilenceSQL = `SET LOCAL log_statement = 'none';
 SET LOCAL log_min_error_statement = 'panic';
 SET LOCAL log_min_duration_statement = -1`
 
+// ensureOperatorLoginRemovals revokes, from every catalog login that exists,
+// the memberships the catalog takes away (role isolation S2.3: mesh_runtime),
+// password or not: a login S2.2 left in mesh_runtime would otherwise keep
+// the api's rights. Each grantor's grant is revoked as its own.
+func ensureOperatorLoginRemovals(ctx context.Context, transaction migrationTransaction) error {
+	for _, login := range migrations.OperatorLogins() {
+		if !loginName.MatchString(login.Name) {
+			return fmt.Errorf("%w: login name %q", ErrOperatorCatalog, login.Name)
+		}
+		for _, role := range login.NotMemberOf {
+			if !loginName.MatchString(role) {
+				return fmt.Errorf("%w: removed member role %q", ErrOperatorCatalog, role)
+			}
+			var grantors []string
+			if err := transaction.QueryRow(ctx, operatorLoginMemberSQL, login.Name, role).Scan(&grantors); err != nil {
+				return fmt.Errorf("read membership %s of login %s: %w", role, login.Name, err)
+			}
+			for _, grantor := range grantors {
+				if err := transaction.Exec(ctx, "REVOKE "+pgx.Identifier{role}.Sanitize()+" FROM "+
+					pgx.Identifier{login.Name}.Sanitize()+" GRANTED BY "+pgx.Identifier{grantor}.Sanitize()); err != nil {
+					return fmt.Errorf("revoke %s from login %s: %w", role, login.Name, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// operatorLoginMemberSQL lists the grantors of login $1's membership of $2.
+const operatorLoginMemberSQL = `SELECT COALESCE(pg_catalog.array_agg(DISTINCT grantor.rolname::TEXT), ARRAY[]::TEXT[])
+FROM pg_catalog.pg_auth_members AS membership
+JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+JOIN pg_catalog.pg_roles AS grantor ON grantor.oid = membership.grantor
+WHERE member_role.rolname = $1 AND granted_role.rolname = $2`
+
 const operatorLoginVerifierSQL = `SELECT COALESCE(rolpassword, '') FROM pg_catalog.pg_authid WHERE rolname = $1`
 
 // ensureOperatorLogins creates each catalog login that is missing, resets

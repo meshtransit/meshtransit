@@ -110,7 +110,18 @@ func (runner *MigrationRunner) Status(ctx context.Context) (MigrationStatus, err
 // Up applies every pending catalog entry atomically under the deployment
 // migration lock. Calling Up on a current schema is a safe no-op.
 func (runner *MigrationRunner) Up(ctx context.Context) (MigrationResult, error) {
-	if ctx == nil || runner == nil || runner.connection == nil {
+	if runner == nil || len(runner.catalog) == 0 {
+		return MigrationResult{}, ErrInvalidMigrationOptions
+	}
+	return runner.UpThrough(ctx, runner.catalog[len(runner.catalog)-1].Version)
+}
+
+// UpThrough applies the pending catalog entries up to and including version
+// through, as Up does. Tests use it to prepare a database between two
+// schema versions; a schema already past through is left as it is.
+func (runner *MigrationRunner) UpThrough(ctx context.Context, through int64) (MigrationResult, error) {
+	if ctx == nil || runner == nil || runner.connection == nil || through <= 0 ||
+		len(runner.catalog) == 0 || through > runner.catalog[len(runner.catalog)-1].Version {
 		return MigrationResult{}, ErrInvalidMigrationOptions
 	}
 	var result MigrationResult
@@ -129,7 +140,11 @@ func (runner *MigrationRunner) Up(ctx context.Context) (MigrationResult, error) 
 		if err != nil {
 			return err
 		}
-		pending := runner.catalog[int(status.CurrentVersion):]
+		if status.CurrentVersion >= through {
+			result.Status = status
+			return nil
+		}
+		pending := runner.catalog[int(status.CurrentVersion):int(through)]
 		if len(pending) == 0 {
 			result.Status = status
 			return nil

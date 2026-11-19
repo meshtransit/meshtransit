@@ -1,7 +1,7 @@
--- Role isolation S2.1 (docs/role-isolation-design.md §3.5): the state step S2.3 reaches, simulated on a test database
--- by its superuser. mesh_runtime keeps only what it inherits from mesh_api_rights; mesh_control only what it inherits
--- from mesh_control_rights. Every direct privilege mesh_runtime held moves to mesh_it_legacy (a test role, member of no
--- MeshTransit role), which the schema assertions' raw SQL runs as, since those test objects the code no longer uses.
+-- Role isolation (docs/role-isolation-design.md §3.5): moves every privilege mesh_runtime holds directly to
+-- mesh_it_legacy (a test role, member of no MeshTransit role), which the schema assertions' raw SQL runs as, and
+-- drops mesh_runtime from policies and from mesh_control. Since S2.3 the migrations and operator step 000300 do the
+-- narrowing; the tests run this after an operator step they apply by hand that grants mesh_runtime again (000151).
 DO $narrow$
 DECLARE
     v_source OID := (SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = 'mesh_runtime');
@@ -70,4 +70,12 @@ BEGIN
     END LOOP;
 END;
 $narrow$;
-REVOKE mesh_runtime FROM mesh_control;
+DO $control$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+        WHERE membership.member = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'mesh_control')
+          AND membership.roleid = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'mesh_runtime')) THEN
+        REVOKE mesh_runtime FROM mesh_control;
+    END IF;
+END;
+$control$;

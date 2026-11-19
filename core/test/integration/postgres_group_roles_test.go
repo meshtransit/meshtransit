@@ -5,13 +5,16 @@ package integration
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/platform/config"
@@ -20,44 +23,116 @@ import (
 )
 
 // integrationSchemaRuntimeUser is the login the schema assertions' raw SQL
-// runs as: MESHTRANSIT_TEST_POSTGRES_SCHEMA_RUNTIME_USER (the harness sets
-// mesh_runtime, with the same password, when the stores run as mesh_all), or
-// the stores' own login.
-func integrationSchemaRuntimeUser(runtimeUser string) string {
-	if user := os.Getenv("MESHTRANSIT_TEST_POSTGRES_SCHEMA_RUNTIME_USER"); user != "" {
+// runs as: MESHTRANSIT_TEST_POSTGRES_SCHEMA_RUNTIME_USER, or mesh_it_schema,
+// a member of mesh_it_legacy, which holds what mesh_runtime held before
+// S2.3 (the harness creates it with the runtime login's password).
+func integrationSchemaRuntimeUser(string) string {
+	if user := os.Getenv("MESHTRANSIT_TEST_POSTGRES_SCHEMA_RUNTIME_USER"); user != "" && user != "mesh_runtime" {
 		return user
 	}
-	return runtimeUser
+	return "mesh_it_schema"
 }
 
 //go:embed testdata/role_split_narrowing.sql
 var roleSplitNarrowingSQL string
 
-// openIntegrationRoleSplit returns the pool control's flows run on. With
-// MESHTRANSIT_TEST_ROLE_SPLIT=1 (role isolation S2.1) it narrows the database
-// as S2.3 will (testdata/role_split_narrowing.sql), so mesh_runtime holds only
-// the api's group, and opens a pool as MESHTRANSIT_TEST_POSTGRES_CONTROL_USER,
-// a login holding only control's group. A flow on the wrong pool fails when
-// it uses an object only the other role's group holds (most map reads are
-// both roles'). Not all control flows are moved yet: see the S2.1 handoff.
-// Otherwise it returns runtimePool.
-func openIntegrationRoleSplit(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
+//go:embed testdata/role_legacy_copy.sql
+var roleLegacyCopySQL string
+
+// integrationLegacyCopyVersion is the last schema before S2.3 narrows
+// mesh_runtime (migration 300): the tests copy its privileges there.
+const integrationLegacyCopyVersion = 299
+
+// grantLegacyCatalogRuntimeFunctions gives mesh_it_legacy every function the
+// operator steps before S2.3 granted mesh_runtime: on a database whose
+// operator command ran every step (step 300 included) after the legacy copy,
+// that is what mesh_runtime held before S2.3 took it away.
+func grantLegacyCatalogRuntimeFunctions(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	steps, err := migrations.OperatorSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := slices.DeleteFunc(steps, func(step migrations.OperatorStep) bool {
+		return step.Version > integrationLegacyCopyVersion
+	})
+	for _, requirement := range migrations.OperatorRequirements(before) {
+		if requirement.Effect.Kind != migrations.OperatorEffectExecute || requirement.Effect.Role != "mesh_runtime" {
+			continue
+		}
+		if _, err := admin.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+requirement.Effect.Function+" TO mesh_it_legacy"); err != nil {
+			t.Fatalf("grant %s to mesh_it_legacy: %v", requirement.Effect.Function, err)
+		}
+	}
+}
+
+// execOperatorStep runs an operator step the test applies by hand and, once
+// the legacy role took its copy (S2.3), copies again whatever the step gave
+// mesh_runtime: steps written before S2.3 still grant to it.
+func execOperatorStep(ctx context.Context, admin *pgx.Conn, step string) (pgconn.CommandTag, error) {
+	tag, err := admin.Exec(ctx, step)
+	if err != nil || legacyRuntimeRole == "" {
+		return tag, err
+	}
+	if _, err := admin.Exec(ctx, roleLegacyCopySQL); err != nil {
+		return tag, fmt.Errorf("copy the step's grants to mesh_it_legacy: %w", err)
+	}
+	return tag, nil
+}
+
+// copyIntegrationLegacyRuntime gives mesh_it_legacy, on the database
+// (default: the integration database), every privilege mesh_runtime holds
+// directly and a place in its policies, then points the legacy contracts at
+// it (legacyRuntimeSQL) for the rest of the test.
+func copyIntegrationLegacyRuntime(ctx context.Context, t *testing.T, database ...string) {
+	t.Helper()
+	adminConfig := loadIntegrationAdminConfig(t)
+	if len(database) == 1 {
+		adminConfig.PostgreSQL.Database = database[0]
+	}
+	admin := openIntegrationPostgreSQLConnection(ctx, t, adminConfig.PostgreSQL.Address,
+		adminConfig.PostgreSQL.Database, adminConfig.PostgreSQL.User, adminConfig.PostgreSQL.PasswordFile,
+		adminConfig.PostgreSQL.CAFile, adminConfig.ConnectTimeout)
+	if _, err := admin.Exec(ctx, `DO $legacy$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'mesh_it_legacy') THEN
+        CREATE ROLE mesh_it_legacy NOLOGIN;
+    END IF;
+END $legacy$`); err != nil {
+		t.Fatalf("create mesh_it_legacy: %v", err)
+	}
+	if _, err := admin.Exec(ctx, roleLegacyCopySQL); err != nil {
+		t.Fatalf("copy mesh_runtime's privileges to mesh_it_legacy: %v", err)
+	}
+	legacyRuntimeRole = "mesh_it_legacy"
+	t.Cleanup(func() { legacyRuntimeRole = "" })
+}
+
+// openIntegrationRoleSplit returns the pool control's flows run on: a pool
+// as control's login (MESHTRANSIT_TEST_POSTGRES_CONTROL_USER, default
+// mesh_control), which holds only control's group, after moving away
+// whatever hand-applied operator steps gave mesh_runtime again
+// (testdata/role_split_narrowing.sql); the api's stores keep mesh_runtime,
+// which holds only the api's group (S2.3). A flow on the wrong pool fails
+// when it uses an object only the other role's group holds. With the stores
+// as mesh_all (self-host, both groups) it returns runtimePool.
+func openIntegrationRoleSplit(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimeUser string,
+	runtimePool *postgresadapter.Pool,
 	address, database string, passwordFile config.SecretFile, caFile config.TrustFile,
 	timeout time.Duration) *postgresadapter.Pool {
 	t.Helper()
-	if os.Getenv("MESHTRANSIT_TEST_ROLE_SPLIT") != "1" {
+	// From S2.3 control's flows always run as control's login, unless the
+	// stores run as mesh_all (self-host), which holds both groups.
+	if runtimeUser == "mesh_all" {
 		return runtimePool
 	}
 	user := os.Getenv("MESHTRANSIT_TEST_POSTGRES_CONTROL_USER")
 	if user == "" {
-		t.Fatal("MESHTRANSIT_TEST_ROLE_SPLIT needs MESHTRANSIT_TEST_POSTGRES_CONTROL_USER")
+		user = "mesh_control"
 	}
 	if _, err := admin.Exec(ctx, roleSplitNarrowingSQL); err != nil {
 		t.Fatalf("narrow the database as S2.3 will: %v", err)
 	}
 	assertRoleSplitNarrowed(ctx, t, admin)
-	legacyRuntimeRole = "mesh_it_legacy"
-	t.Cleanup(func() { legacyRuntimeRole = "" })
 	grantIntegrationRuntimeGroups(ctx, t, admin, user)
 	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
 		Role: postgresadapter.PoolRoleRuntime, Address: address, Database: database, User: user,
@@ -145,7 +220,12 @@ func assertRoleSplitNarrowed(ctx context.Context, t *testing.T, admin *pgx.Conn)
     + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_class AS relation
         CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE)
     + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_attribute AS attribute
-        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE),
+        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE)
+    + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_namespace AS namespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(namespace.nspacl) AS acl WHERE acl.grantee = 'mesh_runtime'::REGROLE)
+    + (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_database AS database
+        CROSS JOIN LATERAL pg_catalog.aclexplode(database.datacl) AS acl
+        WHERE database.datname = pg_catalog.current_database() AND acl.grantee = 'mesh_runtime'::REGROLE),
     (SELECT pg_catalog.count(*)::INT FROM pg_catalog.pg_policy AS policy
         WHERE 'mesh_runtime'::REGROLE = ANY(policy.polroles)),
     pg_catalog.pg_has_role('mesh_control', 'mesh_runtime', 'MEMBER')`).Scan(

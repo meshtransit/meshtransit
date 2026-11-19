@@ -255,6 +255,15 @@ const operatorRequirementsSQL = `SELECT COALESCE(pg_catalog.array_agg(
           AND holder.rolname = ANY($4::TEXT[]))
     -- A retired grant (no role calls the function) holds as it is.
     WHEN 'held' THEN TRUE
+    -- S2.3: mesh_runtime holds the function no more itself; it still reaches
+    -- what its group holds, which is the point.
+    -- A function a later migration dropped holds too, as 'held' does.
+    WHEN 'unheld' THEN NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_proc AS routine
+        CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS grant_entry
+        JOIN pg_catalog.pg_roles AS holder ON holder.oid = grant_entry.grantee
+        WHERE routine.oid = pg_catalog.to_regprocedure(requirement.routine_signature)
+          AND grant_entry.privilege_type = 'EXECUTE' AND holder.rolname = 'mesh_runtime')
     WHEN 'owner' THEN EXISTS (
         SELECT 1 FROM pg_catalog.pg_proc AS routine
         JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
@@ -327,8 +336,9 @@ func readOperatorReport(
 	kinds := make([]string, len(requirements))
 	functions := make([]string, len(requirements))
 	roles := make([]string, len(requirements))
+	groupHeld := operatorGroupHeldFunctions(requirements)
 	for index, requirement := range requirements {
-		kinds[index] = operatorRequirementKind(requirement.Effect)
+		kinds[index] = operatorRequirementKind(requirement.Effect, groupHeld)
 		functions[index] = requirement.Effect.Function
 		roles[index] = requirement.Effect.Role
 	}
@@ -354,9 +364,17 @@ func readOperatorReport(
 
 // operatorRequirementKind is how operatorRequirementsSQL judges an effect:
 // an EXECUTE for mesh_runtime counts through every role that inherits its
-// work, or holds as it is once retired (role isolation S2.2, D1); any other
-// effect by its kind.
-func operatorRequirementKind(effect migrations.OperatorEffect) string {
+// work, or holds as it is once retired (role isolation S2.2, D1); a revoke
+// from mesh_runtime holds once it has no grant of its own (S2.3: its group
+// still reaches the function); any other effect by its kind.
+func operatorRequirementKind(effect migrations.OperatorEffect, groupHeld map[string]bool) string {
+	// Only a function a group holds: mesh_runtime still reaches it, through
+	// its group. A revoke of anything else stays strict (no grant, no PUBLIC,
+	// no membership reaches it).
+	if effect.Role == "mesh_runtime" && effect.Kind == migrations.OperatorEffectNoExecute &&
+		groupHeld[effect.Function] {
+		return "unheld"
+	}
 	if effect.Kind != migrations.OperatorEffectExecute || effect.Role != "mesh_runtime" {
 		return string(effect.Kind)
 	}
@@ -364,6 +382,20 @@ func operatorRequirementKind(effect migrations.OperatorEffect) string {
 		return "held"
 	}
 	return "reach"
+}
+
+// operatorGroupHeldFunctions are the functions a group role holds once every
+// due step ran (role isolation S2.2, operator step 298).
+func operatorGroupHeldFunctions(requirements []migrations.OperatorRequirement) map[string]bool {
+	held := map[string]bool{}
+	groups := migrations.OperatorGroupRoles()
+	for _, requirement := range requirements {
+		if requirement.Effect.Kind == migrations.OperatorEffectExecute &&
+			slices.Contains(groups, requirement.Effect.Role) {
+			held[requirement.Effect.Function] = true
+		}
+	}
+	return held
 }
 
 // readOperatorSchemaVersion returns the applied schema version, 0 on a
