@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 300 {
-		t.Fatalf("len(Catalog()) = %d, want 300", len(catalog))
+	if len(catalog) != 301 {
+		t.Fatalf("len(Catalog()) = %d, want 301", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 300 {
-		t.Fatalf("LatestVersion() = %d, want 300", LatestVersion())
+	if LatestVersion() != 301 {
+		t.Fatalf("LatestVersion() = %d, want 301", LatestVersion())
 	}
 }
 
@@ -8781,6 +8781,35 @@ func TestLockDeviceRevocationTargetStaysInScope(t *testing.T) {
 		"TO mesh_runtime", "TO mesh_control_rights"} {
 		if strings.Contains(sql, forbidden) {
 			t.Errorf("schema 297 contains %q", forbidden)
+		}
+	}
+}
+
+// Schema 301 (TD-SEC-95): the api's group gets what it called through
+// PUBLIC before PUBLIC loses it, and no new function is open to PUBLIC.
+func TestClosePublicFunctionsGrantsBeforeRevoking(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[300]
+	if migration.Version != 301 {
+		t.Fatalf("migration 301 version = %d", migration.Version)
+	}
+	sql := migration.SQL
+	for _, function := range []string{"preview_resource_authority_change_v1", "lock_resource_authority_change_v1",
+		"preview_resource_group_authority_change_v1", "lock_resource_group_authority_change_v1"} {
+		grant := strings.Index(sql, "GRANT EXECUTE ON FUNCTION mesh_ops."+function+"(UUID, TEXT, UUID) TO mesh_api_rights;")
+		revoke := strings.Index(sql, "REVOKE EXECUTE ON FUNCTION mesh_ops."+function+"(UUID, TEXT, UUID) FROM PUBLIC;")
+		if grant < 0 || revoke < 0 || grant > revoke {
+			t.Errorf("schema 301 does not grant %s to the api's group before revoking it from PUBLIC", function)
+		}
+	}
+	// CHECK constraints call device_never_expires_v1 as the writing role.
+	for _, required := range []string{
+		"GRANT EXECUTE ON FUNCTION mesh_ops.device_never_expires_v1() TO mesh_api_rights, mesh_control_rights, mesh_worker;",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE mesh_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;",
+		"'a MeshTransit function is still executable by PUBLIC'",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("schema 301 lacks %q", required)
 		}
 	}
 }
