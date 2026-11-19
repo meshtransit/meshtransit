@@ -70,7 +70,7 @@ JOIN mesh.workspace AS workspace ON workspace.id = signup.workspace_id
 ORDER BY signup.id DESC LIMIT 1`).Scan(&displayName, &workspaceName, &owned, &routes, &signupRows); err != nil {
 		t.Fatal(err)
 	}
-	if displayName != "Signup Person" || workspaceName != "Signup Person" || owned != 1 || routes != 1 ||
+	if displayName != "Signup Person" || workspaceName != "Default" || owned != 1 || routes != 1 ||
 		signupRows != 1 {
 		t.Fatalf("signed up = %q %q owned=%d routes=%d rows=%d", displayName, workspaceName, owned, routes, signupRows)
 	}

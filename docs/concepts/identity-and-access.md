@@ -38,7 +38,7 @@ for example in the names of shared Devices.
 
 On a Cloud deployment, `MESHTRANSIT_SELF_SIGNUP_ENABLED=true` lets a person
 who signs in for the first time get an Account and a Workspace of their own,
-named after their display name. It needs a current entitlement with room for
+named "Default" (they can rename it). It needs a current entitlement with room for
 another Workspace, and is rate-limited: by default 5 sign-ups a day per source
 network (the client's IPv4 `/24` or IPv6 `/48`, kept only as a keyed digest)
 and 30 an hour per deployment.

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 304 {
-		t.Fatalf("len(Catalog()) = %d, want 304", len(catalog))
+	if len(catalog) != 305 {
+		t.Fatalf("len(Catalog()) = %d, want 305", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 304 {
-		t.Fatalf("LatestVersion() = %d, want 304", LatestVersion())
+	if LatestVersion() != 305 {
+		t.Fatalf("LatestVersion() = %d, want 305", LatestVersion())
 	}
 }
 
@@ -8896,5 +8896,45 @@ func TestMemberDirectoryEmail(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "mesh_runtime") || strings.Contains(migration.SQL, "DROP FUNCTION") {
 		t.Error("schema 304 must grant only api's group and keep v1 for rollback")
+	}
+}
+
+// Schema 305: self sign-up names the new Account's Workspace "Default" and
+// keeps everything else of sign_up_account_v1 (schema 131), owner and grants
+// included.
+func TestSignupWorkspaceDefault(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[304]
+	if migration.Version != 305 {
+		t.Fatalf("migration 305 version = %d", migration.Version)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.sign_up_account_v1(",
+		"SECURITY DEFINER",
+		"v_deployment.id, v_principal, p_workspace_public_id, 'Default',",
+		"VALUES (v_account_public, v_deployment.id, v_principal, p_display_name, 'verified');",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 305 lacks %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT ", "REVOKE ", "DROP FUNCTION", "p_workspace_public_id, p_display_name,"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 305 must only rename the Workspace: has %q", forbidden)
+		}
+	}
+	// The body is schema 131's, byte for byte, but for the name.
+	signupBody := func(sql, create string) string {
+		start := strings.Index(sql, create)
+		end := strings.Index(sql, "$function$;")
+		if start < 0 || end < start {
+			t.Fatalf("no %q ... $function$; in the migration", create)
+		}
+		return sql[start+len(create) : end]
+	}
+	original := signupBody(Catalog()[130].SQL, "CREATE FUNCTION mesh_ops.sign_up_account_v1(")
+	want := strings.Replace(original, "p_workspace_public_id, p_display_name,", "p_workspace_public_id, 'Default',", 1)
+	if got := signupBody(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.sign_up_account_v1("); got != want {
+		t.Error("schema 305 changes sign_up_account_v1 beyond the Workspace name")
 	}
 }

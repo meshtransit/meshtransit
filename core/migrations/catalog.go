@@ -710,6 +710,7 @@ func Catalog() []Migration {
 		newMigration(302, "Groups cannot change enrollment credentials or profiles", narrowEnrollmentWritesSQL),
 		newMigration(303, "A refused browser sign-in ends at once", endRefusedBrowserIntentSQL),
 		newMigration(304, "The member directory names email and join time", memberDirectoryEmailSQL),
+		newMigration(305, "A new Account's Workspace is named Default", signupWorkspaceDefaultSQL),
 	}
 }
 
@@ -1401,3 +1402,6 @@ var endRefusedBrowserIntentSQL string
 
 //go:embed 000304_member_directory_email.up.sql
 var memberDirectoryEmailSQL string
+
+//go:embed 000305_signup_workspace_default.up.sql
+var signupWorkspaceDefaultSQL string
