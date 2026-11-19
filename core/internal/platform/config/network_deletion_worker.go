@@ -18,7 +18,7 @@ const (
 )
 
 // NetworkDeletionWorkerConfig assigns the Network deletion worker (phase 2,
-// docs/network-delete-design.md) to one installation.
+// network-delete-design) to one installation.
 type NetworkDeletionWorkerConfig struct {
 	DeploymentID                   deployment.ID
 	BatchSize                      int

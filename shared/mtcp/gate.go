@@ -20,7 +20,7 @@ const (
 const (
 	// GateTokenRequired: the session presented no pod token and its Device
 	// presented one before, or Core requires one from every gateway.
-	GateTokenRequired = "pod token required"
+	GateTokenRequired = "pod token required" //nolint:gosec // a refusal reason, not a credential
 	// GateTokenRefused: the token does not check against the cluster's
 	// trust or names another pod.
 	GateTokenRefused = "pod token refused"
@@ -28,5 +28,5 @@ const (
 	GateTokenExpired = "pod token expired"
 	// GateTokenClockSkew: the token was issued further ahead of Core's
 	// clock than Core tolerates; the cluster's clock is wrong.
-	GateTokenClockSkew = "pod token clock skew"
+	GateTokenClockSkew = "pod token clock skew" //nolint:gosec // a refusal reason, not a credential
 )

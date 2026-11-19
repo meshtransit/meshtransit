@@ -48,7 +48,8 @@ func (reports *groupReports) ceilingReport() *mtcpv1.GatewayGroupCeiling {
 // bind starts reporting groups as verdict judges them; lastPass is when
 // the checker last ended a whole pass.
 func (reports *groupReports) bind(groups []rbaccheck.Group, verdict func(string) rbaccheck.Verdict,
-	lastPass func() time.Time) {
+	lastPass func() time.Time,
+) {
 	if reports == nil {
 		return
 	}
@@ -82,8 +83,10 @@ func (reports *groupReports) report() *mtcpv1.GatewayGroupReport {
 
 // reportedGroup maps a verdict onto §6.11's states and reasons.
 func reportedGroup(group rbaccheck.Group, verdict rbaccheck.Verdict) *mtcpv1.GatewayGroupStatus {
-	status := &mtcpv1.GatewayGroupStatus{Group: group.Name, Privileged: group.Privileged,
-		State: mtcpv1.GatewayGroupStatus_DISABLED, Reason: mtcpv1.GatewayGroupStatus_NOT_CHECKED}
+	status := &mtcpv1.GatewayGroupStatus{
+		Group: group.Name, Privileged: group.Privileged,
+		State: mtcpv1.GatewayGroupStatus_DISABLED, Reason: mtcpv1.GatewayGroupStatus_NOT_CHECKED,
+	}
 	switch {
 	case verdict.Enabled && verdict.Code == rbaccheck.CodeImpersonationOff && group.Privileged:
 		status.State, status.Reason = mtcpv1.GatewayGroupStatus_ENABLED, mtcpv1.GatewayGroupStatus_IMPERSONATION_OFF

@@ -436,8 +436,10 @@ func TestManagerKeepsTheEarlyPlanThroughAMapThatCannotSay(t *testing.T) {
 	manager.step(t.Context(), *core.now)
 	current, _ := manager.Current()
 	*core.now = core.now.Add(time.Hour)
-	rotated := &networkmap.KubernetesCA{Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
-		MapRevision: 6}
+	rotated := &networkmap.KubernetesCA{
+		Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
+		MapRevision: 6,
+	}
 	manager.mapArrived(rotated, *core.now)
 	plan := manager.early
 	if plan == nil || !plan.root {
@@ -479,8 +481,10 @@ func TestManagerUsesAnEarlyPlanOnce(t *testing.T) {
 	*core.now = core.now.Add(time.Hour)
 	// Core rotates to a new root and intermediate; the map names them.
 	core.ca = newTestCA(t)
-	rotated := &networkmap.KubernetesCA{Root: core.ca.rootPrint[:], Signing: core.ca.intermediatePrint[:],
-		MapRevision: 6}
+	rotated := &networkmap.KubernetesCA{
+		Root: core.ca.rootPrint[:], Signing: core.ca.intermediatePrint[:],
+		MapRevision: 6,
+	}
 	manager.mapArrived(rotated, *core.now)
 	if manager.early == nil || !manager.early.root {
 		t.Fatalf("no plan for the new root: %+v", manager.early)
@@ -502,8 +506,10 @@ func TestManagerUsesAnEarlyPlanOnce(t *testing.T) {
 		t.Fatalf("renewed again: %d requests", len(core.requests))
 	}
 	// A pair whose plan fired before the certificate's issue is spent.
-	other := &networkmap.KubernetesCA{Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
-		MapRevision: 7}
+	other := &networkmap.KubernetesCA{
+		Root: bytes.Repeat([]byte{7}, 32), Signing: bytes.Repeat([]byte{8}, 32),
+		MapRevision: 7,
+	}
 	manager.mapArrived(other, *core.now)
 	spent := *manager.early
 	manager.mu.Lock()

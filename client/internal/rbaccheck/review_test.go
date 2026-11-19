@@ -35,16 +35,20 @@ func TestAPIReviewer(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	ca := filepath.Join(t.TempDir(), "ca.crt")
-	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE",
-		Bytes: server.Certificate().Raw}), 0o600); err != nil {
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	reviewer, err := NewAPIReviewer(server.URL, ca)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attributes := Attributes{Namespace: "meshtransit", Verb: "get", Resource: "pods", Subresource: "exec",
-		Name: "meshgw-0"}
+	attributes := Attributes{
+		Namespace: "meshtransit", Verb: "get", Resource: "pods", Subresource: "exec",
+		Name: "meshgw-0",
+	}
 	allowed, err := reviewer.Review(t.Context(), "token-view", attributes)
 	if err != nil || !allowed || auth != "Bearer token-view" || seen.Kind != "SelfSubjectAccessReview" ||
 		seen.Spec.ResourceAttributes.Subresource != "exec" || seen.Spec.ResourceAttributes.Name != "meshgw-0" {
@@ -57,9 +61,13 @@ func TestAPIReviewer(t *testing.T) {
 	for _, failing := range []struct {
 		status int
 		answer string
-	}{{http.StatusForbidden, ""}, {http.StatusCreated, `{}`}, {http.StatusCreated, `nope`},
+	}{
+		{http.StatusForbidden, ""},
+		{http.StatusCreated, `{}`},
+		{http.StatusCreated, `nope`},
 		{http.StatusCreated, `{"status":{"allowed":false,"evaluationError":"webhook timed out"}}`},
-		{http.StatusFound, ""}} {
+		{http.StatusFound, ""},
+	} {
 		status, answer = failing.status, failing.answer
 		if _, err := reviewer.Review(t.Context(), "t", attributes); err == nil {
 			t.Errorf("%d %q: no error", failing.status, failing.answer)

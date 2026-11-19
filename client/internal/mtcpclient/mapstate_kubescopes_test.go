@@ -20,8 +20,10 @@ const scopeMember = "01890f00-0000-7000-8000-000000000011"
 
 // scopeProfile is a small profile: read pods in the rule's namespaces.
 func scopeProfile(name string) kubeprofile.Profile {
-	return kubeprofile.Profile{Name: name, Namespaced: []kubeprofile.Rule{{APIGroups: []string{""},
-		Resources: []string{"pods"}, Verbs: []string{"get", "list"}}}}
+	return kubeprofile.Profile{Name: name, Namespaced: []kubeprofile.Rule{{
+		APIGroups: []string{""},
+		Resources: []string{"pods"}, Verbs: []string{"get", "list"},
+	}}}
 }
 
 func profileEntry(t testing.TB, profile kubeprofile.Profile) *mtcpv1.KubernetesProfile {
@@ -34,13 +36,17 @@ func profileEntry(t testing.TB, profile kubeprofile.Profile) *mtcpv1.KubernetesP
 	rules := func(rules []kubeprofile.Rule) []*mtcpv1.KubernetesProfileRule {
 		out := make([]*mtcpv1.KubernetesProfileRule, len(rules))
 		for index, rule := range rules {
-			out[index] = &mtcpv1.KubernetesProfileRule{ApiGroups: rule.APIGroups, Resources: rule.Resources,
-				Verbs: rule.Verbs, ResourceNames: rule.ResourceNames, NonResourceUrls: rule.NonResourceURLs}
+			out[index] = &mtcpv1.KubernetesProfileRule{
+				ApiGroups: rule.APIGroups, Resources: rule.Resources,
+				Verbs: rule.Verbs, ResourceNames: rule.ResourceNames, NonResourceUrls: rule.NonResourceURLs,
+			}
 		}
 		return out
 	}
-	return &mtcpv1.KubernetesProfile{Hash: hash[:], ProfileId: "01890f00-0000-7000-8000-0000000000f1",
-		Name: profile.Name, Namespaced: rules(normalized.Namespaced), Cluster: rules(normalized.Cluster)}
+	return &mtcpv1.KubernetesProfile{
+		Hash: hash[:], ProfileId: "01890f00-0000-7000-8000-0000000000f1",
+		Name: profile.Name, Namespaced: rules(normalized.Namespaced), Cluster: rules(normalized.Cluster),
+	}
 }
 
 func scopeEntry(t testing.TB, profile *mtcpv1.KubernetesProfile, namespaces []string, clusterPart bool) *mtcpv1.KubernetesScope {
@@ -51,8 +57,10 @@ func scopeEntry(t testing.TB, profile *mtcpv1.KubernetesProfile, namespaces []st
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &mtcpv1.KubernetesScope{Hash: hash[:], Profile: profile.GetHash(), Namespaces: namespaces,
-		ClusterPart: clusterPart}
+	return &mtcpv1.KubernetesScope{
+		Hash: hash[:], Profile: profile.GetHash(), Namespaces: namespaces,
+		ClusterPart: clusterPart,
+	}
 }
 
 // table sorts its entries by hash, as Core sends them.
@@ -63,8 +71,10 @@ func table(profiles []*mtcpv1.KubernetesProfile, scopes []*mtcpv1.KubernetesScop
 }
 
 func scopedGrant(group string, scope *mtcpv1.KubernetesScope) *mtcpv1.KubernetesScopedGrant {
-	return &mtcpv1.KubernetesScopedGrant{Group: group, Scope: scope.GetHash(),
-		ValidUntilMs: time.Now().Add(time.Hour).UnixMilli()}
+	return &mtcpv1.KubernetesScopedGrant{
+		Group: group, Scope: scope.GetHash(),
+		ValidUntilMs: time.Now().Add(time.Hour).UnixMilli(),
+	}
 }
 
 func gatewayState(profiles bool) *mapState {
@@ -93,11 +103,13 @@ func fixture(t testing.TB) (*mtcpv1.MapSnapshot, *mtcpv1.KubernetesScope) {
 	message.KubernetesScopes = table([]*mtcpv1.KubernetesProfile{profile}, []*mtcpv1.KubernetesScope{scope})
 	message.Peers[0].Owner = &mtcpv1.Owner{Ref: scopeMember}
 	message.Peers[0].Kubernetes = &mtcpv1.KubernetesAccess{ScopedGrants: []*mtcpv1.KubernetesScopedGrant{
-		scopedGrant("view", scope)}}
+		scopedGrant("view", scope),
+	}}
 	message.Peers[1].Owner = &mtcpv1.Owner{Ref: scopeMember}
 	message.Peers[1].Kubernetes = &mtcpv1.KubernetesAccess{
 		Grants:       []*mtcpv1.KubernetesGrant{{Group: "edit", ValidUntilMs: time.Now().Add(time.Hour).UnixMilli()}},
-		ScopedGrants: []*mtcpv1.KubernetesScopedGrant{scopedGrant("view", scope)}}
+		ScopedGrants: []*mtcpv1.KubernetesScopedGrant{scopedGrant("view", scope)},
+	}
 	return message, scope
 }
 
@@ -224,13 +236,14 @@ func TestScopeErrorsOnlyNarrow(t *testing.T) {
 		}, false, -1, true, 1, 1},
 		"grants twice": {func(message *mtcpv1.MapSnapshot, scope *mtcpv1.KubernetesScope) {
 			grants := message.Peers[1].Kubernetes.ScopedGrants
-			message.Peers[1].Kubernetes.ScopedGrants = append(grants, grants[0])
+			message.Peers[1].Kubernetes.ScopedGrants = append(grants, grants[0]) //nolint:gocritic // a new slice with one grant twice, on purpose
 		}, false, 1, false, 0, 1},
 		"65 grants": {func(message *mtcpv1.MapSnapshot, scope *mtcpv1.KubernetesScope) {
 			access := message.Peers[1].Kubernetes
 			for index := range 64 {
 				access.Grants = append(access.Grants, &mtcpv1.KubernetesGrant{
-					Group: "g" + string(rune('a'+index/26)) + string(rune('a'+index%26)), ValidUntilMs: access.Grants[0].ValidUntilMs})
+					Group: "g" + string(rune('a'+index/26)) + string(rune('a'+index%26)), ValidUntilMs: access.Grants[0].ValidUntilMs,
+				})
 			}
 		}, false, 1, false, 0, 1},
 	} {
@@ -263,8 +276,8 @@ func TestScopeErrorsOnlyNarrow(t *testing.T) {
 func TestScopeTableAcrossDeltas(t *testing.T) {
 	t.Parallel()
 	message, scope := fixture(t)
-	valid := proto.Clone(message.KubernetesScopes).(*mtcpv1.KubernetesScopeTable)
-	broken := proto.Clone(valid).(*mtcpv1.KubernetesScopeTable)
+	valid := proto.Clone(message.KubernetesScopes).(*mtcpv1.KubernetesScopeTable) //nolint:forcetypeassert,errcheck // proto.Clone keeps the type
+	broken := proto.Clone(valid).(*mtcpv1.KubernetesScopeTable)                   //nolint:forcetypeassert,errcheck // proto.Clone keeps the type
 	broken.Scopes = append(broken.Scopes, broken.Scopes[0])
 	state := gatewayState(true)
 	if err := state.applySnapshot(message); err != nil {
@@ -359,17 +372,28 @@ func TestScopedFieldsWireGolden(t *testing.T) {
 		message proto.Message
 		want    string
 	}{
-		"access": {&mtcpv1.KubernetesAccess{Grants: []*mtcpv1.KubernetesGrant{{Group: "view", ValidUntilMs: 1000}},
-			ScopedGrants: []*mtcpv1.KubernetesScopedGrant{{Group: "edit", Scope: bytes.Repeat([]byte{1}, 32),
-				Mode: mtcpv1.KubernetesScopedGrant_REPORT, ReportUntilMs: 500, ValidUntilMs: 1000}}},
-			"0a090a047669657710e8071a300a046564697412200101010101010101010101010101010101010101010101010101010101010101180120f40328e807"},
+		"access": {
+			&mtcpv1.KubernetesAccess{
+				Grants: []*mtcpv1.KubernetesGrant{{Group: "view", ValidUntilMs: 1000}},
+				ScopedGrants: []*mtcpv1.KubernetesScopedGrant{{
+					Group: "edit", Scope: bytes.Repeat([]byte{1}, 32),
+					Mode: mtcpv1.KubernetesScopedGrant_REPORT, ReportUntilMs: 500, ValidUntilMs: 1000,
+				}},
+			},
+			"0a090a047669657710e8071a300a046564697412200101010101010101010101010101010101010101010101010101010101010101180120f40328e807",
+		},
 		"snapshot table": {&mtcpv1.MapSnapshot{KubernetesScopes: &mtcpv1.KubernetesScopeTable{}}, "7200"},
-		"delta table": {&mtcpv1.MapDelta{KubernetesScopes: &mtcpv1.KubernetesScopeTable{Scopes: []*mtcpv1.KubernetesScope{{
-			Hash: bytes.Repeat([]byte{2}, 32), Profile: bytes.Repeat([]byte{3}, 32), Namespaces: []string{"team-a"},
-			ClusterPart: true}}}},
-			"820150124e0a200202020202020202020202020202020202020202020202020202020202020202122003030303030303030303030303030303030303030303030303030303030303031a067465616d2d612001"},
-		"audit intent": {&mtcpv1.KubeAuditIntent{Profile: bytes.Repeat([]byte{4}, 32), ReportAllowed: true},
-			"722004040404040404040404040404040404040404040404040404040404040404047801"},
+		"delta table": {
+			&mtcpv1.MapDelta{KubernetesScopes: &mtcpv1.KubernetesScopeTable{Scopes: []*mtcpv1.KubernetesScope{{
+				Hash: bytes.Repeat([]byte{2}, 32), Profile: bytes.Repeat([]byte{3}, 32), Namespaces: []string{"team-a"},
+				ClusterPart: true,
+			}}}},
+			"820150124e0a200202020202020202020202020202020202020202020202020202020202020202122003030303030303030303030303030303030303030303030303030303030303031a067465616d2d612001",
+		},
+		"audit intent": {
+			&mtcpv1.KubeAuditIntent{Profile: bytes.Repeat([]byte{4}, 32), ReportAllowed: true},
+			"722004040404040404040404040404040404040404040404040404040404040404047801",
+		},
 	} {
 		encoded, err := encode.Marshal(test.message)
 		if err != nil || hex.EncodeToString(encoded) != test.want {

@@ -211,8 +211,10 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		endRequests()
 		_ = served.Close()
 	})
-	err := served.ServeTLS(identifying{Listener: listener, gate: server.gate, logger: server.options.Logger,
-		peer: server.options.Peer}, "", "")
+	err := served.ServeTLS(identifying{
+		Listener: listener, gate: server.gate, logger: server.options.Logger,
+		peer: server.options.Peer,
+	}, "", "")
 	if !stop() {
 		<-drained
 	}
@@ -390,7 +392,7 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if scoped && selfRulesReview(info) && kubereq.SelfReview(r.Method, info) {
-		if narrow = server.rulesReview(w, r, info, peer, group); narrow == nil {
+		if narrow = server.rulesReview(w, r, info, peer, group); narrow == nil { //nolint:bodyclose // narrow is a filter applied to the API server's response, which ReverseProxy closes
 			return
 		}
 	}
@@ -803,7 +805,7 @@ func newAuditID() ([16]byte, error) {
 		return id, err
 	}
 	var millis [8]byte
-	binary.BigEndian.PutUint64(millis[:], uint64(time.Now().UnixMilli())) //nolint:gosec // after 1970
+	binary.BigEndian.PutUint64(millis[:], uint64(time.Now().UnixMilli()))
 	copy(id[:6], millis[2:])
 	id[6] = 0x70 | id[6]&0x0f
 	id[8] = 0x80 | id[8]&0x3f
@@ -821,7 +823,7 @@ func formatAuditID(id [16]byte) string {
 // and handshakes (review b5a M5). A 401 to a request without a body is
 // sent once more with a new token.
 func newTransports(caFile string, remint func(*http.Request) (Bearer, bool)) (http.RoundTripper, error) {
-	pem, err := os.ReadFile(caFile)
+	pem, err := os.ReadFile(caFile) //nolint:gosec // the API server CA the operator configured
 	if err != nil {
 		return nil, fmt.Errorf("kubeproxy: reading the cluster CA: %w", err)
 	}

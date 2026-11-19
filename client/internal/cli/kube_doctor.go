@@ -43,8 +43,10 @@ func runKubeDoctor(ctx context.Context, args []string, stdout, stderr io.Writer,
 	}
 	status, err := client.Status(ctx)
 	if err != nil {
-		diagnosis := kubeDiagnosis{Cluster: name, Checks: []kubeCheck{{Step: "meshd", Detail: err.Error(),
-			Fix: "start meshd (meshctl status)"}}}
+		diagnosis := kubeDiagnosis{Cluster: name, Checks: []kubeCheck{{
+			Step: "meshd", Detail: err.Error(),
+			Fix: "start meshd (meshctl status)",
+		}}}
 		return writeKubeDiagnoses(stdout, stderr, isJSON, []kubeDiagnosis{diagnosis})
 	}
 	var clusters []localapi.KubernetesClusterStatus
@@ -54,7 +56,8 @@ func runKubeDoctor(ctx context.Context, args []string, stdout, stderr io.Writer,
 			daemon, _ := kubeDaemonCheck(status)
 			diagnosis := kubeDiagnosis{Cluster: name, Checks: []kubeCheck{daemon, {
 				Step: "cluster in the map", Detail: "this Network's map has no cluster " + name,
-				Fix: "meshctl kube list; ask an administrator for a rule to the cluster"}}}
+				Fix: "meshctl kube list; ask an administrator for a rule to the cluster",
+			}}}
 			return writeKubeDiagnoses(stdout, stderr, isJSON, []kubeDiagnosis{diagnosis})
 		}
 		clusters = append(clusters, cluster)
@@ -63,8 +66,10 @@ func runKubeDoctor(ctx context.Context, args []string, stdout, stderr io.Writer,
 	}
 	if len(clusters) == 0 {
 		daemon, _ := kubeDaemonCheck(status)
-		diagnosis := kubeDiagnosis{Checks: []kubeCheck{daemon, {Step: "clusters in the map",
-			Detail: "this Network's map has no Kubernetes cluster", Fix: "ask an administrator for a rule to a cluster"}}}
+		diagnosis := kubeDiagnosis{Checks: []kubeCheck{daemon, {
+			Step:   "clusters in the map",
+			Detail: "this Network's map has no Kubernetes cluster", Fix: "ask an administrator for a rule to a cluster",
+		}}}
 		return writeKubeDiagnoses(stdout, stderr, isJSON, []kubeDiagnosis{diagnosis})
 	}
 	files, filesErr := kubeFiles(*file)
@@ -166,15 +171,21 @@ func trustedCheck(cluster localapi.KubernetesClusterStatus) kubeCheck {
 func caFileCheck(cluster localapi.KubernetesClusterStatus) kubeCheck {
 	switch {
 	case cluster.CAFile == "":
-		return kubeCheck{Step: "CA file", Detail: "meshd reports no CA file",
-			Fix: "upgrade meshd: one older than K1e leaves CA files as they were"}
+		return kubeCheck{
+			Step: "CA file", Detail: "meshd reports no CA file",
+			Fix: "upgrade meshd: one older than K1e leaves CA files as they were",
+		}
 	case cluster.CAFileState != "current":
-		return kubeCheck{Step: "CA file", Detail: strings.TrimSpace(cluster.CAFileState + " " + cluster.CAFileReason),
-			Fix: "meshctl up; if it stays, see meshd's log (kubernetes_ca_*)"}
+		return kubeCheck{
+			Step: "CA file", Detail: strings.TrimSpace(cluster.CAFileState + " " + cluster.CAFileReason),
+			Fix: "meshctl up; if it stays, see meshd's log (kubernetes_ca_*)",
+		}
 	}
 	if _, err := kubeRoots(cluster); err != nil {
-		return kubeCheck{Step: "CA file", Detail: err.Error(),
-			Fix: "restart meshd: it rewrites the file from the map; if it stays, report it"}
+		return kubeCheck{
+			Step: "CA file", Detail: err.Error(),
+			Fix: "restart meshd: it rewrites the file from the map; if it stays, report it",
+		}
 	}
 	return kubeCheck{Step: "CA file", OK: true}
 }

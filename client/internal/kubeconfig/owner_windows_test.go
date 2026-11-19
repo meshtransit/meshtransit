@@ -73,7 +73,7 @@ func TestOwnedByUserAdministrators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inside, err := os.MkdirTemp(profile, "meshtransit-kubeconfig-test-")
+	inside, err := os.MkdirTemp(profile, "meshtransit-kubeconfig-test-") //nolint:usetesting // must be inside the user's profile
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestOwnedByUserAdministrators(t *testing.T) {
 	if err := ownedByUser(inside); err != nil {
 		t.Fatalf("inside the profile: %v", err)
 	}
-	outside, err := os.MkdirTemp(os.Getenv("ProgramData"), "meshtransit-kubeconfig-test-")
+	outside, err := os.MkdirTemp(os.Getenv("ProgramData"), "meshtransit-kubeconfig-test-") //nolint:usetesting // must be outside the profile
 	if err != nil {
 		t.Fatal(err)
 	}

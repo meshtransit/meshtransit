@@ -13,64 +13,90 @@ func TestRuleAllowsResourceRequests(t *testing.T) {
 	}{
 		"star verb": {
 			Rule{Verbs: []string{"*"}, APIGroups: []string{""}, Resources: []string{"pods"}},
-			resourceAttributes("get", "", "pods", ""), true},
+			resourceAttributes("get", "", "pods", ""), true,
+		},
 		"exact verb": {
 			Rule{Verbs: []string{"get", "list"}, APIGroups: []string{""}, Resources: []string{"pods"}},
-			resourceAttributes("list", "", "pods", ""), true},
+			resourceAttributes("list", "", "pods", ""), true,
+		},
 		"other verb": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods"}},
-			resourceAttributes("delete", "", "pods", ""), false},
+			resourceAttributes("delete", "", "pods", ""), false,
+		},
 		"star group": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{"*"}, Resources: []string{"deployments"}},
-			resourceAttributes("get", "apps", "deployments", ""), true},
+			resourceAttributes("get", "apps", "deployments", ""), true,
+		},
 		"other group": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{"extensions"}, Resources: []string{"deployments"}},
-			resourceAttributes("get", "apps", "deployments", ""), false},
+			resourceAttributes("get", "apps", "deployments", ""), false,
+		},
 		"core group is empty": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"deployments"}},
-			resourceAttributes("get", "apps", "deployments", ""), false},
+			resourceAttributes("get", "apps", "deployments", ""), false,
+		},
 		"star resource covers subresources": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"*"}},
-			resourceAttributes("get", "", "pods", "log"), true},
+			resourceAttributes("get", "", "pods", "log"), true,
+		},
 		"resource does not cover its subresource": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods"}},
-			resourceAttributes("get", "", "pods", "log"), false},
+			resourceAttributes("get", "", "pods", "log"), false,
+		},
 		"subresource does not cover its resource": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods/log"}},
-			resourceAttributes("get", "", "pods", ""), false},
+			resourceAttributes("get", "", "pods", ""), false,
+		},
 		"exact subresource": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods/log"}},
-			resourceAttributes("get", "", "pods", "log"), true},
+			resourceAttributes("get", "", "pods", "log"), true,
+		},
 		"star slash subresource": {
 			Rule{Verbs: []string{"update"}, APIGroups: []string{"*"}, Resources: []string{"*/scale"}},
-			resourceAttributes("update", "apps", "deployments", "scale"), true},
+			resourceAttributes("update", "apps", "deployments", "scale"), true,
+		},
 		"star slash subresource needs a subresource": {
 			Rule{Verbs: []string{"update"}, APIGroups: []string{"*"}, Resources: []string{"*/scale"}},
-			resourceAttributes("update", "apps", "scale", ""), false},
+			resourceAttributes("update", "apps", "scale", ""), false,
+		},
 		"star slash other subresource": {
 			Rule{Verbs: []string{"update"}, APIGroups: []string{"*"}, Resources: []string{"*/scale"}},
-			resourceAttributes("update", "apps", "deployments", "status"), false},
+			resourceAttributes("update", "apps", "deployments", "status"), false,
+		},
 		"resource slash star is literal": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods/*"}},
-			resourceAttributes("get", "", "pods", "log"), false},
+			resourceAttributes("get", "", "pods", "log"), false,
+		},
 		"names allow the named": {
-			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
-				ResourceNames: []string{"a", "b"}},
-			named(resourceAttributes("get", "", "configmaps", ""), "b"), true},
+			Rule{
+				Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
+				ResourceNames: []string{"a", "b"},
+			},
+			named(resourceAttributes("get", "", "configmaps", ""), "b"), true,
+		},
 		"names refuse others": {
-			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
-				ResourceNames: []string{"a"}},
-			named(resourceAttributes("get", "", "configmaps", ""), "c"), false},
+			Rule{
+				Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
+				ResourceNames: []string{"a"},
+			},
+			named(resourceAttributes("get", "", "configmaps", ""), "c"), false,
+		},
 		"names refuse no name": {
-			Rule{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
-				ResourceNames: []string{"a"}},
-			resourceAttributes("list", "", "configmaps", ""), false},
+			Rule{
+				Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"configmaps"},
+				ResourceNames: []string{"a"},
+			},
+			resourceAttributes("list", "", "configmaps", ""), false,
+		},
 		"no names allow any": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"}},
-			named(resourceAttributes("get", "", "configmaps", ""), "anything"), true},
+			named(resourceAttributes("get", "", "configmaps", ""), "anything"), true,
+		},
 		"a resource rule never answers a path": {
 			Rule{Verbs: []string{"get"}, APIGroups: []string{"*"}, Resources: []string{"*"}},
-			Attributes{Verb: "get", Path: "/healthz"}, false},
+			Attributes{Verb: "get", Path: "/healthz"},
+			false,
+		},
 	} {
 		if got := ruleAllows(&test.rule, test.attributes); got != test.want {
 			t.Errorf("%s: ruleAllows = %v, want %v", name, got, test.want)
@@ -102,16 +128,20 @@ func TestRuleAllowsNonResourceRequests(t *testing.T) {
 			t.Errorf("%s: a get rule allowed post", name)
 		}
 	}
-	resources := Rule{Verbs: []string{"*"}, APIGroups: []string{"*"}, Resources: []string{"*"},
-		NonResourceURLs: nil}
+	resources := Rule{
+		Verbs: []string{"*"}, APIGroups: []string{"*"}, Resources: []string{"*"},
+		NonResourceURLs: nil,
+	}
 	if ruleAllows(&resources, Attributes{Verb: "get", Path: "/metrics"}) {
 		t.Error("a resource rule answered a path")
 	}
 }
 
 func resourceAttributes(verb, group, resource, subresource string) Attributes {
-	return Attributes{ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
-		Subresource: subresource, Scope: ScopeNamespaced, Namespace: "team-a"}
+	return Attributes{
+		ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
+		Subresource: subresource, Scope: ScopeNamespaced, Namespace: "team-a",
+	}
 }
 
 func named(attributes Attributes, name string) Attributes {

@@ -190,8 +190,10 @@ func TestMapStateKubeClusters(t *testing.T) {
 		return state
 	}
 	snapshot := func(epoch uint64, field *mtcpv1.KubernetesClusters) *mtcpv1.MapSnapshot {
-		return &mtcpv1.MapSnapshot{View: &mtcpv1.View{Epoch: epoch, Seq: 1}, Self: &mtcpv1.Device{DeviceId: "self"},
-			KubernetesClusters: field}
+		return &mtcpv1.MapSnapshot{
+			View: &mtcpv1.View{Epoch: epoch, Seq: 1}, Self: &mtcpv1.Device{DeviceId: "self"},
+			KubernetesClusters: field,
+		}
 	}
 	state := session()
 	if err := state.applySnapshot(snapshot(1, nil)); !errors.Is(err, controlplane.ErrNetmapInvalid) {
@@ -238,8 +240,10 @@ func TestKubeClustersOnlyWithAWholeMap(t *testing.T) {
 	}
 	ignoring := newMapState(false)
 	ignoring.takesClusters, ignoring.kubeClusters = true, hold
-	if err := ignoring.applySnapshot(&mtcpv1.MapSnapshot{View: &mtcpv1.View{Epoch: 1, Seq: 1},
-		Self: &mtcpv1.Device{DeviceId: "self"}, KubernetesClusters: clustersField([][]byte{root}, root)}); err != nil ||
+	if err := ignoring.applySnapshot(&mtcpv1.MapSnapshot{
+		View: &mtcpv1.View{Epoch: 1, Seq: 1},
+		Self: &mtcpv1.Device{DeviceId: "self"}, KubernetesClusters: clustersField([][]byte{root}, root),
+	}); err != nil ||
 		len(hold.list) != 0 {
 		t.Fatalf("not negotiated: %v, %d clusters", err, len(hold.list))
 	}

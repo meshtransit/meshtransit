@@ -152,8 +152,10 @@ func (manager *Manager) Reconcile(clusters []networkmap.KubernetesCluster, pass 
 		statuses := make(map[string]Status, len(clusters))
 		for _, cluster := range clusters {
 			if validID(cluster.ID) {
-				statuses[cluster.ID] = Status{Path: manager.path(cluster.ID + fileSuffix), State: StateWithheld,
-					Reason: manager.withheld}
+				statuses[cluster.ID] = Status{
+					Path: manager.path(cluster.ID + fileSuffix), State: StateWithheld,
+					Reason: manager.withheld,
+				}
 			}
 		}
 		return statuses, err
@@ -163,8 +165,10 @@ func (manager *Manager) Reconcile(clusters []networkmap.KubernetesCluster, pass 
 		return manager.failed(clusters), err
 	}
 	defer func() { _ = root.Close() }()
-	run := reconciliation{root: root, pass: pass, now: manager.now().Round(0),
-		next: manifest{Format: formatVersion, Files: map[string]manifestEntry{}}}
+	run := reconciliation{
+		root: root, pass: pass, now: manager.now().Round(0),
+		next: manifest{Format: formatVersion, Files: map[string]manifestEntry{}},
+	}
 	run.recorded = readManifest(root)
 	statuses := make(map[string]Status, len(clusters))
 	listed := map[string]bool{}
@@ -350,8 +354,10 @@ func (manager *Manager) withholdAll(reason Reason) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	run := reconciliation{root: root, now: manager.now().Round(0),
-		next: manifest{Format: formatVersion, Files: map[string]manifestEntry{}}}
+	run := reconciliation{
+		root: root, now: manager.now().Round(0),
+		next: manifest{Format: formatVersion, Files: map[string]manifestEntry{}},
+	}
 	run.recorded = readManifest(root)
 	held, err := heldFiles(root)
 	if err != nil {

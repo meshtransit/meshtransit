@@ -41,8 +41,10 @@ func tokenSession(t *testing.T, conn recordConn, sent time.Time) *session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, init, err := sharedmtcp.StartClient(sharedmtcp.ClientConfig{Machine: machine, Control: control.Public(),
-		Hello: &mtcpv1.ClientHello{ProtocolVersion: 1, TimestampMs: sent.UnixMilli()}})
+	client, init, err := sharedmtcp.StartClient(sharedmtcp.ClientConfig{
+		Machine: machine, Control: control.Public(),
+		Hello: &mtcpv1.ClientHello{ProtocolVersion: 1, TimestampMs: sent.UnixMilli()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

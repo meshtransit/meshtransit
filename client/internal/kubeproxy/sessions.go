@@ -34,19 +34,19 @@ const (
 	cutWithheld      = "kubernetes_withheld"
 )
 
-// errSessionCut is what a cut session's context cause is: a sessionCut,
+// errSessionCut is what a cut session's context cause is: a sessionCutError,
 // which names the reason.
 var errSessionCut = errors.New("kubeproxy: the session's access ended")
 
-// sessionCut is the cause a cut session's context carries.
-type sessionCut struct{ reason string }
+// sessionCutError is the cause a cut session's context carries.
+type sessionCutError struct{ reason string }
 
-func (cut sessionCut) Error() string        { return errSessionCut.Error() + ": " + cut.reason }
-func (cut sessionCut) Is(target error) bool { return target == errSessionCut }
+func (cut sessionCutError) Error() string        { return errSessionCut.Error() + ": " + cut.reason }
+func (cut sessionCutError) Is(target error) bool { return target == errSessionCut }
 
 // cutReasonOf is why ctx's session was cut, or "" if it was not.
 func cutReasonOf(ctx context.Context) string {
-	var cut sessionCut
+	var cut sessionCutError
 	if errors.As(context.Cause(ctx), &cut) {
 		return cut.reason
 	}
@@ -168,7 +168,7 @@ func (sessions *registry) cut(held *session, reason string) ([16]byte, bool) {
 	sessions.cuts[reason]++
 	auditID := held.auditID
 	sessions.mu.Unlock()
-	held.cancel(sessionCut{reason: reason})
+	held.cancel(sessionCutError{reason: reason})
 	if held.close != nil {
 		held.close()
 	}

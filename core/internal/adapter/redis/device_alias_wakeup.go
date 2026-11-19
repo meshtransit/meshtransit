@@ -10,7 +10,7 @@ import (
 const (
 	// deviceAliasClaimedChannel carries no identifier: it only tells the
 	// Device alias workers that a client claimed aliases, so alias work may
-	// be waiting (docs/performance-logic-plan.md §8, L1b). Best effort: the
+	// be waiting (performance-logic-plan §8, L1b). Best effort: the
 	// workers still sweep at least every idle interval.
 	deviceAliasClaimedChannel = "meshtransit:v1:wakeup:device_alias_claimed"
 	deviceAliasClaimedPayload = `{"version":1}`

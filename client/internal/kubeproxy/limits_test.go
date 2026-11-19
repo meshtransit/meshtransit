@@ -51,7 +51,7 @@ func TestLimitsDeviceWatches(t *testing.T) {
 	t.Parallel()
 	f := limitedFixture(t, func(limits *Limits) { limits.DeviceWatches = 1 })
 	body := f.openStream("/api/v1/namespaces/a/pods?watch=true")
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	response, text := f.do(http.MethodGet, "/api/v1/namespaces/b/pods?watch=true", nil)
 	if response.StatusCode != http.StatusTooManyRequests || !strings.Contains(text, "watches") {
 		t.Fatalf("second watch: %d %s", response.StatusCode, text)
@@ -82,10 +82,12 @@ func TestLimitsMemoryPressure(t *testing.T) {
 func TestLimitsDeviceConnections(t *testing.T) {
 	t.Parallel()
 	f := limitedFixture(t, func(limits *Limits) { limits.DeviceConnections = 1 })
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	roots := f.roots()
 	dial := func() (*tls.Conn, error) {
-		return tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName,
-			NextProtos: []string{"http/1.1"}})
+		return f.dialTLS(&tls.Config{
+			RootCAs: roots, ServerName: clusterName,
+			NextProtos: []string{"http/1.1"},
+		})
 	}
 	first, err := dial()
 	if err != nil {
@@ -167,8 +169,8 @@ func TestGateAcceptKnown(t *testing.T) {
 func TestLimitsSourceHandshakes(t *testing.T) {
 	t.Parallel()
 	f := limitedFixture(t, func(limits *Limits) { limits.SourceHandshakes, limits.DeviceConnections = 0.001, 1 })
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
-	first, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
+	roots := f.roots()
+	first, err := f.dialTLS(&tls.Config{RootCAs: roots, ServerName: clusterName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestLimitsSourceHandshakes(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	second, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
+	second, err := f.dialTLS(&tls.Config{RootCAs: roots, ServerName: clusterName})
 	if err == nil {
 		_ = second.SetReadDeadline(time.Now().Add(time.Second))
 		_, err = io.ReadAll(second)
@@ -268,10 +270,12 @@ func TestLimitsReleaseEverything(t *testing.T) {
 	f := newFixture(t)
 	f.do(http.MethodGet, "/api/v1/pods", nil)
 	f.forwarded()
-	f.client.Transport.(*http.Transport).CloseIdleConnections()
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
-	if conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: "other.test",
-		InsecureSkipVerify: true}); err == nil { //nolint:gosec // the handshake itself fails
+	f.client.CloseIdleConnections()
+	roots := f.roots()
+	if conn, err := f.dialTLS(&tls.Config{
+		RootCAs: roots, ServerName: "other.test",
+		InsecureSkipVerify: true, //nolint:gosec // the test checks the gateway refuses the handshake anyway
+	}); err == nil {
 		_ = conn.Close()
 	}
 	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {

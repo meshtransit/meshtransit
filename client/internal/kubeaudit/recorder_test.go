@@ -294,7 +294,7 @@ func TestRecorderRefusesIntentsOutOfBounds(t *testing.T) {
 		"17 groups":     func(intent *controlplane.KubeAuditIntent) { intent.Groups = make([]string, 17) },
 		"empty group":   func(intent *controlplane.KubeAuditIntent) { intent.Groups = []string{""} },
 		"control":       func(intent *controlplane.KubeAuditIntent) { intent.Namespace = "a\nb" },
-		"bidi":          func(intent *controlplane.KubeAuditIntent) { intent.Name = "a‮b" },
+		"bidi":          func(intent *controlplane.KubeAuditIntent) { intent.Name = "a\u202eb" },
 		"no verb":       func(intent *controlplane.KubeAuditIntent) { intent.Verb = "" },
 		"long token ID": func(intent *controlplane.KubeAuditIntent) { intent.TokenID = make([]byte, 33) },
 		"bad UTF-8":     func(intent *controlplane.KubeAuditIntent) { intent.Resource = "\xff" },

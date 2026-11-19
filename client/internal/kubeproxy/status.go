@@ -37,6 +37,8 @@ func refuse(w http.ResponseWriter, code int, message string, wait time.Duration)
 		header.Set("Retry-After", strconv.Itoa(max(1, int(wait.Round(time.Second)/time.Second))))
 	}
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(status{APIVersion: "v1", Kind: "Status", Status: "Failure", Message: message,
-		Reason: reasons[code], Code: code})
+	_ = json.NewEncoder(w).Encode(status{
+		APIVersion: "v1", Kind: "Status", Status: "Failure", Message: message,
+		Reason: reasons[code], Code: code,
+	})
 }

@@ -91,8 +91,10 @@ type Options struct {
 // they expire, 20,000 kept (10,000 Devices of two groups), 50 mints a
 // second, burst 200, a 10 s queue.
 func DefaultOptions() Options {
-	return Options{ExpirationSeconds: 600, RefreshFrom: 120 * time.Second, RefreshTo: 240 * time.Second,
-		Capacity: 20000, Rate: 50, Burst: 200, QueueWait: 10 * time.Second}
+	return Options{
+		ExpirationSeconds: 600, RefreshFrom: 120 * time.Second, RefreshTo: 240 * time.Second,
+		Capacity: 20000, Rate: 50, Burst: 200, QueueWait: 10 * time.Second,
+	}
 }
 
 func (options Options) valid() bool {
@@ -239,14 +241,18 @@ func New(options Options) (*Minter, error) {
 		HTTP2:             &http.HTTP2Config{SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Minter{options: options, closeIdle: transport.CloseIdleConnections,
-		client: &http.Client{Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	return &Minter{
+		options: options, closeIdle: transport.CloseIdleConnections,
+		client: &http.Client{
+			Transport:     transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		base: strings.TrimSuffix(options.Server, "/") + "/api/v1/namespaces/" + url.PathEscape(options.Namespace) +
 			"/serviceaccounts/",
 		limiter: rate.NewLimiter(rate.Limit(options.Rate), int(options.Burst)),
 		entries: map[key]*list.Element{}, recent: list.New(), flights: map[key]*flight{},
-		failures: map[key]failure{}, ctx: ctx, cancel: cancel}, nil
+		failures: map[key]failure{}, ctx: ctx, cancel: cancel,
+	}, nil
 }
 
 // Close stops minting: For answers ErrClosed, mints under way end, and
@@ -277,7 +283,7 @@ func (minter *Minter) For(ctx context.Context, device, owner, group string) (Tok
 	}
 	now := minter.options.Now()
 	if element, found := minter.entries[id]; found {
-		held := element.Value.(*entry) //nolint:forcetypeassert // only *entry is stored
+		held := element.Value.(*entry) //nolint:forcetypeassert,errcheck // only *entry is stored
 		if now.Before(held.token.Expires().Add(-usableMargin)) {
 			minter.recent.MoveToFront(element)
 			if !now.Before(held.refreshAt) {
@@ -325,7 +331,7 @@ func (minter *Minter) Forget(device, owner, group string, token Token) {
 	defer minter.mu.Unlock()
 	id := key{device: device, owner: owner, group: group}
 	if element, found := minter.entries[id]; found &&
-		element.Value.(*entry).token.held == token.held { //nolint:forcetypeassert // only *entry is stored
+		element.Value.(*entry).token.held == token.held { //nolint:forcetypeassert,errcheck // only *entry is stored
 		minter.recent.Remove(element)
 		delete(minter.entries, id)
 	}
@@ -382,7 +388,7 @@ func (minter *Minter) mint(id key, shared *flight) {
 	for minter.recent.Len() > minter.options.Capacity {
 		oldest := minter.recent.Back()
 		minter.recent.Remove(oldest)
-		delete(minter.entries, oldest.Value.(*entry).key) //nolint:forcetypeassert // only *entry is stored
+		delete(minter.entries, oldest.Value.(*entry).key) //nolint:forcetypeassert,errcheck // only *entry is stored
 	}
 }
 
@@ -397,10 +403,16 @@ func (minter *Minter) request(id key) (Token, error) {
 	if err != nil {
 		return Token{}, fmt.Errorf("kubetoken: reading the gateway's token: %w", err)
 	}
-	body, err := json.Marshal(tokenRequest{APIVersion: "authentication.k8s.io/v1", Kind: "TokenRequest",
-		Spec: tokenRequestSpec{ExpirationSeconds: minter.options.ExpirationSeconds,
-			BoundObjectRef: boundObject{Kind: "Secret", APIVersion: "v1", Name: minter.options.BoundSecret,
-				UID: minter.options.BoundSecretUID}}})
+	body, err := json.Marshal(tokenRequest{
+		APIVersion: "authentication.k8s.io/v1", Kind: "TokenRequest",
+		Spec: tokenRequestSpec{
+			ExpirationSeconds: minter.options.ExpirationSeconds,
+			BoundObjectRef: boundObject{
+				Kind: "Secret", APIVersion: "v1", Name: minter.options.BoundSecret,
+				UID: minter.options.BoundSecretUID,
+			},
+		},
+	})
 	if err != nil {
 		return Token{}, err
 	}
@@ -427,8 +439,10 @@ func (minter *Minter) request(id key) (Token, error) {
 		return Token{}, fmt.Errorf("kubetoken: reading the answer: %w", err)
 	}
 	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
-		return Token{}, &MintError{Status: response.StatusCode, Reason: statusReason(payload),
-			RetryAfter: retryAfter(response.Header.Get("Retry-After"))}
+		return Token{}, &MintError{
+			Status: response.StatusCode, Reason: statusReason(payload),
+			RetryAfter: retryAfter(response.Header.Get("Retry-After")),
+		}
 	}
 	var answer struct {
 		Status struct {
@@ -446,8 +460,10 @@ func (minter *Minter) request(id key) (Token, error) {
 	if life < minimumLife {
 		return Token{}, fmt.Errorf("kubetoken: minting for mt-%s: a token of %v", id.group, life)
 	}
-	return Token{held: &secret{value: answer.Status.Token, id: tokenID(answer.Status.Token),
-		expires: started.Add(life)}}, nil
+	return Token{held: &secret{
+		value: answer.Status.Token, id: tokenID(answer.Status.Token),
+		expires: started.Add(life),
+	}}, nil
 }
 
 // tokenLife is how long a token lives: what was asked, cut to what its

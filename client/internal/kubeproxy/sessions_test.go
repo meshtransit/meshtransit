@@ -75,13 +75,15 @@ func TestSessionsCutAWatchWhenTheGrantEnds(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	body := f.openStream("/api/v1/namespaces/a/pods?watch=true")
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	f.waitStats("no open watch", func(stats SessionStats) bool { return stats.Open[kindWatch] == 1 })
 
 	peer := *f.peer.Load()
-	peer.Access = &networkmap.KubernetesAccess{OwnerRef: peer.Access.OwnerRef,
+	peer.Access = &networkmap.KubernetesAccess{
+		OwnerRef:       peer.Access.OwnerRef,
 		OwnerChangedAt: peer.Access.OwnerChangedAt,
-		Grants:         []networkmap.KubernetesGrant{{Group: "edit", ValidUntil: time.Now().Add(time.Hour)}}}
+		Grants:         []networkmap.KubernetesGrant{{Group: "edit", ValidUntil: time.Now().Add(time.Hour)}},
+	}
 	f.peer.Store(&peer)
 	if took := ends(t, body, 3*time.Second); took > 2*sweepInterval {
 		t.Fatalf("cut after %s", took)
@@ -106,7 +108,7 @@ func TestSessionsWakeCutsAGroupTurnedOff(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	body := f.openStream("/api/v1/namespaces/a/pods?watch=true")
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	f.verdicts.Store("view", rbaccheck.Verdict{Reason: "may list secrets in the cluster"})
 	f.wake <- struct{}{}
 	ends(t, body, 3*time.Second)
@@ -118,8 +120,10 @@ func TestSessionsWakeCutsAGroupTurnedOff(t *testing.T) {
 func TestSessionsCloseAnUpgrade(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		ServerName: clusterName, NextProtos: []string{"http/1.1"}})
+	conn, err := f.dialTLS(&tls.Config{
+		RootCAs:    f.roots(),
+		ServerName: clusterName, NextProtos: []string{"http/1.1"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +201,13 @@ func TestSessionsAnswerARequestCutBeforeItsAnswer(t *testing.T) {
 	f := newFixture(t)
 	answered := make(chan *http.Response, 1)
 	go func() {
-		response, err := f.client.Get("https://" + clusterName + "/api/v1/namespaces/a/configmaps/slow")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+			"https://"+clusterName+"/api/v1/namespaces/a/configmaps/slow", nil)
+		if err != nil {
+			answered <- nil
+			return
+		}
+		response, err := f.client.Do(request) //nolint:bodyclose // the receiver below closes it
 		if err != nil {
 			answered <- nil
 			return
@@ -213,7 +223,7 @@ func TestSessionsAnswerARequestCutBeforeItsAnswer(t *testing.T) {
 		if response == nil {
 			t.Fatal("no answer")
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		body, _ := io.ReadAll(response.Body)
 		if response.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "ended") {
 			t.Fatalf("%d %s", response.StatusCode, body)
@@ -238,7 +248,7 @@ func TestSessionsCutImpersonationWithdrawn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("watch %d", response.StatusCode)
 	}

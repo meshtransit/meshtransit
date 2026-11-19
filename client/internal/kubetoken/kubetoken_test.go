@@ -310,7 +310,7 @@ func TestMinterRefusals(t *testing.T) {
 // Answers out of form, or a token too short-lived, give no token.
 func TestMinterRefusesAnswersOutOfForm(t *testing.T) {
 	t.Parallel()
-	for name, body := range map[string]string{
+	for name, body := range map[string]string{ //nolint:gosec // malformed test tokens, not credentials
 		"not JSON":       `{`,
 		"no token":       `{"status":{"expirationTimestamp":"2099-01-01T00:00:00Z"}}`,
 		"no expiry":      `{"status":{"token":"a.e30.c"}}`,
@@ -460,8 +460,13 @@ func TestMinterRefusesBadKeysAndOptions(t *testing.T) {
 	api := newFakeAPI(t)
 	minter := newMinter(t, testOptions(t, api))
 	for _, id := range [][3]string{
-		{"", "o", "view"}, {"a", "", "view"}, {"a", "o", ""}, {"a", "o", "View"}, {"a", "o", "a/b"},
-		{"a", "o", "../x"}, {"a", "o", strings.Repeat("a", 64)},
+		{"", "o", "view"},
+		{"a", "", "view"},
+		{"a", "o", ""},
+		{"a", "o", "View"},
+		{"a", "o", "a/b"},
+		{"a", "o", "../x"},
+		{"a", "o", strings.Repeat("a", 64)},
 	} {
 		if _, err := minter.For(t.Context(), id[0], id[1], id[2]); err == nil {
 			t.Errorf("%q taken", id)

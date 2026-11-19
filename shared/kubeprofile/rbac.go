@@ -96,7 +96,6 @@ func resourceMatches(rule *Rule, combinedRequestedResource, requestedSubresource
 			strings.HasPrefix(ruleResource, "*/") &&
 			strings.HasSuffix(ruleResource, requestedSubresource) {
 			return true
-
 		}
 	}
 

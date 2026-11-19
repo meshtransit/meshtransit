@@ -492,7 +492,7 @@ func TestLogoutTakesAnEarlyRevoked(t *testing.T) {
 // a cut never splits a character.
 func TestBoundedTextIsSafeToShow(t *testing.T) {
 	t.Parallel()
-	if got := boundedText("sign in‮ again\x07\n"); got != "sign in again" {
+	if got := boundedText("sign in\u202e again\x07\n"); got != "sign in again" {
 		t.Fatalf("boundedText = %q, want controls and bidi overrides gone", got)
 	}
 	long := strings.Repeat("é", 200) // 400 bytes
@@ -533,8 +533,10 @@ func TestRegisterWithSignInNodeKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint,
-			SignInNodePrivateKey: signIn}
+		options := controlplane.RegisterOptions{
+			Hostname: "laptop", PinnedFingerprint: trust.Fingerprint,
+			SignInNodePrivateKey: signIn,
+		}
 		result, err := core.client().Register(t.Context(), core.origin(), trust.Material, options)
 		if err != nil || result.State != controlplane.RegistrationStateAuthorizationRequired ||
 			result.SignInKeyUsed != offered {

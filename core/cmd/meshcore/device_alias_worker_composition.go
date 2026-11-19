@@ -43,7 +43,7 @@ func composeDeviceAliasWorker(settings config.DeviceAliasWorkerConfig, pool *pos
 var _ app.Service = (*devicealias.Worker)(nil)
 
 // composeDeviceAliasHints wakes the Device alias worker on recorded alias
-// claims and on Network revisions (docs/performance-logic-plan.md §8, L1b).
+// claims and on Network revisions (performance-logic-plan §8, L1b).
 func composeDeviceAliasHints(client *redisadapter.Client, logger *slog.Logger) *aliasWorkHints {
 	return newAliasWorkHints(logger,
 		aliasHintSource{name: "alias_claims", subscribe: func(ctx context.Context) (aliasHintSubscription, error) {

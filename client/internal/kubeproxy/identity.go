@@ -172,8 +172,10 @@ func (listener identifying) Accept() (net.Conn, error) {
 					_ = conn.Close()
 					continue
 				}
-				held := &identified{Conn: conn, source: source, gate: listener.gate, writeTimeout: clientWriteTimeout,
-					overCounted: over}
+				held := &identified{
+					Conn: conn, source: source, gate: listener.gate, writeTimeout: clientWriteTimeout,
+					overCounted: over,
+				}
 				if over {
 					held.answerOverLimit(limit)
 				}

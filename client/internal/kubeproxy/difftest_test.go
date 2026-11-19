@@ -105,63 +105,105 @@ func samples() []sample {
 	jsonType := http.Header{"Content-Type": {"application/json"}}
 	set = append(set,
 		sample{method: http.MethodHead, path: "/api/v1/namespaces/default/pods"},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/configmaps", header: jsonType,
-			body: `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"diff"}}`},
-		sample{method: http.MethodPut, path: "/api/v1/namespaces/default/configmaps/diff", header: jsonType,
-			body: `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"diff"}}`},
-		sample{method: http.MethodPatch, path: "/api/v1/namespaces/default/configmaps/diff", body: `{"data":{}}`,
-			header: http.Header{"Content-Type": {"application/merge-patch+json"}}},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/configmaps", header: jsonType,
+			body: `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"diff"}}`,
+		},
+		sample{
+			method: http.MethodPut, path: "/api/v1/namespaces/default/configmaps/diff", header: jsonType,
+			body: `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"diff"}}`,
+		},
+		sample{
+			method: http.MethodPatch, path: "/api/v1/namespaces/default/configmaps/diff", body: `{"data":{}}`,
+			header: http.Header{"Content-Type": {"application/merge-patch+json"}},
+		},
 		sample{method: http.MethodDelete, path: "/api/v1/namespaces/default/configmaps/diff"},
 		sample{method: http.MethodDelete, path: "/mt/g/other/api/v1/namespaces/default/configmaps/diff"},
 		sample{method: http.MethodDelete, path: "/api/v1/namespaces/default/configmaps"},
 		sample{method: http.MethodDelete, path: "/api/v1/namespaces/default/pods"},
 		sample{method: http.MethodPost, path: "/api/v1/watch/namespaces/default/pods", header: jsonType, body: `{}`},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/eviction", header: jsonType,
-			body: `{"apiVersion":"policy/v1","kind":"Eviction","metadata":{"name":"x"}}`},
-		sample{method: http.MethodPatch, path: "/api/v1/namespaces/default/pods/x/ephemeralcontainers", body: `{}`,
-			header: http.Header{"Content-Type": {"application/strategic-merge-patch+json"}}},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
-			header: upgrade("SPDY/3.1")},
-		sample{method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
-			header: upgrade("websocket")},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/eviction", header: jsonType,
+			body: `{"apiVersion":"policy/v1","kind":"Eviction","metadata":{"name":"x"}}`,
+		},
+		sample{
+			method: http.MethodPatch, path: "/api/v1/namespaces/default/pods/x/ephemeralcontainers", body: `{}`,
+			header: http.Header{"Content-Type": {"application/strategic-merge-patch+json"}},
+		},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
+			header: upgrade("SPDY/3.1"),
+		},
+		sample{
+			method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
+			header: upgrade("websocket"),
+		},
 		// An exec without an upgrade, and an upgrade on another path.
 		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true"},
 		sample{method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/proxy/ws", header: upgrade("websocket")},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/attach?stdout=true",
-			header: upgrade("SPDY/3.1")},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/portforward?ports=80",
-			header: upgrade("SPDY/3.1")},
-		sample{method: http.MethodGet, path: "/apis/fake.meshtransit.net/v1alpha1/namespaces/default/things/t/console",
-			header: upgrade("websocket")},
-		sample{method: http.MethodPost, path: "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", header: jsonType,
-			body: `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{"resourceAttributes":{"verb":"get","resource":"pods"}}}`},
-		sample{method: http.MethodPost, path: "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews", header: jsonType,
-			body: `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","spec":{"namespace":"default"}}`},
-		sample{method: http.MethodPost, path: "/apis/authentication.k8s.io/v1/tokenreviews", header: jsonType,
-			body: `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview","spec":{"token":"x"}}`},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/mt-kube-k1/serviceaccounts/mt-view/token",
-			header: jsonType, body: `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenRequest","spec":{}}`},
-		sample{method: http.MethodPost, path: "/apis/diff.meshtransit.net/v1/namespaces/default/widgets", header: jsonType,
-			body: `{"apiVersion":"diff.meshtransit.net/v1","kind":"Widget","metadata":{"name":"w"}}`},
-		sample{method: http.MethodPut, path: "/apis/diff.meshtransit.net/v1/namespaces/default/widgets/w/scale",
-			header: jsonType, body: `{"apiVersion":"autoscaling/v1","kind":"Scale","metadata":{"name":"w"},"spec":{"replicas":2}}`},
-		sample{method: http.MethodPost, path: "/apis/fake.meshtransit.net/v1alpha1/namespaces/default/things",
-			header: jsonType, body: `{}`},
-		sample{method: http.MethodPost, path: "/api/v1/namespaces/default/services/kubernetes/proxy/x",
-			header: jsonType, body: `{}`},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/attach?stdout=true",
+			header: upgrade("SPDY/3.1"),
+		},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/pods/x/portforward?ports=80",
+			header: upgrade("SPDY/3.1"),
+		},
+		sample{
+			method: http.MethodGet, path: "/apis/fake.meshtransit.net/v1alpha1/namespaces/default/things/t/console",
+			header: upgrade("websocket"),
+		},
+		sample{
+			method: http.MethodPost, path: "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", header: jsonType,
+			body: `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{"resourceAttributes":{"verb":"get","resource":"pods"}}}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews", header: jsonType,
+			body: `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","spec":{"namespace":"default"}}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/apis/authentication.k8s.io/v1/tokenreviews", header: jsonType,
+			body: `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview","spec":{"token":"x"}}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/mt-kube-k1/serviceaccounts/mt-view/token",
+			header: jsonType, body: `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenRequest","spec":{}}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/apis/diff.meshtransit.net/v1/namespaces/default/widgets", header: jsonType,
+			body: `{"apiVersion":"diff.meshtransit.net/v1","kind":"Widget","metadata":{"name":"w"}}`,
+		},
+		sample{
+			method: http.MethodPut, path: "/apis/diff.meshtransit.net/v1/namespaces/default/widgets/w/scale",
+			header: jsonType, body: `{"apiVersion":"autoscaling/v1","kind":"Scale","metadata":{"name":"w"},"spec":{"replicas":2}}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/apis/fake.meshtransit.net/v1alpha1/namespaces/default/things",
+			header: jsonType, body: `{}`,
+		},
+		sample{
+			method: http.MethodPost, path: "/api/v1/namespaces/default/services/kubernetes/proxy/x",
+			header: jsonType, body: `{}`,
+		},
 		// kubectl's port-forward over WebSocket: the ports in a subprotocol.
 		sample{method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/portforward", header: http.Header{
 			"Connection": {"Upgrade"}, "Upgrade": {"websocket"}, "Sec-Websocket-Version": {"13"},
 			"Sec-Websocket-Key":      {"dGhlIHNhbXBsZSBub25jZQ=="},
-			"Sec-Websocket-Protocol": {"SPDY/3.1+portforward.k8s.io"}}},
+			"Sec-Websocket-Protocol": {"SPDY/3.1+portforward.k8s.io"},
+		}},
 		// The client's credentials never reach the API server (K1-I3).
 		sample{method: http.MethodGet, path: "/api/v1/namespaces/default/configmaps", header: http.Header{
 			"Authorization": {"Bearer client-token"}, "Impersonate-User": {"admin"},
 			"Impersonate-Group": {"system:masters"}, "X-Remote-User": {"admin"},
-			"Proxy-Authorization": {"Basic eDp5"}}},
-		sample{method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
-			header: http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"},
-				"Sec-Websocket-Protocol": {"v5.channel.k8s.io, base64url.bearer.authorization.k8s.io.Y2xpZW50"}}},
+			"Proxy-Authorization": {"Basic eDp5"},
+		}},
+		sample{
+			method: http.MethodGet, path: "/api/v1/namespaces/default/pods/x/exec?command=ls&stdout=true",
+			header: http.Header{
+				"Connection": {"Upgrade"}, "Upgrade": {"websocket"},
+				"Sec-Websocket-Protocol": {"v5.channel.k8s.io, base64url.bearer.authorization.k8s.io.Y2xpZW50"},
+			},
+		},
 	)
 	return set
 }
@@ -274,15 +316,19 @@ func TestDifferential(t *testing.T) {
 	capture := &captureHandler{other: func(line string) { t.Log("gateway: " + line) }}
 	recorded := &intents{byID: map[string]controlplane.KubeAuditIntent{}}
 	certificate, pool := testCertificate(t)
-	grants := []networkmap.KubernetesGrant{{Group: "diff", ValidUntil: time.Now().Add(time.Hour)},
-		{Group: "other", ValidUntil: time.Now().Add(time.Hour)}}
+	grants := []networkmap.KubernetesGrant{
+		{Group: "diff", ValidUntil: time.Now().Add(time.Hour)},
+		{Group: "other", ValidUntil: time.Now().Add(time.Hour)},
+	}
 	proxy, err := New(Options{
 		Cluster: "diff", Namespace: "mt-kube-k1",
 		Groups:  []Group{{Name: "diff", Default: true}, {Name: "other"}},
 		Backend: server, BackendCA: ca,
 		Peer: func(netip.Addr) (Peer, bool) {
-			return Peer{DeviceID: "device-diff", Name: "diff", Key: [32]byte{1},
-				Access: &networkmap.KubernetesAccess{OwnerRef: "person-diff", Grants: grants}}, true
+			return Peer{
+				DeviceID: "device-diff", Name: "diff", Key: [32]byte{1},
+				Access: &networkmap.KubernetesAccess{OwnerRef: "person-diff", Grants: grants},
+			}, true
 		},
 		Certificate: func() (*tls.Certificate, bool) { return certificate, true },
 		MapFreshAt:  time.Now, StaleAfter: 5 * time.Minute, CoreNow: time.Now,
@@ -293,7 +339,8 @@ func TestDifferential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var listening net.ListenConfig
+	listener, err := listening.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,8 +407,10 @@ func TestDifferential(t *testing.T) {
 			want.group, want.resource, want.subresource, want.namespace, want.name = ref.APIGroup, ref.Resource,
 				ref.Subresource, ref.Namespace, ref.Name
 		}
-		got := logged{verb: row.verb, group: row.group, resource: row.resource, subresource: row.subresource,
-			namespace: row.namespace, name: row.name}
+		got := logged{
+			verb: row.verb, group: row.group, resource: row.resource, subresource: row.subresource,
+			namespace: row.namespace, name: row.name,
+		}
 		if got != want {
 			fail("%s: gateway %+v\n  api server %+v", event.RequestURI, got, want)
 			continue
@@ -502,12 +551,17 @@ func runKubectl(t *testing.T, address string) int {
 		t.Fatal(err)
 	}
 	runs := [][]string{
-		{"get", "pods", "-n", "default"}, {"get", "secrets", "-A"}, {"get", "widgets.diff.meshtransit.net", "-A"},
+		{"get", "pods", "-n", "default"},
+		{"get", "secrets", "-A"},
+		{"get", "widgets.diff.meshtransit.net", "-A"},
 		// MT_DIFF_POD names a pod that exists, so exec, cp and debug send
 		// their real upgrades and patches.
-		{"logs", "-n", "default", pod}, {"exec", "-n", "default", pod, "--", "ls"},
-		{"auth", "can-i", "list", "pods"}, {"delete", "configmap", "-n", "default", "nosuch"},
-		{"debug", "-n", "default", pod, "--image=busybox"}, {"cp", "-n", "default", pod + ":/etc/hosts", filepath.Join(dir, "h")},
+		{"logs", "-n", "default", pod},
+		{"exec", "-n", "default", pod, "--", "ls"},
+		{"auth", "can-i", "list", "pods"},
+		{"delete", "configmap", "-n", "default", "nosuch"},
+		{"debug", "-n", "default", pod, "--image=busybox"},
+		{"cp", "-n", "default", pod + ":/etc/hosts", filepath.Join(dir, "h")},
 		{"port-forward", "-n", "default", "pod/" + pod, "18080:80", "--pod-running-timeout=2s"},
 	}
 	for _, args := range runs {

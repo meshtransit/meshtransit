@@ -48,7 +48,7 @@ func NewAPIReviewer(server, caFile string) (*APIReviewer, error) {
 		parsed.Fragment != "" || strings.Trim(parsed.Path, "/") != "" {
 		return nil, errors.New("rbaccheck: the API server must be an https URL")
 	}
-	pem, err := os.ReadFile(caFile)
+	pem, err := os.ReadFile(caFile) //nolint:gosec // the API server CA the operator configured
 	if err != nil {
 		return nil, fmt.Errorf("rbaccheck: reading the cluster CA: %w", err)
 	}
@@ -56,11 +56,15 @@ func NewAPIReviewer(server, caFile string) (*APIReviewer, error) {
 	if !roots.AppendCertsFromPEM(pem) {
 		return nil, errors.New("rbaccheck: the cluster CA file holds no certificate")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
+	}
 	return &APIReviewer{
-		client: &http.Client{Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client: &http.Client{
+			Transport:     transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		url:      strings.TrimSuffix(server, "/") + "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
 		rulesURL: strings.TrimSuffix(server, "/") + "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
 	}, nil
@@ -87,9 +91,7 @@ type resourceAttributes struct {
 // it refuses is ErrUnauthorized.
 func (reviewer *APIReviewer) Review(ctx context.Context, token string, attributes Attributes) (bool, error) {
 	review := accessReview{APIVersion: "authorization.k8s.io/v1", Kind: "SelfSubjectAccessReview"}
-	review.Spec.ResourceAttributes = resourceAttributes{Namespace: attributes.Namespace, Verb: attributes.Verb,
-		Group: attributes.Group, Resource: attributes.Resource, Subresource: attributes.Subresource,
-		Name: attributes.Name}
+	review.Spec.ResourceAttributes = resourceAttributes(attributes)
 	body, err := json.Marshal(review)
 	if err != nil {
 		return false, err

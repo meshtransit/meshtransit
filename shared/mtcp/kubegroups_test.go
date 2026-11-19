@@ -11,7 +11,8 @@ import (
 )
 
 func groupStatus(name string, privileged bool, state mtcpv1.GatewayGroupStatus_State,
-	reason mtcpv1.GatewayGroupStatus_Reason) *mtcpv1.GatewayGroupStatus {
+	reason mtcpv1.GatewayGroupStatus_Reason,
+) *mtcpv1.GatewayGroupStatus {
 	return &mtcpv1.GatewayGroupStatus{Group: name, Privileged: privileged, State: state, Reason: reason}
 }
 
@@ -53,25 +54,35 @@ func TestValidateGatewayGroupReport(t *testing.T) {
 			groupStatus("one-more", false, enabled, mtcpv1.GatewayGroupStatus_NONE))},
 		"a group twice": {Groups: []*mtcpv1.GatewayGroupStatus{
 			groupStatus("view", false, enabled, mtcpv1.GatewayGroupStatus_NONE),
-			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_API_ERROR)}},
+			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_API_ERROR),
+		}},
 		"an upper case name": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("View", false, enabled, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus("View", false, enabled, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"a name of 64 bytes": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus(strings.Repeat("a", 64), false, enabled, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus(strings.Repeat("a", 64), false, enabled, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"a leading hyphen": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("-view", false, enabled, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus("-view", false, enabled, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"no state": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, mtcpv1.GatewayGroupStatus_STATE_UNSPECIFIED, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus("view", false, mtcpv1.GatewayGroupStatus_STATE_UNSPECIFIED, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"enabled with a reason": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, enabled, mtcpv1.GatewayGroupStatus_RBAC_EXCEEDS)}},
+			groupStatus("view", false, enabled, mtcpv1.GatewayGroupStatus_RBAC_EXCEEDS),
+		}},
 		"impersonation off, not privileged": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, enabled, mtcpv1.GatewayGroupStatus_IMPERSONATION_OFF)}},
+			groupStatus("view", false, enabled, mtcpv1.GatewayGroupStatus_IMPERSONATION_OFF),
+		}},
 		"disabled without a reason": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"pending, checked": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, pending, mtcpv1.GatewayGroupStatus_NONE)}},
+			groupStatus("view", false, pending, mtcpv1.GatewayGroupStatus_NONE),
+		}},
 		"an unknown reason": {Groups: []*mtcpv1.GatewayGroupStatus{
-			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_Reason(99))}},
+			groupStatus("view", false, disabled, mtcpv1.GatewayGroupStatus_Reason(99)),
+		}},
 		"a negative time": {CheckedAtMs: -1},
 	} {
 		if err := ValidateGatewayGroupReport(report); !errors.Is(err, ErrGatewayGroupReport) {

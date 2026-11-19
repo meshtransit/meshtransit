@@ -53,9 +53,12 @@ func validIntent(intent controlplane.KubeAuditIntent) bool {
 		value         string
 		minimum, most int
 	}{
-		{intent.Verb, 1, maximumVerb}, {intent.APIGroup, 0, maximumAPIGroup},
-		{intent.Resource, 0, maximumResource}, {intent.Subresource, 0, maximumResource},
-		{intent.Namespace, 0, maximumNamespace}, {intent.Name, 0, maximumName},
+		{intent.Verb, 1, maximumVerb},
+		{intent.APIGroup, 0, maximumAPIGroup},
+		{intent.Resource, 0, maximumResource},
+		{intent.Subresource, 0, maximumResource},
+		{intent.Namespace, 0, maximumNamespace},
+		{intent.Name, 0, maximumName},
 		{intent.Impersonated, 0, maximumImpersonated},
 	} {
 		if !clean(field.value, field.minimum, field.most) {

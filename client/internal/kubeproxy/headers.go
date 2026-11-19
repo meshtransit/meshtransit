@@ -6,7 +6,7 @@ import (
 )
 
 // bearerProtocol prefixes the WebSocket subprotocol that carries a token.
-const bearerProtocol = "base64url.bearer.authorization.k8s.io."
+const bearerProtocol = "base64url.bearer.authorization.k8s.io." //nolint:gosec // a WebSocket subprotocol prefix, not a credential
 
 // credentialHeader reports a header that names who the request is from, or
 // claims to: never forwarded from the client (K1-I3).

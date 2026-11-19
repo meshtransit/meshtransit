@@ -990,7 +990,7 @@ func TestServer_SignOutRefusalsSayWhatToDo(t *testing.T) {
 	}
 }
 
-// docs/device-logout-design.md §7: DELETE /v1/profiles/{id} removes an
+// device-logout-design §7: DELETE /v1/profiles/{id} removes an
 // inactive profile; the active one is refused.
 func TestServer_RemoveProfile(t *testing.T) {
 	t.Parallel()

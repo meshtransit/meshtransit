@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Device alias hints (docs/performance-logic-plan.md §8, L1b): control
+// Device alias hints (performance-logic-plan §8, L1b): control
 // announces each recorded alias claim, and the Device alias workers listen
 // to those claims and to Network revisions, so an idle worker can space its
 // sweeps out. Hints are best effort: while a subscription is down the worker

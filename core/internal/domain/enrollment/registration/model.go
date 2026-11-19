@@ -39,14 +39,19 @@ var (
 	// another owner, or with another node key. Asking again never changes it:
 	// the node signs in to that Device's Network, or that Device is removed.
 	ErrKeysHeldElsewhere = errors.New("registration: the machine key holds another Device")
-	// The reasons a browser sign-in cannot move its machine to the approved
-	// Network (sign-in-moves-machine §8); each is also ErrKeysHeldElsewhere.
+	// ErrMachineOfAnotherAccount is a reason a browser sign-in cannot move
+	// its machine to the approved Network (sign-in-moves-machine §8): it is
+	// another account's Device. Each such reason is also ErrKeysHeldElsewhere.
 	ErrMachineOfAnotherAccount = fmt.Errorf("registration: the machine is another account's Device: %w",
 		ErrKeysHeldElsewhere)
+	// ErrMachineNotMovable reports a machine that is a Workspace's or a suspended
+	// Device.
 	ErrMachineNotMovable = fmt.Errorf("registration: the machine is a Workspace's or a suspended Device: %w",
 		ErrKeysHeldElsewhere)
+	// ErrMoveNotConfirmed reports a move the approval page did not confirm.
 	ErrMoveNotConfirmed = fmt.Errorf("registration: the move was not confirmed on the approval page: %w",
 		ErrKeysHeldElsewhere)
+	// ErrMoveNeedsNewClient reports an older client, which cannot move its machine.
 	ErrMoveNeedsNewClient = fmt.Errorf("registration: an older client cannot move its machine: %w",
 		ErrKeysHeldElsewhere)
 	// ErrSiblingConflict reports that another profile on this machine already

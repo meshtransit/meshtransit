@@ -273,7 +273,7 @@ func validRequirement(requirement string) bool {
 func validLabelKey(key string) bool {
 	prefix, name, prefixed := strings.Cut(key, "/")
 	if !prefixed {
-		name, prefix = prefix, ""
+		name = prefix
 	} else if prefix == "" || len(prefix) > 253 || !dnsSubdomain(prefix) {
 		return false
 	}
@@ -304,7 +304,7 @@ func dnsSubdomain(name string) bool {
 		}
 		for index := range len(label) {
 			c := label[index]
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9') && (index == 0 || index == len(label)-1 || c != '-') {
+			if ((c < 'a' || c > 'z') && (c < '0' || c > '9')) && (index == 0 || index == len(label)-1 || c != '-') {
 				return false
 			}
 		}

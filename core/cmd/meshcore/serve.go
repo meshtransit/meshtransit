@@ -668,7 +668,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, mapInventoryMetrics)
 		if processConfig.Control.Map.EnableDeviceAliases {
 			// Each recorded alias claim tells the Device alias workers
-			// (docs/performance-logic-plan.md §8, L1b).
+			// (performance-logic-plan §8, L1b).
 			announcer := newAliasClaimAnnouncer(redisClient.PublishDeviceAliasClaimed, logger)
 			if mapSessionService, composeErr = mapSessionService.WithDeviceAliasClaimed(announcer.Claimed); composeErr != nil {
 				logger.ErrorContext(ctx, "startup failed", "error_code", "map_session_composition_failure", "error", composeErr)

@@ -298,7 +298,7 @@ func echoRequest(source, target netip.Addr) []byte {
 	packet := make([]byte, header.IPv4MinimumSize+header.ICMPv4MinimumSize)
 	ip := header.IPv4(packet)
 	ip.Encode(&header.IPv4Fields{
-		TotalLength: uint16(len(packet)), TTL: 64,
+		TotalLength: uint16(len(packet)), TTL: 64, //nolint:gosec // test packets are far below 64 KiB
 		Protocol: uint8(header.ICMPv4ProtocolNumber), SrcAddr: tcpip.AddrFrom4(source.As4()),
 		DstAddr: tcpip.AddrFrom4(target.As4()),
 	})

@@ -18,7 +18,7 @@ const (
 	envDeviceAliasWorkerIdle       = "MESHTRANSIT_DEVICE_ALIAS_WORKER_IDLE_INTERVAL"
 	// defaultDeviceAliasWorkerIdle is the longest pause between two sweeps
 	// that found no work while the worker hears alias claims and Network
-	// revisions (docs/performance-logic-plan.md §8, L1b).
+	// revisions (performance-logic-plan §8, L1b).
 	defaultDeviceAliasWorkerIdle = 5 * time.Second
 )
 

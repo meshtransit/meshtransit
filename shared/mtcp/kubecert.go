@@ -34,7 +34,7 @@ var ErrKubeCertRenewalKey = errors.New("mtcp: a renewal proof needs a P-256 key"
 // kubeCertRenewalDigest is SHA-256(domain || 0x00 || h || request_id ||
 // renewal_serial || SHA-256(csr)): the proof binds the session, the request,
 // the certificate renewed (a3 §14 R-L1) and the CSR.
-func kubeCertRenewalDigest(handshakeHash [32]byte, requestID [16]byte, serial [16]byte,
+func kubeCertRenewalDigest(handshakeHash [32]byte, requestID, serial [16]byte,
 	csr []byte,
 ) [sha256.Size]byte {
 	csrHash := sha256.Sum256(csr)

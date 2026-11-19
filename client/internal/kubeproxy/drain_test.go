@@ -1,6 +1,7 @@
 package kubeproxy
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -20,7 +21,7 @@ func TestServeDrainsWhenStopped(t *testing.T) {
 	}
 	answered := make(chan answer, 1)
 	go func() {
-		request, err := http.NewRequest(http.MethodGet,
+		request, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 			"https://"+clusterName+"/mt/g/view/api/v1/namespaces/default/pods/linger", nil)
 		if err != nil {
 			answered <- answer{err: err}
@@ -31,7 +32,7 @@ func TestServeDrainsWhenStopped(t *testing.T) {
 			answered <- answer{err: err}
 			return
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		_, err = io.ReadAll(response.Body)
 		answered <- answer{status: response.StatusCode, err: err}
 	}()
@@ -41,7 +42,8 @@ func TestServeDrainsWhenStopped(t *testing.T) {
 	f.stop()
 	refused := false
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
-		conn, err := net.DialTimeout("tcp", f.address, 100*time.Millisecond)
+		dialer := net.Dialer{Timeout: 100 * time.Millisecond}
+		conn, err := dialer.DialContext(t.Context(), "tcp", f.address)
 		if err != nil {
 			refused = true
 			break

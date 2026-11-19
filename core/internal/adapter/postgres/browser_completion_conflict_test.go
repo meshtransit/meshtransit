@@ -32,7 +32,7 @@ func TestKeysHeldElsewhereNamesOnlyTheKeyIndexes(t *testing.T) {
 			if refused := errors.Is(got, registration.ErrKeysHeldElsewhere); refused != test.refusedFor {
 				t.Fatalf("keysHeldElsewhere(%v) = %v, refused %t, want %t", test.err, got, refused, test.refusedFor)
 			}
-			if !test.refusedFor && got != test.err {
+			if !test.refusedFor && got != test.err { //nolint:errorlint // identity: the error is returned unchanged
 				t.Fatalf("keysHeldElsewhere(%v) = %v, want the error unchanged", test.err, got)
 			}
 		})

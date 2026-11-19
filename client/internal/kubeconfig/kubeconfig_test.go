@@ -22,8 +22,10 @@ func entry(group string) Entry {
 	if group != "" {
 		server += "/mt/g/" + group
 	}
-	return Entry{Name: name, Server: server, TLSServerName: "prod.k8s.example", CAFile: "/var/lib/meshtransit/kube/p/c.pem",
-		Marker: Marker{ProfileID: "0a0a", ClusterID: "01890f90-0000-7000-8000-0000000000a1", Group: group}}
+	return Entry{
+		Name: name, Server: server, TLSServerName: "prod.k8s.example", CAFile: "/var/lib/meshtransit/kube/p/c.pem",
+		Marker: Marker{ProfileID: "0a0a", ClusterID: "01890f90-0000-7000-8000-0000000000a1", Group: group},
+	}
 }
 
 func readConfig(t *testing.T, file string) map[string]any {
@@ -43,7 +45,7 @@ func names(config map[string]any, list string) []string {
 	var out []string
 	items, _ := config[list].([]any)
 	for _, item := range items {
-		out = append(out, item.(map[string]any)["name"].(string))
+		out = append(out, item.(map[string]any)["name"].(string)) //nolint:forcetypeassert,errcheck // the kubeconfig the test wrote has this shape
 	}
 	return out
 }
@@ -63,13 +65,13 @@ func TestLoginCreatesAndKeepsOthers(t *testing.T) {
 	if info, err := os.Stat(file); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v, %v", info.Mode(), err)
 	}
-	cluster := config["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any)
+	cluster := config["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any) //nolint:forcetypeassert,errcheck // the kubeconfig the test wrote has this shape
 	if cluster["certificate-authority"] != "/var/lib/meshtransit/kube/p/c.pem" || cluster["tls-server-name"] != "prod.k8s.example" {
 		t.Fatalf("cluster %v", cluster)
 	}
 	// mt-none holds the placeholder only: kubectl asks for a username
 	// when a user holds nothing (K1b Q78, e5).
-	users := config["users"].([]any)
+	users := config["users"].([]any) //nolint:forcetypeassert,errcheck // the kubeconfig the test wrote has this shape
 	if len(users) != 1 || fmt.Sprint(users[0]) != "map[name:mt-none user:map[token:meshtransit-mesh-identity]]" {
 		t.Fatalf("users %v", users)
 	}
@@ -81,7 +83,7 @@ func TestLoginCreatesAndKeepsOthers(t *testing.T) {
 	if got := names(config, "clusters"); len(got) != 2 || config["current-context"] != "mt-acme-prod" {
 		t.Fatalf("with a group: %v", config)
 	}
-	plain := config["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any)
+	plain := config["clusters"].([]any)[0].(map[string]any)["cluster"].(map[string]any) //nolint:forcetypeassert,errcheck // the kubeconfig the test wrote has this shape
 	if plain["server"] != "https://prod.kube.acme.mesh.internal" {
 		t.Fatalf("the group's login changed the plain cluster: %v", plain)
 	}
@@ -348,7 +350,7 @@ func TestLoginPlaceholderUser(t *testing.T) {
 	if _, err := Login([]string{old}, entry(""), false, false); err != nil {
 		t.Fatal(err)
 	}
-	if users := readConfig(t, old)["users"].([]any); len(users) != 1 ||
+	if users := readConfig(t, old)["users"].([]any); len(users) != 1 || //nolint:forcetypeassert,errcheck // the kubeconfig the test wrote has this shape
 		fmt.Sprint(users[0]) != "map[name:mt-none user:map[token:meshtransit-mesh-identity]]" {
 		t.Fatalf("users %v", users)
 	}

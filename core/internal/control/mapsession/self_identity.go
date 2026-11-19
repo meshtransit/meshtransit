@@ -10,7 +10,7 @@ import (
 )
 
 // Ownership is whose a Device is, as its own map tells it (MTCP
-// self.identity1, docs/device-logout-s4b-accounts-ux.md §3).
+// self.identity1, device-logout-s4b-accounts-ux §3).
 type Ownership uint8
 
 const (

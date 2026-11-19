@@ -55,8 +55,10 @@ type Rule struct {
 // and the rules of each part sorted and distinct: the same rights in any
 // order normalize alike. It does not check the profile.
 func Normalize(profile Profile) Profile {
-	return Profile{Name: profile.Name, Namespaced: normalizeRules(profile.Namespaced),
-		Cluster: normalizeRules(profile.Cluster)}
+	return Profile{
+		Name: profile.Name, Namespaced: normalizeRules(profile.Namespaced),
+		Cluster: normalizeRules(profile.Cluster),
+	}
 }
 
 func normalizeRules(rules []Rule) []Rule {
@@ -69,9 +71,11 @@ func normalizeRules(rules []Rule) []Rule {
 	}
 	out := make([]keyed, 0, len(rules))
 	for _, rule := range rules {
-		normalized := Rule{APIGroups: sortedSet(rule.APIGroups), Resources: sortedSet(rule.Resources),
+		normalized := Rule{
+			APIGroups: sortedSet(rule.APIGroups), Resources: sortedSet(rule.Resources),
 			Verbs: sortedSet(rule.Verbs), ResourceNames: sortedSet(rule.ResourceNames),
-			NonResourceURLs: sortedSet(rule.NonResourceURLs)}
+			NonResourceURLs: sortedSet(rule.NonResourceURLs),
+		}
 		key, _ := json.Marshal(normalized) // A Rule always encodes.
 		out = append(out, keyed{rule: normalized, key: key})
 	}
@@ -140,8 +144,10 @@ func checkCounts(profile Profile) error {
 	}
 	for _, rules := range [][]Rule{profile.Namespaced, profile.Cluster} {
 		for _, rule := range rules {
-			for _, values := range [][]string{rule.APIGroups, rule.Resources, rule.Verbs, rule.ResourceNames,
-				rule.NonResourceURLs} {
+			for _, values := range [][]string{
+				rule.APIGroups, rule.Resources, rule.Verbs, rule.ResourceNames,
+				rule.NonResourceURLs,
+			} {
 				if len(values) > maximumElements {
 					return invalid("a rule lists more than %d entries", maximumElements)
 				}
@@ -312,7 +318,7 @@ func dnsLabel(label string) bool {
 	}
 	for index := range len(label) {
 		character := label[index]
-		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-') {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
 			return false
 		}
 	}

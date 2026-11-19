@@ -9,8 +9,10 @@ import (
 )
 
 func groupReportOf(state mtcpv1.GatewayGroupStatus_State, reason mtcpv1.GatewayGroupStatus_Reason) *mtcpv1.GatewayGroupReport {
-	return &mtcpv1.GatewayGroupReport{Groups: []*mtcpv1.GatewayGroupStatus{{Group: "view", State: state,
-		Reason: reason}}}
+	return &mtcpv1.GatewayGroupReport{Groups: []*mtcpv1.GatewayGroupStatus{{
+		Group: "view", State: state,
+		Reason: reason,
+	}}}
 }
 
 // A gateway sends its report at once, again when it changes, an unchanged

@@ -131,7 +131,7 @@ func TestServeDrainsTheKubectlPathBeforeTheDaemon(t *testing.T) {
 	}{
 		{name: "plain stop", cause: context.Canceled, drain: true},
 		// signal.NotifyContext ends with a cause that is context.Canceled.
-		{name: "sigterm", cause: stopSignal{}, drain: true},
+		{name: "sigterm", cause: stopSignalError{}, drain: true},
 		{name: "identity conflict", cause: errors.New("a second replica uses this identity")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -168,11 +168,11 @@ func TestServeDrainsTheKubectlPathBeforeTheDaemon(t *testing.T) {
 	}
 }
 
-// stopSignal is a stop like signal.NotifyContext's: it is context.Canceled.
-type stopSignal struct{}
+// stopSignalError is a stop like signal.NotifyContext's: it is context.Canceled.
+type stopSignalError struct{}
 
-func (stopSignal) Error() string        { return "terminated signal received" }
-func (stopSignal) Is(target error) bool { return target == context.Canceled }
+func (stopSignalError) Error() string        { return "terminated signal received" }
+func (stopSignalError) Is(target error) bool { return target == context.Canceled }
 
 // A daemon that stops by itself ends the kubectl path with a cause that is
 // not a plain stop, so the proxy closes without a drain (TD-CLI-94).

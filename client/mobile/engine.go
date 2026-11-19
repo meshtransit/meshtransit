@@ -710,10 +710,12 @@ func onlyRejection(err error) bool {
 	if err == nil {
 		return false
 	}
-	if _, ok := err.(*controlplane.RejectedError); ok {
+	// Each layer of the tree on its own, not errors.As: a joined error
+	// beside the rejection must make this false (TD-CORE-150).
+	if _, ok := err.(*controlplane.RejectedError); ok { //nolint:errorlint // walks the tree layer by layer
 		return true
 	}
-	switch wrapped := err.(type) {
+	switch wrapped := err.(type) { //nolint:errorlint // walks the tree layer by layer
 	case interface{ Unwrap() []error }:
 		for _, child := range wrapped.Unwrap() {
 			if !onlyRejection(child) {

@@ -29,10 +29,14 @@ func TestPublicDescriptors(t *testing.T) {
 			"(A;CI;LCSWWPRCDTWO;;;BU)", true, false},
 		{"MeshTransit as the log code makes it", "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", false, true},
 		{"kube as meshd makes it", publicSDDL, false, true},
-		{"ProgramData with Users:M", "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)", true,
-			false},
-		{"a conditional allow on an ancestor", "O:SYD:PAI(A;OICI;FA;;;SY)(XA;;FA;;;WD;(Member_of {SID(BA)}))",
-			true, false},
+		{
+			"ProgramData with Users:M", "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)", true,
+			false,
+		},
+		{
+			"a conditional allow on an ancestor", "O:SYD:PAI(A;OICI;FA;;;SY)(XA;;FA;;;WD;(Member_of {SID(BA)}))",
+			true, false,
+		},
 		{"MeshTransit owned by a user", "O:S-1-5-21-1-2-3-1001D:P(A;OICI;FA;;;SY)", false, false},
 		{"kube users may write to", "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;0x1301bf;;;BU)", false, false},
 	} {

@@ -28,7 +28,7 @@ func accessReview(attributes string) string {
 	return `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{` + attributes + `}}`
 }
 
-func (f *fixture) post(path, contentType, body string) (*http.Response, string) {
+func (f *fixture) post(path, contentType, body string) (answered, string) {
 	f.t.Helper()
 	request, err := http.NewRequestWithContext(f.t.Context(), http.MethodPost, "https://"+clusterName+path,
 		strings.NewReader(body))
@@ -41,8 +41,14 @@ func (f *fixture) post(path, contentType, body string) (*http.Response, string) 
 		f.t.Fatal(err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	answer, _ := io.ReadAll(response.Body)
-	return response, string(answer)
+	answer, err := io.ReadAll(response.Body)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return answered{
+		StatusCode: response.StatusCode, ProtoMajor: response.ProtoMajor, Header: response.Header,
+		Close: response.Close,
+	}, string(answer)
 }
 
 func TestDecodeAccessReview(t *testing.T) {

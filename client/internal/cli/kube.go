@@ -221,8 +221,10 @@ func runKubeLogin(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return 1
 	}
 	if isJSON {
-		return writeJSON(stdout, stderr, kubeLoginResult{Context: entry.Name, File: result.File, Group: *group,
-			Groups: answer.Groups, Shadowed: result.Shadowed})
+		return writeJSON(stdout, stderr, kubeLoginResult{
+			Context: entry.Name, File: result.File, Group: *group,
+			Groups: answer.Groups, Shadowed: result.Shadowed,
+		})
 	}
 	_, _ = fmt.Fprintf(stdout, "Context %s written to %s.\n", entry.Name, result.File)
 	_, _ = fmt.Fprintf(stdout, "Groups you hold: %s.\n", strings.Join(answer.Groups, ", "))
@@ -607,8 +609,10 @@ func kubeWhoami(ctx context.Context, cluster localapi.KubernetesClusterStatus, p
 	transport := &http.Transport{
 		Proxy:             nil,
 		ForceAttemptHTTP2: true,
-		TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: cluster.TLSServerName,
-			MinVersion: tls.VersionTLS13},
+		TLSClientConfig: &tls.Config{
+			RootCAs: roots, ServerName: cluster.TLSServerName,
+			MinVersion: tls.VersionTLS13,
+		},
 		// Straight to the mesh address checked above, whatever the URL's host
 		// resolves to later (K1e design §4).
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {

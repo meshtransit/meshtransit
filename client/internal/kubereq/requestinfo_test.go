@@ -84,9 +84,11 @@ func TestParseResourceRequests(t *testing.T) {
 			t.Errorf("%s %s: error %v", test.method, test.url, err)
 			continue
 		}
-		want := Info{IsResourceRequest: true, Verb: test.verb, APIPrefix: test.prefix, APIGroup: test.group,
+		want := Info{
+			IsResourceRequest: true, Verb: test.verb, APIPrefix: test.prefix, APIGroup: test.group,
 			APIVersion: test.version, Namespace: test.namespace, Resource: test.resource,
-			Subresource: test.subresource, Name: test.name, Parts: test.parts}
+			Subresource: test.subresource, Name: test.name, Parts: test.parts,
+		}
 		got.Path = ""
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s %s:\n got %+v\nwant %+v", test.method, test.url, got, want)

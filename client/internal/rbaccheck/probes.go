@@ -63,8 +63,10 @@ type gateway struct {
 type rights []Attributes
 
 func (collected *rights) add(namespace, verb, group, resource, subresource, name string) {
-	*collected = append(*collected, Attributes{Namespace: namespace, Verb: verb, Group: group, Resource: resource,
-		Subresource: subresource, Name: name})
+	*collected = append(*collected, Attributes{
+		Namespace: namespace, Verb: verb, Group: group, Resource: resource,
+		Subresource: subresource, Name: name,
+	})
 }
 
 // dangerousRights are what no non-privileged group may hold (K1b design §9;
@@ -106,11 +108,16 @@ func dangerousRights(at gateway, probeNamespace string) []Attributes {
 	collected.add("", "update", certificates, "certificatesigningrequests", "approval", "")
 	collected.add("", "approve", certificates, "signers", "", "")
 	for _, kind := range [][2]string{
-		{admission, "validatingwebhookconfigurations"}, {admission, "mutatingwebhookconfigurations"},
-		{admission, "validatingadmissionpolicies"}, {admission, "validatingadmissionpolicybindings"},
-		{admission, "mutatingadmissionpolicies"}, {admission, "mutatingadmissionpolicybindings"},
-		{"apiregistration.k8s.io", "apiservices"}, {"apiextensions.k8s.io", "customresourcedefinitions"},
-		{flowControl, "flowschemas"}, {flowControl, "prioritylevelconfigurations"},
+		{admission, "validatingwebhookconfigurations"},
+		{admission, "mutatingwebhookconfigurations"},
+		{admission, "validatingadmissionpolicies"},
+		{admission, "validatingadmissionpolicybindings"},
+		{admission, "mutatingadmissionpolicies"},
+		{admission, "mutatingadmissionpolicybindings"},
+		{"apiregistration.k8s.io", "apiservices"},
+		{"apiextensions.k8s.io", "customresourcedefinitions"},
+		{flowControl, "flowschemas"},
+		{flowControl, "prioritylevelconfigurations"},
 	} {
 		for _, verb := range writes {
 			collected.add("", verb, kind[0], kind[1], "", "")
@@ -131,8 +138,13 @@ func dangerousRights(at gateway, probeNamespace string) []Attributes {
 func runsCode(collected *rights, namespace string, pods []string) {
 	collected.add(namespace, "create", "", "pods", "", "")
 	for _, workload := range [][2]string{
-		{"apps", "deployments"}, {"apps", "replicasets"}, {"apps", "statefulsets"}, {"apps", "daemonsets"},
-		{"batch", "jobs"}, {"batch", "cronjobs"}, {"", "replicationcontrollers"},
+		{"apps", "deployments"},
+		{"apps", "replicasets"},
+		{"apps", "statefulsets"},
+		{"apps", "daemonsets"},
+		{"batch", "jobs"},
+		{"batch", "cronjobs"},
+		{"", "replicationcontrollers"},
 	} {
 		// Changing an existing workload's template runs new code as much as
 		// creating one: kube-proxy's DaemonSet reaches every node (re-review

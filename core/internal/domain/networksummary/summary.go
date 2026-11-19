@@ -1,6 +1,6 @@
 // Package networksummary keeps one summary row per Network current, so the
 // Console reads a page of Networks in one request instead of six per Network
-// (docs/console-load-design.md §5, TD-CON-43/48).
+// (console-load-design §5, TD-CON-43/48).
 //
 // Writers mark a Network dirty (database triggers). The worker claims dirty
 // Networks, and Networks whose figures change with time, counts each one in

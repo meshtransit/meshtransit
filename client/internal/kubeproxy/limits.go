@@ -25,8 +25,10 @@ type Limits struct {
 
 // DefaultLimits are the design's.
 func DefaultLimits() Limits {
-	return Limits{DeviceConnections: 16, DeviceRequests: 64, DeviceWatches: 200, DeviceUpgrades: 8,
-		DeviceRate: 50, DeviceBurst: 100, SourceHandshakes: 10, Connections: 1024, Streams: 2048}
+	return Limits{
+		DeviceConnections: 16, DeviceRequests: 64, DeviceWatches: 200, DeviceUpgrades: 8,
+		DeviceRate: 50, DeviceBurst: 100, SourceHandshakes: 10, Connections: 1024, Streams: 2048,
+	}
 }
 
 func (limits Limits) valid() bool {
@@ -125,11 +127,13 @@ func (server *Server) Unrecorded() map[string]uint64 {
 }
 
 func newGate(limits Limits) *gate {
-	return &gate{limits: limits, devices: map[string]int{}, sources: map[netip.Addr]int{},
+	return &gate{
+		limits: limits, devices: map[string]int{}, sources: map[netip.Addr]int{},
 		pending:     map[netip.Addr]int{},
 		handshakes:  map[netip.Addr]*rate.Limiter{},
 		overSources: map[netip.Addr]int{}, overPace: map[netip.Addr]*rate.Limiter{},
-		rates: map[string]*rate.Limiter{}, limited: map[string]uint64{}, unrecorded: map[string]uint64{}}
+		rates: map[string]*rate.Limiter{}, limited: map[string]uint64{}, unrecorded: map[string]uint64{},
+	}
 }
 
 // count records a request limited.

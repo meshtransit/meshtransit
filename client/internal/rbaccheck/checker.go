@@ -130,9 +130,11 @@ func New(options Options) (*Checker, error) {
 			return nil, fmt.Errorf("rbaccheck: invalid Secret name %q", secret)
 		}
 	}
-	at := gateway{namespace: options.Namespace, statefulSet: options.StatefulSet,
+	at := gateway{
+		namespace: options.Namespace, statefulSet: options.StatefulSet,
 		serviceAccount: options.ServiceAccount, pods: replicaNames(options.StatefulSet, options.Replicas),
-		secrets: options.Secrets, guarded: guarded}
+		secrets: options.Secrets, guarded: guarded,
+	}
 	verdicts := map[string]Verdict{}
 	for _, group := range options.Groups {
 		if _, twice := verdicts[group.Name]; twice || !dnsLabel(group.Name) ||
@@ -142,8 +144,10 @@ func New(options Options) (*Checker, error) {
 		verdicts[group.Name] = Verdict{Reason: "not checked yet", Code: CodeNotChecked}
 		at.accounts = append(at.accounts, "mt-"+group.Name)
 	}
-	return &Checker{options: options, at: at, now: time.Now, verdicts: verdicts, failures: map[string]int{},
-		stale: map[string]bool{}, changes: make(chan struct{}, 1)}, nil
+	return &Checker{
+		options: options, at: at, now: time.Now, verdicts: verdicts, failures: map[string]int{},
+		stale: map[string]bool{}, changes: make(chan struct{}, 1),
+	}, nil
 }
 
 // Verdict returns a group's verdict; a group the checker does not know is
@@ -249,8 +253,8 @@ func (checker *Checker) Pass(ctx context.Context) {
 		checker.mu.Lock()
 		previous := checker.verdicts[group.Name]
 		now := checker.now()
-		switch {
-		case err == nil:
+		switch err {
+		case nil:
 			verdict.CheckedAt = now
 			checker.failures[group.Name] = 0
 		default:
@@ -259,8 +263,10 @@ func (checker *Checker) Pass(ctx context.Context) {
 				verdict = previous // one failed check keeps the verdict
 				break
 			}
-			verdict = Verdict{Reason: "the RBAC check fails", Detail: err.Error(), Code: CodeAPIError,
-				CheckedAt: previous.CheckedAt}
+			verdict = Verdict{
+				Reason: "the RBAC check fails", Detail: err.Error(), Code: CodeAPIError,
+				CheckedAt: previous.CheckedAt,
+			}
 		}
 		if verdict.Enabled != previous.Enabled || verdict.Impersonation != previous.Impersonation {
 			changed = true

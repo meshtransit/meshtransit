@@ -40,9 +40,11 @@ func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus,
 	if err != nil {
 		t.Fatal(err)
 	}
-	rootTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
+	rootTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
 	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -52,9 +54,11 @@ func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus,
 	if err != nil {
 		t.Fatal(err)
 	}
-	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"prod.k8s.example"},
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2), DNSNames: []string{"prod.k8s.example"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, root, &leafKey.PublicKey, rootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +70,10 @@ func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus,
 		}
 		_, _ = writer.Write([]byte(`{"device":"d","groups":[` + groups + `],"cluster":"prod"}`))
 	}))
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}},
-		MinVersion: tls.VersionTLS13}
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}},
+		MinVersion:   tls.VersionTLS13,
+	}
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
@@ -75,15 +81,19 @@ func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus,
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(rootDER)
-	return localapi.KubernetesClusterStatus{ID: "01890f90-0000-7000-8000-0000000000a1", Name: "prod",
+	return localapi.KubernetesClusterStatus{
+		ID: "01890f90-0000-7000-8000-0000000000a1", Name: "prod",
 		DNSName: strings.TrimPrefix(server.URL, "https://"), TLSServerName: "prod.k8s.example", State: "trusted",
-		Roots: []string{hex.EncodeToString(sum[:])}, CAFile: caFile, CAFileState: "current"}, caFile
+		Roots: []string{hex.EncodeToString(sum[:])}, CAFile: caFile, CAFileState: "current",
+	}, caFile
 }
 
 func TestKubeLoginWritesAContext(t *testing.T) {
 	cluster, caFile := kubeGateway(t, `"view","sre"`)
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "Acme Corp",
-		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID: "0a0a", NetworkName: "Acme Corp",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster},
+	}}
 	kubeconfigFile := filepath.Join(t.TempDir(), "config")
 	var stdout, stderr bytes.Buffer
 	code := Run(t.Context(), []string{"kube", "login", "prod", "--group", "sre", "--use", "--kubeconfig", kubeconfigFile},
@@ -95,8 +105,10 @@ func TestKubeLoginWritesAContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mt-acme-corp-prod-sre", "/mt/g/sre", "certificate-authority: " + caFile,
-		"tls-server-name: prod.k8s.example", "current-context: mt-acme-corp-prod-sre", "meshtransit.net/managed"} {
+	for _, want := range []string{
+		"mt-acme-corp-prod-sre", "/mt/g/sre", "certificate-authority: " + caFile,
+		"tls-server-name: prod.k8s.example", "current-context: mt-acme-corp-prod-sre", "meshtransit.net/managed",
+	} {
 		if !strings.Contains(string(written), want) {
 			t.Errorf("kubeconfig lacks %q:\n%s", want, written)
 		}
@@ -118,8 +130,10 @@ func TestKubeLoginWritesAContext(t *testing.T) {
 // (TD-CLI-92).
 func TestKubeLogoutOfAClusterGoneFromTheMap(t *testing.T) {
 	cluster, _ := kubeGateway(t, `"view","sre"`)
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
-		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID: "0a0a", NetworkName: "acme",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster},
+	}}
 	kubeconfigFile := filepath.Join(t.TempDir(), "config")
 	var stdout, stderr bytes.Buffer
 	for _, group := range []string{"", "sre"} {
@@ -172,8 +186,10 @@ func TestKubeLogoutOfAGoneClusterKeepsOthers(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	login := func(profile string, status localapi.KubernetesClusterStatus) {
 		t.Helper()
-		client := &fakeClient{status: localapi.Status{ActiveProfileID: profile, NetworkName: "acme",
-			KubernetesClusters: []localapi.KubernetesClusterStatus{status}}}
+		client := &fakeClient{status: localapi.Status{
+			ActiveProfileID: profile, NetworkName: "acme",
+			KubernetesClusters: []localapi.KubernetesClusterStatus{status},
+		}}
 		if code := Run(t.Context(), []string{"kube", "login", status.Name, "--kubeconfig", kubeconfigFile}, &stdout,
 			&stderr, testOptions(client)); code != 0 {
 			t.Fatalf("login %s = %d: %s", status.Name, code, stderr.String())
@@ -193,8 +209,10 @@ func TestKubeLogoutOfAGoneClusterKeepsOthers(t *testing.T) {
 	if len(contexts()) != 3 {
 		t.Fatalf("contexts = %+v", contexts())
 	}
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
-		KubernetesClusters: []localapi.KubernetesClusterStatus{kept}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID: "0a0a", NetworkName: "acme",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{kept},
+	}}
 	stdout.Reset()
 	if code := Run(t.Context(), []string{"kube", "logout", "prod-eu", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
 		testOptions(client)); code != 0 || !strings.Contains(stdout.String(), "Removed 1") {
@@ -227,8 +245,10 @@ func TestKubeLogoutOfAGoneClusterKeepsOthers(t *testing.T) {
 // The CA file must hold exactly roots the map names, never a marker.
 func TestKubeLoginRefusesABadCAFile(t *testing.T) {
 	cluster, caFile := kubeGateway(t, `"view"`)
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
-		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID: "0a0a", NetworkName: "acme",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster},
+	}}
 	kubeconfigFile := filepath.Join(t.TempDir(), "config")
 	for name, content := range map[string]string{
 		"a marker":       "# MeshTransit: CA withheld (disconnected)\n",
@@ -278,8 +298,10 @@ func TestWindowsKubeHome(t *testing.T) {
 		return func(name string) string { return values[name] }
 	}
 	// HOMEDRIVE is the directory above, HOMEPATH the rest, as on a domain PC.
-	values := map[string]string{"HOMEDRIVE": dir, "HOMEPATH": string(filepath.Separator) + "drive",
-		"USERPROFILE": profile}
+	values := map[string]string{
+		"HOMEDRIVE": dir, "HOMEPATH": string(filepath.Separator) + "drive",
+		"USERPROFILE": profile,
+	}
 	// No .kube\config anywhere: USERPROFILE before HOMEDRIVE+HOMEPATH.
 	if got := windowsKubeHome(env(values), os.Stat); got != profile {
 		t.Fatalf("no config: %q, want %q", got, profile)
@@ -314,8 +336,10 @@ func TestWithSuffixTellsEntriesApart(t *testing.T) {
 // doctor walks the steps and names the first that fails, with its fix.
 func TestKubeDoctor(t *testing.T) {
 	cluster, caFile := kubeGateway(t, `"view"`)
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a", NetworkName: "acme",
-		ControlSession: "synchronized", KubernetesClusters: []localapi.KubernetesClusterStatus{cluster}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID: "0a0a", NetworkName: "acme",
+		ControlSession: "synchronized", KubernetesClusters: []localapi.KubernetesClusterStatus{cluster},
+	}}
 	kubeconfigFile := filepath.Join(t.TempDir(), "config")
 	var stdout, stderr bytes.Buffer
 	if code := Run(t.Context(), []string{"kube", "doctor", "prod", "--kubeconfig", kubeconfigFile}, &stdout, &stderr,
@@ -388,8 +412,10 @@ func TestMeshPrefixes(t *testing.T) {
 func TestKubeListGroups(t *testing.T) {
 	cluster, _ := kubeGateway(t, `"view"`)
 	pending := localapi.KubernetesClusterStatus{ID: "01890f90-0000-7000-8000-0000000000b2", Name: "dev", State: "pending"}
-	client := &fakeClient{status: localapi.Status{ActiveProfileID: "0a0a",
-		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster, pending}}}
+	client := &fakeClient{status: localapi.Status{
+		ActiveProfileID:    "0a0a",
+		KubernetesClusters: []localapi.KubernetesClusterStatus{cluster, pending},
+	}}
 	var stdout, stderr bytes.Buffer
 	if code := Run(t.Context(), []string{"--json", "kube", "list", "--groups"}, &stdout, &stderr,
 		testOptions(client)); code != 0 {

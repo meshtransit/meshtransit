@@ -51,9 +51,11 @@ func (tokens fakeTokens) Token(_ context.Context, group string) (string, error) 
 func (fakeTokens) Forget(string, string) {}
 
 func testOptions(reviewer Reviewer, tokens Tokens, groups ...Group) Options {
-	return Options{Groups: groups, Reviewer: reviewer, Tokens: tokens, Namespace: "meshtransit",
+	return Options{
+		Groups: groups, Reviewer: reviewer, Tokens: tokens, Namespace: "meshtransit",
 		StatefulSet: "meshgw", Replicas: 2, Secrets: []string{"meshgw-state", "meshgw-join"},
-		ServiceAccount: "meshgw", Interval: 10 * time.Minute}
+		ServiceAccount: "meshgw", Interval: 10 * time.Minute,
+	}
 }
 
 func testChecker(t *testing.T, reviewer Reviewer, groups ...Group) *Checker {
@@ -92,8 +94,10 @@ func TestCheckerTurnsOffDangerousGroups(t *testing.T) {
 		}, reason: "secrets in every namespace"},
 		"escalate":  {allow: is("escalate", "rbac.authorization.k8s.io", "clusterroles", ""), reason: "escalate"},
 		"nodeproxy": {allow: is("get", "", "nodes", "proxy"), reason: "nodes/proxy"},
-		"webhooks": {allow: is("create", "admissionregistration.k8s.io", "mutatingwebhookconfigurations", ""),
-			reason: "mutatingwebhookconfigurations"},
+		"webhooks": {
+			allow:  is("create", "admissionregistration.k8s.io", "mutatingwebhookconfigurations", ""),
+			reason: "mutatingwebhookconfigurations",
+		},
 		// Ways to take the gateway over, named or not (re-review HIGH-B).
 		"exec-gateway": {allow: func(attributes Attributes) bool {
 			return attributes.Namespace == "meshtransit" && attributes.Resource == "pods" &&
@@ -475,9 +479,14 @@ func TestCheckerGuardedNamespaces(t *testing.T) {
 func TestCheckerGuardsSessionsInAllowedNamespaces(t *testing.T) {
 	t.Parallel()
 	for _, right := range [][2]string{
-		{"create", "exec"}, {"get", "exec"}, {"create", "attach"}, {"get", "attach"},
-		{"create", "portforward"}, {"get", "portforward"},
-		{"patch", "ephemeralcontainers"}, {"update", "ephemeralcontainers"},
+		{"create", "exec"},
+		{"get", "exec"},
+		{"create", "attach"},
+		{"get", "attach"},
+		{"create", "portforward"},
+		{"get", "portforward"},
+		{"patch", "ephemeralcontainers"},
+		{"update", "ephemeralcontainers"},
 	} {
 		for _, guarded := range []bool{true, false} {
 			reviewer := &fakeReviewer{allow: map[string]func(Attributes) bool{

@@ -329,7 +329,7 @@ func (server *Server) rulesReview(w http.ResponseWriter, r *http.Request, info k
 	r.Header.Del("Content-Encoding")
 	r.Header.Set("Content-Type", "application/json")
 	prepareRulesReview(r)
-	return server.rulesNarrower(peer, group, namespace)
+	return server.rulesNarrower(peer, group, namespace) //nolint:bodyclose // returns a filter for the API server's response, which ReverseProxy closes
 }
 
 // prepareRulesReview asks the API server for a plain JSON answer the

@@ -29,13 +29,17 @@ func scoped(t *testing.T, profile Profile, namespaces []string, clusterPart bool
 }
 
 func inNamespace(verb, group, resource, subresource, namespace string) Attributes {
-	return Attributes{ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
-		Subresource: subresource, Namespace: namespace, Scope: ScopeNamespaced}
+	return Attributes{
+		ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
+		Subresource: subresource, Namespace: namespace, Scope: ScopeNamespaced,
+	}
 }
 
 func clusterWide(verb, group, resource, subresource string) Attributes {
-	return Attributes{ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
-		Subresource: subresource, Scope: ScopeCluster}
+	return Attributes{
+		ResourceRequest: true, Verb: verb, APIGroup: group, Resource: resource,
+		Subresource: subresource, Scope: ScopeCluster,
+	}
 }
 
 // The namespaced part answers only in the rule's namespaces; the cluster
@@ -70,8 +74,10 @@ func TestScopeParts(t *testing.T) {
 		"unknown scope, no namespace": {withCluster, Attributes{ResourceRequest: true, Verb: "list", Resource: "nodes"}, false},
 		// A cluster-scoped resource never answers through the namespaced
 		// part, even under a namespace path.
-		"cluster resource in a namespace path": {teamA, Attributes{ResourceRequest: true, Verb: "get",
-			Resource: "nodes", Namespace: "team-a", Scope: ScopeCluster}, false},
+		"cluster resource in a namespace path": {teamA, Attributes{
+			ResourceRequest: true, Verb: "get",
+			Resource: "nodes", Namespace: "team-a", Scope: ScopeCluster,
+		}, false},
 	} {
 		if got := test.scope.Allows(test.attributes); got != test.want {
 			t.Errorf("%s: Allows = %v, want %v", name, got, test.want)
@@ -84,22 +90,38 @@ func TestScopeParts(t *testing.T) {
 // resource.
 func TestScopeInteractive(t *testing.T) {
 	t.Parallel()
-	exact := Profile{Name: "oncall", Namespaced: []Rule{{APIGroups: []string{""},
-		Resources: []string{"pods/exec", "pods/portforward", "services/proxy"}, Verbs: []string{"create", "get"}}}}
-	getOnly := Profile{Name: "get-exec", Namespaced: []Rule{{APIGroups: []string{""},
-		Resources: []string{"pods/exec"}, Verbs: []string{"get"}}}}
-	createOnly := Profile{Name: "create-exec", Namespaced: []Rule{{APIGroups: []string{""},
-		Resources: []string{"pods/exec"}, Verbs: []string{"create"}}}}
-	wildcard := Profile{Name: "wild", Namespaced: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"},
-		Verbs: []string{"*"}}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}}}
-	starGroup := Profile{Name: "star-group", Namespaced: []Rule{{APIGroups: []string{"*"},
-		Resources: []string{"pods/exec"}, Verbs: []string{"create"}}}}
-	starSlash := Profile{Name: "star-slash", Namespaced: []Rule{{APIGroups: []string{""},
-		Resources: []string{"*/exec"}, Verbs: []string{"create"}}}}
-	pods := Profile{Name: "pods", Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"pods"},
-		Verbs: []string{"*"}}}}
-	console := Profile{Name: "console", Namespaced: []Rule{{APIGroups: []string{"subresources.kubevirt.io"},
-		Resources: []string{"virtualmachineinstances/console"}, Verbs: []string{"get"}}}}
+	exact := Profile{Name: "oncall", Namespaced: []Rule{{
+		APIGroups: []string{""},
+		Resources: []string{"pods/exec", "pods/portforward", "services/proxy"}, Verbs: []string{"create", "get"},
+	}}}
+	getOnly := Profile{Name: "get-exec", Namespaced: []Rule{{
+		APIGroups: []string{""},
+		Resources: []string{"pods/exec"}, Verbs: []string{"get"},
+	}}}
+	createOnly := Profile{Name: "create-exec", Namespaced: []Rule{{
+		APIGroups: []string{""},
+		Resources: []string{"pods/exec"}, Verbs: []string{"create"},
+	}}}
+	wildcard := Profile{Name: "wild", Namespaced: []Rule{{
+		APIGroups: []string{"*"}, Resources: []string{"*"},
+		Verbs: []string{"*"},
+	}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}}}
+	starGroup := Profile{Name: "star-group", Namespaced: []Rule{{
+		APIGroups: []string{"*"},
+		Resources: []string{"pods/exec"}, Verbs: []string{"create"},
+	}}}
+	starSlash := Profile{Name: "star-slash", Namespaced: []Rule{{
+		APIGroups: []string{""},
+		Resources: []string{"*/exec"}, Verbs: []string{"create"},
+	}}}
+	pods := Profile{Name: "pods", Namespaced: []Rule{{
+		APIGroups: []string{""}, Resources: []string{"pods"},
+		Verbs: []string{"*"},
+	}}}
+	console := Profile{Name: "console", Namespaced: []Rule{{
+		APIGroups: []string{"subresources.kubevirt.io"},
+		Resources: []string{"virtualmachineinstances/console"}, Verbs: []string{"get"},
+	}}}
 	upgraded := func(attributes Attributes) Attributes {
 		attributes.Upgrade = true
 		return attributes
@@ -140,10 +162,14 @@ func TestScopeInteractive(t *testing.T) {
 // it needs create as well.
 func TestScopeCreateThroughWrite(t *testing.T) {
 	t.Parallel()
-	updates := Profile{Name: "updates", Namespaced: []Rule{{APIGroups: []string{"apps"},
-		Resources: []string{"deployments", "deployments/scale"}, Verbs: []string{"update", "patch"}}}}
-	creates := Profile{Name: "creates", Namespaced: []Rule{{APIGroups: []string{"apps"},
-		Resources: []string{"deployments"}, Verbs: []string{"update", "patch", "create"}}}}
+	updates := Profile{Name: "updates", Namespaced: []Rule{{
+		APIGroups: []string{"apps"},
+		Resources: []string{"deployments", "deployments/scale"}, Verbs: []string{"update", "patch"},
+	}}}
+	creates := Profile{Name: "creates", Namespaced: []Rule{{
+		APIGroups: []string{"apps"},
+		Resources: []string{"deployments"}, Verbs: []string{"update", "patch", "create"},
+	}}}
 	mayCreate := func(attributes Attributes) Attributes {
 		attributes.MayCreate = true
 		return attributes
@@ -171,17 +197,23 @@ func TestScopeCreateThroughWrite(t *testing.T) {
 // S6: in the cluster part a wildcard never writes what takes the cluster.
 func TestScopeProtectedResources(t *testing.T) {
 	t.Parallel()
-	wildcard := Profile{Name: "wild", Namespaced: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"},
-		Verbs: []string{"*"}}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}}}
-	named := Profile{Name: "named",
+	wildcard := Profile{Name: "wild", Namespaced: []Rule{{
+		APIGroups: []string{"*"}, Resources: []string{"*"},
+		Verbs: []string{"*"},
+	}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}}}
+	named := Profile{
+		Name:       "named",
 		Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "patch"}}},
 		Cluster: []Rule{
 			{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"clusterroles"}, Verbs: []string{"create"}},
 			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"create"}},
-		}}
+		},
+	}
 	own := func(verb, subresource string) Attributes {
-		return Attributes{ResourceRequest: true, Verb: verb, Resource: "namespaces", Subresource: subresource,
-			Namespace: "team-a", Name: "team-a", Scope: ScopeCluster}
+		return Attributes{
+			ResourceRequest: true, Verb: verb, Resource: "namespaces", Subresource: subresource,
+			Namespace: "team-a", Name: "team-a", Scope: ScopeCluster,
+		}
 	}
 	for name, test := range map[string]struct {
 		profile     Profile
@@ -257,10 +289,15 @@ func TestAllowsAny(t *testing.T) {
 // A request the parser could not name, and the corners review K2a found.
 func TestScopeCorners(t *testing.T) {
 	t.Parallel()
-	wildcard := Profile{Name: "wild", Namespaced: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"},
-		Verbs: []string{"*"}}}, Cluster: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}},
-		{NonResourceURLs: []string{"*"}, Verbs: []string{"*"}}}}
-	oncall := Profile{Name: "oncall",
+	wildcard := Profile{Name: "wild", Namespaced: []Rule{{
+		APIGroups: []string{"*"}, Resources: []string{"*"},
+		Verbs: []string{"*"},
+	}}, Cluster: []Rule{
+		{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}},
+		{NonResourceURLs: []string{"*"}, Verbs: []string{"*"}},
+	}}
+	oncall := Profile{
+		Name: "oncall",
 		Namespaced: []Rule{
 			{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"*"}, ResourceNames: []string{"web-0"}},
 			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"proxy"}},
@@ -269,7 +306,8 @@ func TestScopeCorners(t *testing.T) {
 		Cluster: []Rule{
 			{APIGroups: []string{""}, Resources: []string{"persistentvolumes"}, Verbs: []string{"update", "patch"}},
 			{NonResourceURLs: []string{"/stream"}, Verbs: []string{"get"}},
-		}}
+		},
+	}
 	upgraded := func(attributes Attributes) Attributes {
 		attributes.Upgrade = true
 		return attributes
@@ -298,14 +336,29 @@ func TestScopeCorners(t *testing.T) {
 		"wildcard writes no PV":   {wildcard, []string{"*"}, clusterWide("create", "", "persistentvolumes", ""), false},
 		"named PV update":         {oncall, []string{"*"}, clusterWide("patch", "", "persistentvolumes", ""), true},
 		"PV apply needs create":   {oncall, []string{"*"}, mayCreate(clusterWide("patch", "", "persistentvolumes", "")), false},
-		"wildcard writes no apiservice": {wildcard, []string{"*"},
-			clusterWide("create", "apiregistration.k8s.io", "apiservices", ""), false},
-		"delete own namespace": {oncall, []string{"team-a"},
-			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "team-a", Name: "team-a", Scope: ScopeCluster}, true},
-		"delete another through own": {oncall, []string{"team-a"},
-			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "team-a", Name: "kube-system", Scope: ScopeCluster}, false},
-		"every namespace deletes kube-system": {oncall, []string{"*"},
-			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "kube-system", Name: "kube-system", Scope: ScopeCluster}, true},
+		"wildcard writes no apiservice": {
+			wildcard,
+			[]string{"*"},
+			clusterWide("create", "apiregistration.k8s.io", "apiservices", ""), false,
+		},
+		"delete own namespace": {
+			oncall,
+			[]string{"team-a"},
+			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "team-a", Name: "team-a", Scope: ScopeCluster},
+			true,
+		},
+		"delete another through own": {
+			oncall,
+			[]string{"team-a"},
+			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "team-a", Name: "kube-system", Scope: ScopeCluster},
+			false,
+		},
+		"every namespace deletes kube-system": {
+			oncall,
+			[]string{"*"},
+			Attributes{ResourceRequest: true, Verb: "delete", Resource: "namespaces", Namespace: "kube-system", Name: "kube-system", Scope: ScopeCluster},
+			true,
+		},
 	} {
 		scope := scoped(t, test.profile, test.namespaces, true)
 		if got := scope.Allows(test.attributes); got != test.want {

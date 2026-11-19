@@ -149,7 +149,7 @@ func TestOrderHostAddressesKeepsEachFamilysOrder(t *testing.T) {
 		}
 		var answered []netip.Addr
 		for _, resource := range resources {
-			answered = append(answered, netip.AddrFrom4(resource.Body.(*dnsmessage.AResource).A))
+			answered = append(answered, netip.AddrFrom4(resource.Body.(*dnsmessage.AResource).A)) //nolint:forcetypeassert,errcheck // the test server answers A records only
 		}
 		alone := slices.Clone(v4)
 		orderHostAddresses(alone, self, nil)

@@ -45,11 +45,11 @@ func (run *sessionRun) sendGroupReport(now time.Time) error {
 	}
 	report := source()
 	if report == nil || sharedmtcp.ValidateGatewayGroupReport(report) != nil {
-		return nil
+		return nil //nolint:nilerr // an invalid report is not sent; the session goes on
 	}
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(report)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // a report that does not encode is not sent; the session goes on
 	}
 	digest := sha256.Sum256(encoded)
 	if digest == s.groupsDigest && now.Sub(s.groupsSent) < groupReportResend {

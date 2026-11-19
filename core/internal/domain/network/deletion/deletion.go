@@ -1,4 +1,4 @@
-// Package deletion owns deleting a Network (docs/network-delete-design.md).
+// Package deletion owns deleting a Network (network-delete-design).
 // Phase 1 runs with the request: PostgreSQL checks the Workspace-wide
 // network.delete grant and what blocks the deletion, marks the Network
 // deleted and revokes its enrollment keys; a worker then revokes its

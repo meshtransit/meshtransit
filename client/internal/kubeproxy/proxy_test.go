@@ -168,7 +168,7 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 				if _, err := io.WriteString(w, strings.Repeat("x", 1024)+"\n"); err != nil {
 					return
 				}
-				http.NewResponseController(w).Flush()
+				_ = http.NewResponseController(w).Flush()
 				select {
 				case <-r.Context().Done():
 					return
@@ -180,7 +180,7 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 			if err != nil {
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			_, _ = buffered.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: " + r.Header.Get("Upgrade") +
 				"\r\nConnection: Upgrade\r\n\r\n")
 			_ = buffered.Flush()
@@ -248,7 +248,8 @@ func newFixtureAt(t *testing.T, backendURL string, configure ...func(*Options)) 
 		t.Fatal(err)
 	}
 	f.server = server
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var listening net.ListenConfig
+	listener, err := listening.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,9 +302,36 @@ func testCertificate(t *testing.T) (*tls.Certificate, *x509.CertPool) {
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
 }
 
-func (f *fixture) do(method, path string, header http.Header) (*http.Response, string) {
+// roots is the CA pool the fixture's client trusts.
+func (f *fixture) roots() *x509.CertPool {
 	f.t.Helper()
-	request, err := http.NewRequest(method, "https://"+clusterName+path, nil)
+	transport, ok := f.client.Transport.(*http.Transport)
+	if !ok {
+		f.t.Fatal("the fixture's client has no *http.Transport")
+	}
+	return transport.TLSClientConfig.RootCAs
+}
+
+// dialTLS opens a TLS connection to the gateway under the test's context.
+func (f *fixture) dialTLS(config *tls.Config) (*tls.Conn, error) {
+	dialer := &tls.Dialer{Config: config}
+	conn, err := dialer.DialContext(f.t.Context(), "tcp", f.address)
+	if err != nil {
+		return nil, err
+	}
+	return conn.(*tls.Conn), nil //nolint:forcetypeassert,errcheck // tls.Dialer always returns a *tls.Conn
+}
+
+// answered is what a request got: the response, its body read and closed.
+type answered struct {
+	StatusCode, ProtoMajor int
+	Header                 http.Header
+	Close                  bool
+}
+
+func (f *fixture) do(method, path string, header http.Header) (answered, string) {
+	f.t.Helper()
+	request, err := http.NewRequestWithContext(f.t.Context(), method, "https://"+clusterName+path, nil)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -314,9 +342,15 @@ func (f *fixture) do(method, path string, header http.Header) (*http.Response, s
 	if err != nil {
 		f.t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer response.Body.Close()
-	body, _ := io.ReadAll(response.Body)
-	return response, string(body)
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		f.t.Fatalf("%s %s: reading the body: %v", method, path, err)
+	}
+	return answered{
+		StatusCode: response.StatusCode, ProtoMajor: response.ProtoMajor, Header: response.Header,
+		Close: response.Close,
+	}, string(body)
 }
 
 func (f *fixture) forwarded() seen {
@@ -490,8 +524,8 @@ func TestProxyRefuses(t *testing.T) {
 		}
 	}
 	// HTTP/1.1 only: a Connection header naming a credential.
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{
-		RootCAs:    f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+	conn, err := f.dialTLS(&tls.Config{
+		RootCAs:    f.roots(),
 		ServerName: clusterName, NextProtos: []string{"http/1.1"},
 	})
 	if err != nil {
@@ -501,7 +535,7 @@ func TestProxyRefuses(t *testing.T) {
 	if status, _ := bufio.NewReader(conn).ReadString('\n'); !strings.Contains(status, "400") {
 		t.Fatalf("Connection naming Authorization: %q", status)
 	}
-	conn.Close()
+	_ = conn.Close()
 	f.nothingForwarded()
 	stale := time.Now().Add(-10 * time.Minute)
 	f.fresh.Store(&stale)
@@ -548,9 +582,9 @@ func TestProxyIdentity(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.stranger.Store(true)
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
-	if conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName}); err == nil {
-		conn.Close()
+	roots := f.roots()
+	if conn, err := f.dialTLS(&tls.Config{RootCAs: roots, ServerName: clusterName}); err == nil {
+		_ = conn.Close()
 		t.Fatal("a stranger completed the TLS handshake")
 	}
 	f.stranger.Store(false)
@@ -559,9 +593,9 @@ func TestProxyIdentity(t *testing.T) {
 	peer := *f.peer.Load()
 	peer.Key = [32]byte{2}
 	f.peer.Store(&peer)
-	request, _ := http.NewRequest(http.MethodGet, "https://"+clusterName+"/api/v1/pods", nil)
+	request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+clusterName+"/api/v1/pods", nil)
 	if response, err := f.client.Do(request); err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		t.Fatalf("answered %d on a connection of another key", response.StatusCode)
 	}
 	f.nothingForwarded()
@@ -598,14 +632,14 @@ func TestProxyUpstreamAnswers(t *testing.T) {
 	}
 	f.forwarded()
 	f.forwarded()
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{
-		RootCAs:    f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+	conn, err := f.dialTLS(&tls.Config{
+		RootCAs:    f.roots(),
 		ServerName: clusterName, NextProtos: []string{"http/1.1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, _ = io.WriteString(conn, "POST /api/v1/namespaces/default/pods/web-0/exec?command=sh HTTP/1.1\r\nHost: "+
 		clusterName+"\r\nConnection: Upgrade\r\nUpgrade: SPDY/3.1\r\nContent-Length: 0\r\n\r\n")
 	reader := bufio.NewReader(conn)
@@ -651,12 +685,12 @@ func TestProxyTypeAUnauthorizedNotRetried(t *testing.T) {
 func TestProxyRefusesAnotherAuthorityOverH2(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	request, _ := http.NewRequest(http.MethodGet, "https://other.test/api/v1/pods", nil)
+	request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://other.test/api/v1/pods", nil)
 	response, err := f.client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	_ = response.Body.Close()
 	if response.ProtoMajor != 2 || response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("HTTP/%d %d", response.ProtoMajor, response.StatusCode)
 	}
@@ -667,21 +701,21 @@ func TestProxyRefusesAnotherAuthorityOverH2(t *testing.T) {
 func TestProxyTLS(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
-	if _, err := tls.Dial("tcp", f.address, &tls.Config{
+	roots := f.roots()
+	if _, err := f.dialTLS(&tls.Config{
 		RootCAs: roots, ServerName: "other.test",
-		InsecureSkipVerify: true,
-	}); err == nil { //nolint:gosec // the handshake itself must fail
+		InsecureSkipVerify: true, //nolint:gosec // the test checks the gateway refuses the handshake anyway
+	}); err == nil {
 		t.Fatal("an unknown server name was served")
 	}
-	conn, err := tls.Dial("tcp", f.address, &tls.Config{RootCAs: roots, ServerName: clusterName})
+	conn, err := f.dialTLS(&tls.Config{RootCAs: roots, ServerName: clusterName})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if conn.ConnectionState().Version != tls.VersionTLS13 {
 		t.Fatal("not TLS 1.3")
 	}
-	conn.Close()
+	_ = conn.Close()
 }
 
 func TestNewRefusesBadOptions(t *testing.T) {
@@ -713,7 +747,7 @@ func TestProxyReportsAStreamTheClientEnds(t *testing.T) {
 	}
 	_, _ = response.Body.Read(make([]byte, 2048))
 	cancel()
-	response.Body.Close()
+	_ = response.Body.Close()
 	f.forwarded()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		f.records.mu.Lock()
@@ -746,12 +780,12 @@ func TestProxyUnreachableAPIServer(t *testing.T) {
 func TestProxyRefusesHostsAndUpgrades(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	roots := f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs
+	roots := f.roots()
 	for name, request := range map[string]string{
 		"host":    "GET /api/v1/pods HTTP/1.1\r\nHost: other.test\r\n\r\n",
 		"upgrade": "GET /api/v1/pods HTTP/1.1\r\nHost: " + clusterName + "\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
 	} {
-		conn, err := tls.Dial("tcp", f.address, &tls.Config{
+		conn, err := f.dialTLS(&tls.Config{
 			RootCAs: roots, ServerName: clusterName,
 			NextProtos: []string{"http/1.1"},
 		})
@@ -762,7 +796,7 @@ func TestProxyRefusesHostsAndUpgrades(t *testing.T) {
 		if status, _ := bufio.NewReader(conn).ReadString('\n'); !strings.Contains(status, "400") {
 			t.Errorf("%s: %q", name, status)
 		}
-		conn.Close()
+		_ = conn.Close()
 	}
 	f.nothingForwarded()
 }

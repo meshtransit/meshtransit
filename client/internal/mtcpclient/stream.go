@@ -1292,8 +1292,10 @@ func pathStatsMessage(report controlplane.PathStatsReport) *mtcpv1.PathStatsRepo
 }
 
 func (run *sessionRun) endpointReport(update controlplane.EndpointUpdate) *mtcpv1.EndpointReport {
-	report := &mtcpv1.EndpointReport{DiscoKey: run.stream.disco[:], ObservedMs: time.Now().UnixMilli(),
-		DiscoKeyProof: run.peerProbeProof()}
+	report := &mtcpv1.EndpointReport{
+		DiscoKey: run.stream.disco[:], ObservedMs: time.Now().UnixMilli(),
+		DiscoKeyProof: run.peerProbeProof(),
+	}
 	if update.HasPreferredRelay && update.PreferredRelay > 0 {
 		report.PreferredRelay = uint32(update.PreferredRelay) //nolint:gosec // G115: region IDs are small
 	}

@@ -73,7 +73,7 @@ type Service struct {
 
 // WithDeviceAliasClaimed returns a copy that tells claimed each time Open
 // recorded a client's alias claim, so the Device alias workers look for the
-// work it may unblock (docs/performance-logic-plan.md §8, L1b). claimed
+// work it may unblock (performance-logic-plan §8, L1b). claimed
 // must not block.
 func (service *Service) WithDeviceAliasClaimed(claimed func()) (*Service, error) {
 	if service == nil || claimed == nil {

@@ -45,8 +45,10 @@ func (held *reports) finished(auditID [16]byte, status int, duration time.Durati
 		held.dropped++
 		return
 	}
-	held.outcomes = append(held.outcomes, controlplane.KubeAuditOutcome{AuditID: auditID, Status: status,
-		Duration: duration})
+	held.outcomes = append(held.outcomes, controlplane.KubeAuditOutcome{
+		AuditID: auditID, Status: status,
+		Duration: duration,
+	})
 }
 
 // denied counts a refused request of peer for reason, keeping the first
@@ -189,8 +191,10 @@ type Measurements struct {
 // Snapshot returns the recorder's counts.
 func (recorder *Recorder) Snapshot() Measurements {
 	recorder.mu.Lock()
-	measured := Measurements{Queued: recorder.queued, InFlight: recorder.inFlight, Rate: recorder.rate,
-		Paused: time.Now().Before(recorder.paused)}
+	measured := Measurements{
+		Queued: recorder.queued, InFlight: recorder.inFlight, Rate: recorder.rate,
+		Paused: time.Now().Before(recorder.paused),
+	}
 	recorder.mu.Unlock()
 	recorder.reports.mu.Lock()
 	measured.DroppedReports = recorder.reports.dropped

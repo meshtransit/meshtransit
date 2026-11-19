@@ -19,7 +19,7 @@ import (
 
 // Schema 277: the summary worker claims a dirty Network, counts it in one
 // snapshot, stores only newer summaries, and keeps a change marked after the
-// snapshot pending (TD-CON-48, docs/console-load-design.md §5).
+// snapshot pending (TD-CON-48, console-load-design §5).
 func assertPostgreSQLNetworkSummary(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	workerPool *postgresadapter.Pool) {
 	t.Helper()

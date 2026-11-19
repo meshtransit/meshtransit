@@ -28,7 +28,7 @@ func TestRefusalError(t *testing.T) {
 	} {
 		got := refusalError(test.err)
 		switch {
-		case test.want == "" && got != test.err:
+		case test.want == "" && got != test.err: //nolint:errorlint // identity: the error is returned unchanged
 			t.Errorf("%s: refusalError changed %v into %v", test.name, test.err, got)
 		case test.want != "" && (got == nil || got.Error() != test.want):
 			t.Errorf("%s: refusalError = %v, want %q", test.name, got, test.want)

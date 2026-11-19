@@ -16,13 +16,19 @@ func TestGroupReportsMapVerdicts(t *testing.T) {
 	t.Parallel()
 	checked := time.Unix(1_800_000_000, 0)
 	groups := []rbaccheck.Group{
-		{Name: "view"}, {Name: "sre", Privileged: true, AllowImpersonation: true}, {Name: "edit"},
-		{Name: "ops"}, {Name: "dev"}, {Name: "late"},
+		{Name: "view"},
+		{Name: "sre", Privileged: true, AllowImpersonation: true},
+		{Name: "edit"},
+		{Name: "ops"},
+		{Name: "dev"},
+		{Name: "late"},
 	}
 	verdicts := map[string]rbaccheck.Verdict{
 		"view": {Enabled: true, CheckedAt: checked},
-		"sre": {Enabled: true, Code: rbaccheck.CodeImpersonationOff, Reason: "may impersonate users",
-			CheckedAt: checked.Add(time.Second)},
+		"sre": {
+			Enabled: true, Code: rbaccheck.CodeImpersonationOff, Reason: "may impersonate users",
+			CheckedAt: checked.Add(time.Second),
+		},
 		"edit": {Code: rbaccheck.CodeRBACExceeds, Reason: "may create pods", CheckedAt: checked},
 		"ops":  {Code: rbaccheck.CodeAPIError, Detail: "dial tcp 10.0.0.1:443: refused", CheckedAt: checked},
 		"dev":  {Code: rbaccheck.CodeNotChecked},

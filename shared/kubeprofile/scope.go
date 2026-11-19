@@ -68,8 +68,10 @@ func NewScope(profile Profile, namespaces []string, clusterPart bool) (Scope, er
 	if err != nil {
 		return Scope{}, err
 	}
-	return Scope{profile: Normalize(profile), namespaces: names, everywhere: names[0] == allNamespaces,
-		clusterPart: clusterPart, valid: true}, nil
+	return Scope{
+		profile: Normalize(profile), namespaces: names, everywhere: names[0] == allNamespaces,
+		clusterPart: clusterPart, valid: true,
+	}, nil
 }
 
 // checkNamespaces returns a rule's namespaces sorted and distinct: every

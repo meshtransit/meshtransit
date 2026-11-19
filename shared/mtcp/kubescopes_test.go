@@ -29,8 +29,10 @@ func TestValidateKubernetesScopeTable(t *testing.T) {
 	for name, table := range map[string]*mtcpv1.KubernetesScopeTable{
 		"absent": nil,
 		"empty":  {},
-		"sorted": {Profiles: []*mtcpv1.KubernetesProfile{{Hash: hash(1)}, {Hash: hash(2)}},
-			Scopes: []*mtcpv1.KubernetesScope{{Hash: hash(1)}, {Hash: hash(9)}}},
+		"sorted": {
+			Profiles: []*mtcpv1.KubernetesProfile{{Hash: hash(1)}, {Hash: hash(2)}},
+			Scopes:   []*mtcpv1.KubernetesScope{{Hash: hash(1)}, {Hash: hash(9)}},
+		},
 		"at the bounds": {Profiles: profiles(KubernetesProfilesMaximum), Scopes: scopes(KubernetesScopesMaximum)},
 		// A short hash is that entry's error, never the table's.
 		"short hash": {Profiles: []*mtcpv1.KubernetesProfile{{Hash: []byte{1}}, {Hash: hash(2)}}},
@@ -40,7 +42,8 @@ func TestValidateKubernetesScopeTable(t *testing.T) {
 		}
 	}
 	large := &mtcpv1.KubernetesProfile{Hash: hash(1), Name: "x", Namespaced: []*mtcpv1.KubernetesProfileRule{{
-		ResourceNames: []string{strings.Repeat("n", KubernetesScopeTableBytes)}}}}
+		ResourceNames: []string{strings.Repeat("n", KubernetesScopeTableBytes)},
+	}}}
 	for name, table := range map[string]*mtcpv1.KubernetesScopeTable{
 		"profiles out of order": {Profiles: []*mtcpv1.KubernetesProfile{{Hash: hash(2)}, {Hash: hash(1)}}},
 		"profile twice":         {Profiles: []*mtcpv1.KubernetesProfile{{Hash: hash(1)}, {Hash: hash(1)}}},

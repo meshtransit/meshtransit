@@ -90,9 +90,12 @@ func connect(t *testing.T) *cluster {
 	if !roots.AppendCertsFromPEM(pem) {
 		t.Fatal("MT_ORACLE_CA holds no certificate")
 	}
-	c := &cluster{t: t, server: strings.TrimSuffix(server, "/"), token: token, ca: pem,
+	c := &cluster{
+		t: t, server: strings.TrimSuffix(server, "/"), token: token, ca: pem,
 		client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, MaxIdleConnsPerHost: 32}}}
+			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, MaxIdleConnsPerHost: 32,
+		}},
+	}
 	c.requireLab()
 	return c
 }
@@ -134,9 +137,13 @@ func (c *cluster) lock() {
 	path := "/apis/coordination.k8s.io/v1/namespaces/kube-system/leases"
 	holder := make([]byte, 8)
 	_, _ = rand.Read(holder)
-	lease := map[string]any{"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": metadata(lockName),
-		"spec": map[string]any{"holderIdentity": hex.EncodeToString(holder), "leaseDurationSeconds": lockSeconds,
-			"acquireTime": time.Now().UTC().Format("2006-01-02T15:04:05.000000Z07:00")}}
+	lease := map[string]any{
+		"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": metadata(lockName),
+		"spec": map[string]any{
+			"holderIdentity": hex.EncodeToString(holder), "leaseDurationSeconds": lockSeconds,
+			"acquireTime": time.Now().UTC().Format("2006-01-02T15:04:05.000000Z07:00"),
+		},
+	}
 	type held struct {
 		Metadata struct {
 			UID             string            `json:"uid"`
@@ -149,7 +156,8 @@ func (c *cluster) lock() {
 	}
 	deleteExactly := func(lease held) int {
 		status, _ := c.call(http.MethodDelete, path+"/"+lockName, map[string]any{"preconditions": map[string]string{
-			"uid": lease.Metadata.UID, "resourceVersion": lease.Metadata.ResourceVersion}})
+			"uid": lease.Metadata.UID, "resourceVersion": lease.Metadata.ResourceVersion,
+		}})
 		return status
 	}
 	for range 3 {
@@ -244,8 +252,10 @@ func (c *cluster) remove(path string) {
 func (c *cluster) accountToken(account string) string {
 	c.t.Helper()
 	out := c.must(http.MethodPost, "/api/v1/namespaces/"+oracleNamespace+"/serviceaccounts/"+account+"/token",
-		map[string]any{"apiVersion": "authentication.k8s.io/v1", "kind": "TokenRequest",
-			"spec": map[string]any{"expirationSeconds": 600}})
+		map[string]any{
+			"apiVersion": "authentication.k8s.io/v1", "kind": "TokenRequest",
+			"spec": map[string]any{"expirationSeconds": 600},
+		})
 	var answer struct {
 		Status struct {
 			Token string `json:"token"`
@@ -346,8 +356,10 @@ func samples() []sample {
 		return kubeprofile.Profile{Name: name, Namespaced: namespaced, Cluster: clusterRules}
 	}
 	developer := profile("developer", []kubeprofile.Rule{
-		rule([]string{"", "apps", "batch"}, []string{"pods", "pods/log", "deployments", "replicasets", "jobs",
-			"configmaps", "services"}, append(slices.Clone(readVerbs), writeVerbs...)),
+		rule([]string{"", "apps", "batch"}, []string{
+			"pods", "pods/log", "deployments", "replicasets", "jobs",
+			"configmaps", "services",
+		}, append(slices.Clone(readVerbs), writeVerbs...)),
 	}, []kubeprofile.Rule{
 		rule(core, []string{"namespaces", "nodes"}, readVerbs),
 		{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}},
@@ -359,8 +371,11 @@ func samples() []sample {
 	return []sample{
 		{"developer two namespaces", developer, []string{teamA, teamB}, true},
 		{"developer everywhere", developer, []string{"*"}, false},
-		{"read only", profile("read-only", []kubeprofile.Rule{rule(anyGroup, anything, readVerbs)}, nil),
-			[]string{teamA}, false},
+		{
+			"read only", profile("read-only", []kubeprofile.Rule{rule(anyGroup, anything, readVerbs)}, nil),
+			[]string{teamA},
+			false,
+		},
 		{"read everything", profile("read-all", []kubeprofile.Rule{rule(anyGroup, anything, readVerbs)},
 			[]kubeprofile.Rule{rule(anyGroup, anything, readVerbs)}), []string{"*"}, true},
 		{"wildcard everywhere", wildcard, []string{"*"}, true},
@@ -370,11 +385,14 @@ func samples() []sample {
 			rule(core, []string{"pods", "pods/log"}, readVerbs),
 		}, nil), []string{teamA}, false},
 		{"exec by create only", profile("exec-create", []kubeprofile.Rule{
-			rule(core, []string{"pods/exec"}, []string{"create"}), readPod}, nil), []string{teamA}, false},
+			rule(core, []string{"pods/exec"}, []string{"create"}), readPod,
+		}, nil), []string{teamA}, false},
 		{"exec by get only", profile("exec-get", []kubeprofile.Rule{
-			rule(core, []string{"pods/exec"}, []string{"get"}), readPod}, nil), []string{teamA}, false},
+			rule(core, []string{"pods/exec"}, []string{"get"}), readPod,
+		}, nil), []string{teamA}, false},
 		{"exec one pod", profile("exec-web", []kubeprofile.Rule{
-			rule(core, []string{"pods/exec"}, allVerbs, "web-0")}, nil), []string{teamA}, false},
+			rule(core, []string{"pods/exec"}, allVerbs, "web-0"),
+		}, nil), []string{teamA}, false},
 		{"proxies", profile("proxies", []kubeprofile.Rule{
 			rule(core, []string{"services/proxy", "pods/proxy"}, []string{"get", "create"}),
 			rule(core, []string{"pods"}, []string{"proxy"}),
@@ -387,8 +405,11 @@ func samples() []sample {
 			rule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles", "clusterrolebindings"},
 				[]string{"get", "list", "create", "patch"}),
 		}), []string{teamA}, true},
-		{"volumes", profile("volumes", nil, []kubeprofile.Rule{rule(core, []string{"persistentvolumes"}, allVerbs)}),
-			[]string{teamA}, true},
+		{
+			"volumes", profile("volumes", nil, []kubeprofile.Rule{rule(core, []string{"persistentvolumes"}, allVerbs)}),
+			[]string{teamA},
+			true,
+		},
 		{"nodes", profile("nodes", nil, []kubeprofile.Rule{
 			rule(core, []string{"nodes"}, []string{"get", "list", "patch"}),
 			rule(core, []string{"nodes/proxy"}, []string{"get"}),
@@ -419,8 +440,11 @@ func samples() []sample {
 		{"admission read", profile("admission-read", nil, []kubeprofile.Rule{
 			rule([]string{"admissionregistration.k8s.io", "apiextensions.k8s.io", "apiregistration.k8s.io"}, anything, allVerbs),
 		}), []string{teamA}, true},
-		{"secrets", profile("secrets", []kubeprofile.Rule{rule(core, []string{"secrets"}, readVerbs)}, nil),
-			[]string{teamA, teamB}, false},
+		{
+			"secrets", profile("secrets", []kubeprofile.Rule{rule(core, []string{"secrets"}, readVerbs)}, nil),
+			[]string{teamA, teamB},
+			false,
+		},
 	}
 }
 
@@ -511,11 +535,13 @@ func (c *cluster) attributes(sent request) (kubeprofile.Attributes, bool) {
 	if err != nil {
 		return kubeprofile.Attributes{}, false
 	}
-	attributes := kubeprofile.Attributes{ResourceRequest: info.IsResourceRequest, Verb: info.Verb,
+	attributes := kubeprofile.Attributes{
+		ResourceRequest: info.IsResourceRequest, Verb: info.Verb,
 		APIGroup: info.APIGroup, Resource: info.Resource, Subresource: info.Subresource,
 		Namespace: info.Namespace, Name: info.Name, Path: info.Path, Upgrade: sent.upgrade,
 		MayCreate: info.Subresource == "" && (sent.method == http.MethodPut ||
-			strings.HasPrefix(sent.contentType, "application/apply-patch"))}
+			strings.HasPrefix(sent.contentType, "application/apply-patch")),
+	}
 	if info.IsResourceRequest {
 		attributes.Scope = c.scopeOf(info.APIGroup, info.Resource)
 	}
@@ -657,8 +683,10 @@ func named(profile kubeprofile.Profile, attributes kubeprofile.Attributes) (kube
 		}
 		return out
 	}
-	return kubeprofile.Profile{Name: profile.Name, Namespaced: rewrite(profile.Namespaced),
-		Cluster: rewrite(profile.Cluster)}, changed
+	return kubeprofile.Profile{
+		Name: profile.Name, Namespaced: rewrite(profile.Namespaced),
+		Cluster: rewrite(profile.Cluster),
+	}, changed
 }
 
 // stricter names the design's naming rule a refusal falls under.
@@ -675,8 +703,10 @@ func stricter(attributes kubeprofile.Attributes) string {
 		return "S4 namespace object"
 	case attributes.Scope == kubeprofile.ScopeCluster && !slices.Contains([]string{"get", "list", "watch"}, attributes.Verb) &&
 		(attributes.APIGroup == "" && slices.Contains([]string{"namespaces", "persistentvolumes"}, attributes.Resource) ||
-			slices.Contains([]string{"rbac.authorization.k8s.io", "admissionregistration.k8s.io",
-				"apiextensions.k8s.io", "certificates.k8s.io", "apiregistration.k8s.io"}, attributes.APIGroup)):
+			slices.Contains([]string{
+				"rbac.authorization.k8s.io", "admissionregistration.k8s.io",
+				"apiextensions.k8s.io", "certificates.k8s.io", "apiregistration.k8s.io",
+			}, attributes.APIGroup)):
 		return "S6 cluster takeover"
 	}
 	return ""
@@ -707,13 +737,17 @@ func (c *cluster) grant(index int, sample sample, account string) {
 	}
 	bindCluster := func(name string) {
 		c.must(http.MethodPost, "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings",
-			map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": metadata(name),
-				"roleRef": roleRef(name), "subjects": subject})
+			map[string]any{
+				"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": metadata(name),
+				"roleRef": roleRef(name), "subjects": subject,
+			})
 	}
 	bindIn := func(namespace, name string) {
 		c.must(http.MethodPost, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+namespace+"/rolebindings",
-			map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": metadata(name),
-				"roleRef": roleRef(name), "subjects": subject})
+			map[string]any{
+				"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": metadata(name),
+				"roleRef": roleRef(name), "subjects": subject,
+			})
 	}
 	prefix := fmt.Sprintf("mt-k2b-%02d", index)
 	role(prefix+"-ns", c.expand(sample.profile.Namespaced, kubeprofile.ScopeNamespaced))
@@ -739,12 +773,16 @@ func (c *cluster) grant(index int, sample sample, account string) {
 // review asks the API server whether account may do what attributes name
 // with verb.
 func (c *cluster) review(account string, attributes kubeprofile.Attributes, verb string) bool {
-	spec := map[string]any{"user": "system:serviceaccount:" + oracleNamespace + ":" + account,
-		"groups": []string{"system:serviceaccounts", "system:serviceaccounts:" + oracleNamespace, "system:authenticated"}}
+	spec := map[string]any{
+		"user":   "system:serviceaccount:" + oracleNamespace + ":" + account,
+		"groups": []string{"system:serviceaccounts", "system:serviceaccounts:" + oracleNamespace, "system:authenticated"},
+	}
 	if attributes.ResourceRequest {
-		spec["resourceAttributes"] = map[string]string{"namespace": attributes.Namespace, "verb": verb,
+		spec["resourceAttributes"] = map[string]string{
+			"namespace": attributes.Namespace, "verb": verb,
 			"group": attributes.APIGroup, "resource": attributes.Resource, "subresource": attributes.Subresource,
-			"name": attributes.Name}
+			"name": attributes.Name,
+		}
 	} else {
 		spec["nonResourceAttributes"] = map[string]string{"path": attributes.Path, "verb": verb}
 	}
@@ -775,15 +813,24 @@ func (c *cluster) oracle(account string, attributes kubeprofile.Attributes, sent
 // installWidgets serves the oracle's own namespaced custom resource with
 // status and scale, and waits for discovery to list it.
 func (c *cluster) installWidgets() {
-	crd := map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+	crd := map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
 		"metadata": metadata(widgetCRD),
-		"spec": map[string]any{"group": widgetGroup, "scope": "Namespaced",
+		"spec": map[string]any{
+			"group": widgetGroup, "scope": "Namespaced",
 			"names": map[string]any{"plural": "widgets", "singular": "widget", "kind": "Widget"},
-			"versions": []map[string]any{{"name": "v1", "served": true, "storage": true,
-				"schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object",
-					"x-kubernetes-preserve-unknown-fields": true}},
+			"versions": []map[string]any{{
+				"name": "v1", "served": true, "storage": true,
+				"schema": map[string]any{"openAPIV3Schema": map[string]any{
+					"type":                                 "object",
+					"x-kubernetes-preserve-unknown-fields": true,
+				}},
 				"subresources": map[string]any{"status": map[string]any{}, "scale": map[string]any{
-					"specReplicasPath": ".spec.replicas", "statusReplicasPath": ".status.replicas"}}}}}}
+					"specReplicasPath": ".spec.replicas", "statusReplicasPath": ".status.replicas",
+				}},
+			}},
+		},
+	}
 	c.must(http.MethodPost, "/apis/apiextensions.k8s.io/v1/customresourcedefinitions", crd)
 	for range 60 {
 		if status, _ := c.call(http.MethodGet, "/apis/"+widgetGroup+"/v1", nil); status == http.StatusOK {
@@ -906,8 +953,10 @@ func TestProfileOracle(t *testing.T) {
 	c.await()
 	t.Cleanup(c.cleanup)
 	for _, namespace := range []string{oracleNamespace, teamA, teamB} {
-		c.must(http.MethodPost, "/api/v1/namespaces", map[string]any{"apiVersion": "v1", "kind": "Namespace",
-			"metadata": metadata(namespace)})
+		c.must(http.MethodPost, "/api/v1/namespaces", map[string]any{
+			"apiVersion": "v1", "kind": "Namespace",
+			"metadata": metadata(namespace),
+		})
 	}
 	c.installWidgets()
 	c.discover()
@@ -1031,8 +1080,10 @@ func excuse(sample sample, scope kubeprofile.Scope, item parsed) string {
 func (c *cluster) applyForReal(set []sample) []string {
 	var failures []string
 	for index, sample := range set {
-		want, check := map[string]int{"update without create": http.StatusForbidden,
-			"update with create": http.StatusCreated}[sample.name]
+		want, check := map[string]int{
+			"update without create": http.StatusForbidden,
+			"update with create":    http.StatusCreated,
+		}[sample.name]
 		if !check {
 			continue
 		}
@@ -1068,9 +1119,13 @@ func (c *cluster) execForReal(set []sample) []string {
 	suffix := make([]byte, 4)
 	_, _ = rand.Read(suffix)
 	pod := "k2b-pause-" + hex.EncodeToString(suffix)
-	c.must(http.MethodPost, "/api/v1/namespaces/"+teamA+"/pods", map[string]any{"apiVersion": "v1", "kind": "Pod",
-		"metadata": metadata(pod), "spec": map[string]any{"terminationGracePeriodSeconds": 0,
-			"containers": []map[string]any{{"name": "pause", "image": image, "imagePullPolicy": "IfNotPresent"}}}})
+	c.must(http.MethodPost, "/api/v1/namespaces/"+teamA+"/pods", map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": metadata(pod), "spec": map[string]any{
+			"terminationGracePeriodSeconds": 0,
+			"containers":                    []map[string]any{{"name": "pause", "image": image, "imagePullPolicy": "IfNotPresent"}},
+		},
+	})
 	running := false
 	for range 90 {
 		if _, out := c.call(http.MethodGet, "/api/v1/namespaces/"+teamA+"/pods/"+pod, nil); bytes.Contains(out, []byte(`"phase":"Running"`)) {
@@ -1157,8 +1212,10 @@ current-context: lab
 	}
 	// Whatever the cluster enforces: get and create run over both; SPDY needs
 	// create, so get alone never runs over it.
-	for key, want := range map[string]string{"on-call websocket": "ran", "on-call spdy": "ran",
-		"exec by create only spdy": "ran", "exec by get only spdy": "forbidden"} {
+	for key, want := range map[string]string{
+		"on-call websocket": "ran", "on-call spdy": "ran",
+		"exec by create only spdy": "ran", "exec by get only spdy": "forbidden",
+	} {
 		if verdicts[key] != want {
 			failures = append(failures, fmt.Sprintf("exec for real, %s: %s, want %s", key, verdicts[key], want))
 		}

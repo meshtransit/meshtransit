@@ -43,8 +43,10 @@ func TestScopeHashKnownAnswer(t *testing.T) {
 func TestValidateRefusesEscapedCharacters(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"a<b", "a>b", "a&b"} {
-		name := Profile{Name: "x", Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"pods"},
-			Verbs: []string{"get"}, ResourceNames: []string{value}}}}
+		name := Profile{Name: "x", Namespaced: []Rule{{
+			APIGroups: []string{""}, Resources: []string{"pods"},
+			Verbs: []string{"get"}, ResourceNames: []string{value},
+		}}}
 		path := Profile{Name: "x", Cluster: []Rule{{NonResourceURLs: []string{"/" + value}, Verbs: []string{"get"}}}}
 		for kind, profile := range map[string]Profile{"name": name, "path": path} {
 			if err := Validate(profile); !errors.Is(err, ErrInvalid) {
@@ -52,8 +54,10 @@ func TestValidateRefusesEscapedCharacters(t *testing.T) {
 			}
 		}
 	}
-	quoted := Profile{Name: "x", Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"pods"},
-		Verbs: []string{"get"}, ResourceNames: []string{`a"b\c`}}}}
+	quoted := Profile{Name: "x", Namespaced: []Rule{{
+		APIGroups: []string{""}, Resources: []string{"pods"},
+		Verbs: []string{"get"}, ResourceNames: []string{`a"b\c`},
+	}}}
 	if err := Validate(quoted); err != nil {
 		t.Errorf("a name with a quote and a backslash: %v", err)
 	}

@@ -119,13 +119,17 @@ func TestBindingInfoVectors(t *testing.T) {
 		binding DestinationBinding
 		want    string
 	}{
-		"elasticsearch": {destinationBinding(ProviderElasticsearch),
-			head + "elasticsearch\x00https://es.example.com:9243\x00elasticsearch\x00\x00\x00\x00"},
+		"elasticsearch": {
+			destinationBinding(ProviderElasticsearch),
+			head + "elasticsearch\x00https://es.example.com:9243\x00elasticsearch\x00\x00\x00\x00",
+		},
 		"elasticsearch with a CA": {withCA, head + "elasticsearch\x00https://es.example.com:9243\x00elasticsearch\x00" +
 			CAHash([]byte(testCA)) + "\x00\x00\x00"},
 		"datadog": {destinationBinding(ProviderDatadog), head + "datadog\x00\x00\x00\x00datadoghq.eu\x00\x00"},
-		"kinesis": {destinationBinding(ProviderKinesis),
-			head + "kinesis\x00\x00\x00\x00\x00eu-west-1\x00arn:aws:kinesis:eu-west-1:123456789012:stream/flow-logs"},
+		"kinesis": {
+			destinationBinding(ProviderKinesis),
+			head + "kinesis\x00\x00\x00\x00\x00eu-west-1\x00arn:aws:kinesis:eu-west-1:123456789012:stream/flow-logs",
+		},
 	} {
 		if err := test.binding.check(); err != nil {
 			t.Fatalf("%s: %v", name, err)

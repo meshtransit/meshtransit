@@ -235,8 +235,10 @@ type Finding struct {
 }
 
 func newFinding(event Event, reason string) *Finding {
-	return &Finding{AuditID: event.AuditID, Received: event.Received, User: event.User.Username,
-		Verb: event.Verb, URI: event.URI, Reason: reason}
+	return &Finding{
+		AuditID: event.AuditID, Received: event.Received, User: event.User.Username,
+		Verb: event.Verb, URI: event.URI, Reason: reason,
+	}
 }
 
 // Result is a check's outcome.
@@ -301,9 +303,11 @@ func check(log io.Reader, records Records, options kubereq.Options, limit int) (
 		}
 		byID[id] = record
 	}
-	state := &checker{records: records, options: options, requests: map[string]*request{},
+	state := &checker{
+		records: records, options: options, requests: map[string]*request{},
 		prefix: "system:serviceaccount:" + records.GatewayNamespace + ":mt-",
-		result: Result{Mismatches: []Finding{}}}
+		result: Result{Mismatches: []Finding{}},
+	}
 	if err := state.read(log, limit); err != nil {
 		return state.result, err
 	}
@@ -442,8 +446,10 @@ func (state *checker) unseen() {
 // and namespace come from its body only past RequestReceived, so they are
 // left out of a create's digest; its URI still names the namespace.
 func eventDigest(event Event) [sha256.Size]byte {
-	parts := []string{event.Verb, event.URI, event.User.Username, event.impersonated(),
-		event.Received.UTC().Format(time.RFC3339Nano)}
+	parts := []string{
+		event.Verb, event.URI, event.User.Username, event.impersonated(),
+		event.Received.UTC().Format(time.RFC3339Nano),
+	}
 	if ref := event.ObjectRef; ref != nil {
 		parts = append(parts, ref.APIGroup, ref.Resource, ref.Subresource)
 		if event.Verb != "create" {

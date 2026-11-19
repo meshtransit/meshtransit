@@ -105,12 +105,16 @@ func New(options Options) (*Recorder, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
+	}
 	return &Recorder{
 		options: options,
-		client: &http.Client{Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client: &http.Client{
+			Transport:     transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		events:  strings.TrimSuffix(options.Server, "/") + "/api/v1/namespaces/" + options.Namespace + "/events",
 		windows: map[key]*window{},
 	}, nil
@@ -130,7 +134,7 @@ func (recorder *Recorder) Privileged(ctx context.Context, use Use) (counted bool
 				held.dirty = true
 			} else {
 				held.raising = true
-				go recorder.raiseAll(held)
+				go recorder.raiseAll(held) //nolint:gosec // G118: one raiser per window outlives the request; each call is bounded by callTimeout
 			}
 			held.mu.Unlock()
 			return true, nil
@@ -259,10 +263,14 @@ func (recorder *Recorder) create(ctx context.Context, use Use, now time.Time) (s
 	stamp := now.UTC().Format(time.RFC3339)
 	body, err := json.Marshal(event{
 		APIVersion: "v1", Kind: "Event",
-		Metadata: eventMeta{GenerateName: "meshgw-privileged-", Namespace: recorder.options.Namespace,
-			Labels: map[string]string{"app.kubernetes.io/name": "meshgw", "meshtransit.net/group": use.Group}},
-		InvolvedObject: objectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: recorder.options.Namespace,
-			Name: "mt-" + use.Group},
+		Metadata: eventMeta{
+			GenerateName: "meshgw-privileged-", Namespace: recorder.options.Namespace,
+			Labels: map[string]string{"app.kubernetes.io/name": "meshgw", "meshtransit.net/group": use.Group},
+		},
+		InvolvedObject: objectRef{
+			APIVersion: "v1", Kind: "ServiceAccount", Namespace: recorder.options.Namespace,
+			Name: "mt-" + use.Group,
+		},
 		Reason: Reason, Type: "Warning",
 		Message: fmt.Sprintf("Device %s (%s) of owner %s uses privileged group %s from %s; first audit_id %s",
 			use.Device, use.DeviceName, ownerText(use.Owner), use.Group, use.Source, use.AuditID),

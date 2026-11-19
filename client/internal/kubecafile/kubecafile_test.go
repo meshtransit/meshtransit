@@ -43,11 +43,13 @@ func newManager(t *testing.T) (*Manager, string, *clock) {
 	return New(tempDirectory{path: dir}, c.read), dir, c
 }
 
-func selfSigned(t *testing.T, key any, public any) []byte {
+func selfSigned(t *testing.T, key, public any) []byte {
 	t.Helper()
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
 		NotBefore: time.Unix(1_700_000_000, 0), NotAfter: time.Unix(1_900_000_000, 0), IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, public, key)
 	if err != nil {
 		t.Fatal(err)

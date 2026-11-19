@@ -68,8 +68,10 @@ func TestStoreSavesAndRestores(t *testing.T) {
 		!restored.IssuedAt.Equal(issued.IssuedAt) {
 		t.Fatalf("restored %v: serial %x", ok, restored.Serial)
 	}
-	restarted.mapArrived(&networkmap.KubernetesCA{Root: issued.Root[:], Signing: issued.Issuer[:],
-		MapRevision: issued.NetworkRevision}, *core.now)
+	restarted.mapArrived(&networkmap.KubernetesCA{
+		Root: issued.Root[:], Signing: issued.Issuer[:],
+		MapRevision: issued.NetworkRevision,
+	}, *core.now)
 	if _, ok := restarted.Current(); !ok || restarted.restored || len(core.requests) != 1 {
 		t.Fatalf("after the map: restored %t, %d requests", restarted.restored, len(core.requests))
 	}
@@ -152,7 +154,7 @@ func TestStoreRefusesWhatDoesNotCheck(t *testing.T) {
 func rewrite(t *testing.T, dir string, change func(*stored)) {
 	t.Helper()
 	path := filepath.Join(dir, storeFile)
-	payload, err := os.ReadFile(path)
+	payload, err := os.ReadFile(path) //nolint:gosec // a file under the test's own directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,23 +206,29 @@ func TestStoreRenewsSoonWhatTheMapNoLongerNames(t *testing.T) {
 	*core.now = core.now.Add(time.Hour)
 	restarted := storedManager(t, core, dir)
 	restarted.restore(t.Context())
-	restarted.mapArrived(&networkmap.KubernetesCA{Root: make([]byte, 32), Signing: make([]byte, 32),
-		MapRevision: issued.NetworkRevision - 1}, *core.now)
+	restarted.mapArrived(&networkmap.KubernetesCA{
+		Root: make([]byte, 32), Signing: make([]byte, 32),
+		MapRevision: issued.NetworkRevision - 1,
+	}, *core.now)
 	if !restarted.restored {
 		t.Fatal("an older map decided")
 	}
 	other := make([]byte, 32)
 	other[0] = 1
-	restarted.mapArrived(&networkmap.KubernetesCA{Root: issued.Root[:], Signing: other,
-		MapRevision: issued.NetworkRevision}, *core.now)
+	restarted.mapArrived(&networkmap.KubernetesCA{
+		Root: issued.Root[:], Signing: other,
+		MapRevision: issued.NetworkRevision,
+	}, *core.now)
 	if _, ok := restarted.Current(); !ok || restarted.restored {
 		t.Fatal("dropped, or still unchecked")
 	}
 	restarted.step(t.Context(), *core.now)
 	// Another map before the renewal does not put it back to the fleet's
 	// spread (re-review b7a N1).
-	restarted.mapArrived(&networkmap.KubernetesCA{Root: issued.Root[:], Signing: other,
-		MapRevision: issued.NetworkRevision + 1}, core.now.Add(time.Second))
+	restarted.mapArrived(&networkmap.KubernetesCA{
+		Root: issued.Root[:], Signing: other,
+		MapRevision: issued.NetworkRevision + 1,
+	}, core.now.Add(time.Second))
 	restarted.step(t.Context(), core.now.Add(time.Second))
 	if !restarted.nextAt.Before(core.now.Add(recheck + time.Second)) {
 		t.Fatalf("renews in %v", restarted.nextAt.Sub(*core.now))
@@ -287,16 +295,20 @@ func TestStoreMapKeepsARefusalBackoff(t *testing.T) {
 			manager.restore(t.Context())
 			other := make([]byte, 32)
 			other[0] = 1
-			manager.mapArrived(&networkmap.KubernetesCA{Root: issued.Root[:], Signing: other,
-				MapRevision: issued.NetworkRevision}, *core.now)
+			manager.mapArrived(&networkmap.KubernetesCA{
+				Root: issued.Root[:], Signing: other,
+				MapRevision: issued.NetworkRevision,
+			}, *core.now)
 			manager.step(t.Context(), *core.now)
 			*core.now = manager.nextAt
 			core.answers = append(core.answers, refuse(reason))
 			manager.step(t.Context(), *core.now)
 			backoff := manager.nextAt
 			*core.now = core.now.Add(time.Second)
-			manager.mapArrived(&networkmap.KubernetesCA{Root: issued.Root[:], Signing: other,
-				MapRevision: issued.NetworkRevision + 1}, *core.now)
+			manager.mapArrived(&networkmap.KubernetesCA{
+				Root: issued.Root[:], Signing: other,
+				MapRevision: issued.NetworkRevision + 1,
+			}, *core.now)
 			if manager.nextAt.Before(backoff) {
 				t.Fatalf("a map brought the request %v before its backoff", backoff.Sub(manager.nextAt))
 			}

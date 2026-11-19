@@ -12,10 +12,13 @@ import (
 // the same rights in another order hash alike (K2 §7.1).
 func TestNormalizeAndHash(t *testing.T) {
 	t.Parallel()
-	shuffled := Profile{Name: "developer",
+	shuffled := Profile{
+		Name: "developer",
 		Namespaced: []Rule{
-			{APIGroups: []string{"batch", "", "apps", "apps"}, Resources: []string{"jobs", "pods", "deployments"},
-				Verbs: []string{"list", "get", "get"}},
+			{
+				APIGroups: []string{"batch", "", "apps", "apps"}, Resources: []string{"jobs", "pods", "deployments"},
+				Verbs: []string{"list", "get", "get"},
+			},
 			{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
 			{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
 		},
@@ -34,11 +37,14 @@ func TestNormalizeAndHash(t *testing.T) {
 	if !equalProfiles(Normalize(normalized), normalized) {
 		t.Fatal("Normalize is not idempotent")
 	}
-	reordered := Profile{Name: "developer",
+	reordered := Profile{
+		Name: "developer",
 		Namespaced: []Rule{
 			{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
-			{APIGroups: []string{"apps", "", "batch"}, Resources: []string{"deployments", "pods", "jobs"},
-				Verbs: []string{"get", "list"}},
+			{
+				APIGroups: []string{"apps", "", "batch"}, Resources: []string{"deployments", "pods", "jobs"},
+				Verbs: []string{"get", "list"},
+			},
 		},
 		Cluster: []Rule{{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}},
 	}
@@ -54,12 +60,15 @@ func TestNormalizeAndHash(t *testing.T) {
 	// rule sits in is too.
 	renamed := cloneProfile(reordered)
 	renamed.Name = "developer-2"
-	moved := Profile{Name: "developer", Namespaced: reordered.Namespaced,
+	moved := Profile{
+		Name: "developer", Namespaced: reordered.Namespaced,
 		Cluster: []Rule{{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}},
 	}
 	moved.Namespaced = moved.Namespaced[:1]
-	moved.Cluster = append(moved.Cluster, Rule{APIGroups: []string{"apps", "", "batch"},
-		Resources: []string{"deployments", "pods", "jobs"}, Verbs: []string{"get", "list"}})
+	moved.Cluster = append(moved.Cluster, Rule{
+		APIGroups: []string{"apps", "", "batch"},
+		Resources: []string{"deployments", "pods", "jobs"}, Verbs: []string{"get", "list"},
+	})
 	for name, other := range map[string]Profile{"renamed": renamed, "moved": moved} {
 		hash, err := ContentHash(other)
 		if err != nil || hash == first {
@@ -84,7 +93,7 @@ func TestValidate(t *testing.T) {
 		}
 		return values
 	}
-	letters := func(index int) string { return "r" + strings.Repeat("a", index%60) + string(rune('a'+index/60)) }
+	letters := func(index int) string { return "r" + strings.Repeat("a", index%60) + string(rune('a'+index/60)) } //nolint:gosec // G115: index/60 stays far below the rune range in this test
 	rules := func(count int) []Rule {
 		out := make([]Rule, count)
 		for index := range out {
@@ -107,8 +116,10 @@ func TestValidate(t *testing.T) {
 		"resource slash star": {Name: "x", Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: []string{"get"}}}},
 		"three segments":      {Name: "x", Namespaced: []Rule{{APIGroups: []string{""}, Resources: []string{"a/b/c"}, Verbs: []string{"get"}}}},
 		"path in namespaced":  {Name: "x", Namespaced: []Rule{{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}}},
-		"path with resources": {Name: "x", Cluster: []Rule{{APIGroups: []string{""}, Resources: []string{"nodes"},
-			NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}}},
+		"path with resources": {Name: "x", Cluster: []Rule{{
+			APIGroups: []string{""}, Resources: []string{"nodes"},
+			NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"},
+		}}},
 		"path with names":   {Name: "x", Cluster: []Rule{{ResourceNames: []string{"a"}, NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}}},
 		"relative path":     {Name: "x", Cluster: []Rule{{NonResourceURLs: []string{"metrics"}, Verbs: []string{"get"}}}},
 		"inner star":        {Name: "x", Cluster: []Rule{{NonResourceURLs: []string{"/a*/b"}, Verbs: []string{"get"}}}},
@@ -206,9 +217,11 @@ func cloneRules(rules []Rule) []Rule {
 	}
 	out := make([]Rule, len(rules))
 	for index, rule := range rules {
-		out[index] = Rule{APIGroups: slices.Clone(rule.APIGroups), Resources: slices.Clone(rule.Resources),
+		out[index] = Rule{
+			APIGroups: slices.Clone(rule.APIGroups), Resources: slices.Clone(rule.Resources),
 			Verbs: slices.Clone(rule.Verbs), ResourceNames: slices.Clone(rule.ResourceNames),
-			NonResourceURLs: slices.Clone(rule.NonResourceURLs)}
+			NonResourceURLs: slices.Clone(rule.NonResourceURLs),
+		}
 	}
 	return out
 }

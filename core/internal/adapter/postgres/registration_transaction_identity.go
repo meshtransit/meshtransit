@@ -171,7 +171,7 @@ func (transaction *registrationTransaction) lockExistingDevice(
 	// A member's Device renews only with a key its owner issued: another
 	// member's key would extend, past the expiry the owner approved, a Device
 	// whose keys someone else holds, keeping the owner's group rights
-	// (TD-SEC-75, docs/device-logout-design.md §2.1). A Device created by a key
+	// (TD-SEC-75, device-logout-design §2.1). A Device created by a key
 	// belongs to the key's issuer, so its owner may use any key of their own.
 	// A Workspace Device keeps its expiry and its name on resume, so the key
 	// changes neither.

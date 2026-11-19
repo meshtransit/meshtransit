@@ -20,7 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
-// Schema 279 (docs/network-delete-design.md, N1a): only the owner or a
+// Schema 279 (network-delete-design, N1a): only the owner or a
 // Workspace-wide network.delete grant deletes a Network, at the version it
 // read, with a reason. The Network is deleted at once: its keys end, its
 // name is free, its revision advances and one network.deleted event names

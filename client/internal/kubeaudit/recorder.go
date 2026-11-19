@@ -56,8 +56,10 @@ type Options struct {
 // DefaultOptions are the design's (§7): 5 ms batches, 5 s wait, 180/s burst
 // 1,800 for the gateway, 20/s burst 200 and 8 waiting for a Device.
 func DefaultOptions() Options {
-	return Options{Window: 5 * time.Millisecond, Wait: 5 * time.Second, Rate: 180, Burst: 1800,
-		DeviceRate: 20, DeviceBurst: 200, DevicePending: 8, ReportWindow: time.Second, DenialWindow: 10 * time.Second}
+	return Options{
+		Window: 5 * time.Millisecond, Wait: 5 * time.Second, Rate: 180, Burst: 1800,
+		DeviceRate: 20, DeviceBurst: 200, DevicePending: 8, ReportWindow: time.Second, DenialWindow: 10 * time.Second,
+	}
 }
 
 func (options Options) valid() bool {
@@ -146,9 +148,11 @@ func New(options Options) (*Recorder, error) {
 		return nil, errors.New("kubeaudit: invalid options")
 	}
 	now := time.Now()
-	return &Recorder{options: options, reports: newReports(), queues: map[string][]*waiter{},
+	return &Recorder{
+		options: options, reports: newReports(), queues: map[string][]*waiter{},
 		pending: map[string]int{}, devices: map[string]*bucket{}, gateway: bucket{tokens: options.Burst, at: now},
-		messages: bucket{tokens: messageBurst, at: now}, rate: options.Rate, wake: make(chan struct{}, 1)}, nil
+		messages: bucket{tokens: messageBurst, at: now}, rate: options.Rate, wake: make(chan struct{}, 1),
+	}, nil
 }
 
 // Record has Core record intent for device before the gateway forwards it.
@@ -178,8 +182,10 @@ func (recorder *Recorder) Record(ctx context.Context, device string, intent cont
 		recorder.mu.Unlock()
 		return Answer{Refused: RefusedLimited, RetryAfter: time.Second}
 	}
-	waiting := &waiter{device: device, intent: intent, size: encodedSize(intent), queuedAt: now,
-		reply: make(chan Answer, 1)}
+	waiting := &waiter{
+		device: device, intent: intent, size: encodedSize(intent), queuedAt: now,
+		reply: make(chan Answer, 1),
+	}
 	recorder.pending[device]++
 	recorder.enqueueLocked(waiting, false)
 	recorder.mu.Unlock()
@@ -305,7 +311,7 @@ func intentID(now time.Time) ([16]byte, error) {
 		return id, err
 	}
 	var millis [8]byte
-	binary.BigEndian.PutUint64(millis[:], uint64(now.UnixMilli())) //nolint:gosec // after 1970
+	binary.BigEndian.PutUint64(millis[:], uint64(now.UnixMilli()))
 	copy(id[:6], millis[2:])
 	id[6] = 0x70 | id[6]&0x0f
 	id[8] = 0x80 | id[8]&0x3f

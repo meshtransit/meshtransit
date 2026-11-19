@@ -84,8 +84,10 @@ func newRecorderWith(t *testing.T, api *fakeAPI) (*Recorder, *fakeAPI, *atomic.P
 	t.Cleanup(server.Close)
 	dir := t.TempDir()
 	ca, token := filepath.Join(dir, "ca.crt"), filepath.Join(dir, "token")
-	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE",
-		Bytes: server.Certificate().Raw}), 0o600); err != nil {
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(token, []byte("gateway-token\n"), 0o600); err != nil {
@@ -94,8 +96,10 @@ func newRecorderWith(t *testing.T, api *fakeAPI) (*Recorder, *fakeAPI, *atomic.P
 	var now atomic.Pointer[time.Time]
 	start := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
 	now.Store(&start)
-	recorder, err := New(Options{Server: server.URL, CAFile: ca, TokenFile: token, Namespace: "mt-kube",
-		Instance: "meshgw-0", Window: 5 * time.Minute, Now: func() time.Time { return *now.Load() }})
+	recorder, err := New(Options{
+		Server: server.URL, CAFile: ca, TokenFile: token, Namespace: "mt-kube",
+		Instance: "meshgw-0", Window: 5 * time.Minute, Now: func() time.Time { return *now.Load() },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +111,10 @@ func advance(now *atomic.Pointer[time.Time], by time.Duration) {
 	now.Store(&next)
 }
 
-var use = Use{Device: "device-a", DeviceName: "laptop", Owner: "person-1", Group: "sre", Source: "100.64.1.9",
-	AuditID: "01a1-audit"}
+var use = Use{
+	Device: "device-a", DeviceName: "laptop", Owner: "person-1", Group: "sre", Source: "100.64.1.9",
+	AuditID: "01a1-audit",
+}
 
 // The first use of a window makes an Event on the group's account; later
 // uses raise its count; a new window makes a new Event.

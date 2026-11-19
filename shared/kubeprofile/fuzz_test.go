@@ -45,16 +45,21 @@ func FuzzScopeMonotone(f *testing.F) {
 	f.Add("create", "", "pods", "exec", "team-a", "", "", true, true, false, uint8(2))
 	f.Add("patch", "", "namespaces", "", "team-a", "team-a", "", true, false, true, uint8(1))
 	f.Fuzz(func(t *testing.T, verb, group, resource, subresource, namespace, name, path string,
-		resourceRequest, upgrade, mayCreate bool, scope uint8) {
-		attributes := Attributes{ResourceRequest: resourceRequest, Verb: verb, APIGroup: group,
+		resourceRequest, upgrade, mayCreate bool, scope uint8,
+	) {
+		attributes := Attributes{
+			ResourceRequest: resourceRequest, Verb: verb, APIGroup: group,
 			Resource: resource, Subresource: subresource, Namespace: namespace, Name: name, Path: path,
-			Upgrade: upgrade, MayCreate: mayCreate, Scope: ResourceScope(scope % 3)}
-		wide := Profile{Name: "wide",
+			Upgrade: upgrade, MayCreate: mayCreate, Scope: ResourceScope(scope % 3),
+		}
+		wide := Profile{
+			Name:       "wide",
 			Namespaced: []Rule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}},
 			Cluster: []Rule{
 				{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}},
 				{NonResourceURLs: []string{"*"}, Verbs: []string{"*"}},
-			}}
+			},
+		}
 		for _, profile := range []Profile{developer(), wide} {
 			narrow := mustScope(t, profile, []string{"team-a"}, false)
 			wider := mustScope(t, profile, []string{"team-a", "team-b"}, false)
@@ -88,7 +93,8 @@ func FuzzStricterThanRBAC(f *testing.F) {
 	f.Add("*", "*", "*", "", "", "delete", "", "namespaces", "", "team-a", "team-a", "", false, false, uint8(1), true, true)
 	f.Add("", "", "get", "", "/metrics", "get", "", "", "", "", "", "/metrics", false, false, uint8(0), true, false)
 	f.Fuzz(func(t *testing.T, ruleGroup, ruleResource, ruleVerb, ruleName, ruleURL, verb, group, resource,
-		subresource, namespace, name, path string, upgrade, mayCreate bool, scope uint8, clusterPart, everywhere bool) {
+		subresource, namespace, name, path string, upgrade, mayCreate bool, scope uint8, clusterPart, everywhere bool,
+	) {
 		rule := Rule{Verbs: []string{ruleVerb}}
 		if ruleURL != "" {
 			rule.NonResourceURLs = []string{ruleURL}
@@ -110,9 +116,11 @@ func FuzzStricterThanRBAC(f *testing.F) {
 		if err != nil {
 			return
 		}
-		attributes := Attributes{ResourceRequest: path == "", Verb: verb, APIGroup: group, Resource: resource,
+		attributes := Attributes{
+			ResourceRequest: path == "", Verb: verb, APIGroup: group, Resource: resource,
 			Subresource: subresource, Namespace: namespace, Name: name, Path: path, Upgrade: upgrade,
-			MayCreate: mayCreate, Scope: ResourceScope(scope % 4)}
+			MayCreate: mayCreate, Scope: ResourceScope(scope % 4),
+		}
 		if !granted.Allows(attributes) {
 			return
 		}

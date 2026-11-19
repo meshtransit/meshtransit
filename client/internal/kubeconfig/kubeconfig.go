@@ -861,7 +861,7 @@ func find(files []string, keep func(Marker) bool) ([]Found, error) {
 		if document == nil {
 			continue
 		}
-		file := files[index] //nolint:gosec // G602: documents is files'.
+		file := files[index]
 		if resolved, err := filepath.EvalSymlinks(file); err == nil {
 			if seen[resolved] {
 				continue
