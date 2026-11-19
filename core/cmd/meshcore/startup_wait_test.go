@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,10 +33,15 @@ func (checker *flakyChecker) Check(context.Context) error {
 func TestWaitForDependency(t *testing.T) {
 	t.Parallel()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var logs bytes.Buffer
 	comes := &flakyChecker{failFor: 2}
-	if err := waitForDependency(t.Context(), logger, comes, time.Second, time.Now().Add(10*time.Second)); err != nil ||
-		comes.tries.Load() != 3 {
+	if err := waitForDependency(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), comes, time.Second,
+		time.Now().Add(10*time.Second)); err != nil || comes.tries.Load() != 3 {
 		t.Fatalf("waitForDependency() = %v after %d tries; want success on the third", err, comes.tries.Load())
+	}
+	// The logs name the dependency, not its numeric kind.
+	if strings.Count(logs.String(), "dependency=postgresql") != 2 {
+		t.Fatalf("logs do not name the dependency:\n%s", logs.String())
 	}
 	never := &flakyChecker{failFor: 1 << 30}
 	started := time.Now()

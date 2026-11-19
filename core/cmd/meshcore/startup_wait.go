@@ -30,7 +30,7 @@ func waitForDependency(ctx context.Context, logger *slog.Logger, checker app.Dep
 		cancel()
 		if err == nil {
 			if logged {
-				logger.InfoContext(ctx, "dependency available", "dependency", string(checker.Component()))
+				logger.InfoContext(ctx, "dependency available", "dependency", checker.Component().String())
 			}
 			return nil
 		}
@@ -40,7 +40,7 @@ func waitForDependency(ctx context.Context, logger *slog.Logger, checker app.Dep
 		if !logged {
 			logged = true
 			logger.WarnContext(ctx, "dependency unavailable at start-up; waiting",
-				"dependency", string(checker.Component()), "until", deadline.UTC())
+				"dependency", checker.Component().String(), "until", deadline.UTC())
 		}
 		timer := time.NewTimer(dependencyStartupRetry)
 		select {
