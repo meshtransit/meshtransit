@@ -33,6 +33,15 @@ type captiveHarness struct {
 	settings   routesettings.Settings
 }
 
+// windowOpen reads whether the server holds an open window, under the lock
+// its requests run under: the socket between the test and the server is no
+// synchronization the race detector sees (TD-TEST-30).
+func (h *captiveHarness) windowOpen() bool {
+	h.server.mu.Lock()
+	defer h.server.mu.Unlock()
+	return h.server.captiveWindow != nil
+}
+
 func newCaptiveHarness(t *testing.T) *captiveHarness {
 	t.Helper()
 	h := &captiveHarness{
@@ -175,7 +184,7 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 
 	replaced := h.replaces()
 	h.advance(time.Minute)
-	if h.replaces() != replaced || h.server.captiveWindow == nil {
+	if h.replaces() != replaced || !h.windowOpen() {
 		t.Fatal("an unchanged window was applied again or closed")
 	}
 	// Opening again: a new window of its own length, from now.
@@ -186,7 +195,7 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 
 	// meshd closes only the window it names.
 	h.ask(ExitRouteRequest{Use: true, CaptiveClose: window.ID})
-	if h.server.captiveWindow == nil {
+	if !h.windowOpen() {
 		t.Fatal("meshd closed a window it did not name")
 	}
 	routing = h.ask(ExitRouteRequest{Use: true, CaptiveClose: again.ID})
@@ -196,7 +205,7 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 	// The file is gone: polling does not open it again; nor does a file
 	// that stayed (a delete that failed), nor one older than any window.
 	h.poll()
-	if h.server.captiveWindow != nil {
+	if h.windowOpen() {
 		t.Fatal("a closed window opened again")
 	}
 	stayed, err := json.Marshal(again)
@@ -207,7 +216,7 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.poll()
-	if h.server.captiveWindow != nil || !h.fileGone() {
+	if h.windowOpen() || !h.fileGone() {
 		t.Fatal("a window whose file stayed opened again")
 	}
 	old := captive.Window{ID: strings.Repeat("cd", 16), Seconds: 60, Opened: h.now.Add(-time.Hour)}
@@ -215,18 +224,18 @@ func TestCaptiveWindowLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.poll()
-	if h.server.captiveWindow != nil {
+	if h.windowOpen() {
 		t.Fatal("a stale window opened")
 	}
 
 	// The window ends on time.
 	h.open(time.Minute)
 	h.advance(59 * time.Second)
-	if h.server.captiveWindow == nil {
+	if !h.windowOpen() {
 		t.Fatal("the window ended early")
 	}
 	h.advance(time.Second)
-	if h.server.captiveWindow != nil || h.lastWindow() != nil || !h.fileGone() {
+	if h.windowOpen() || h.lastWindow() != nil || !h.fileGone() {
 		t.Fatal("the window outlived its time")
 	}
 }
@@ -240,7 +249,7 @@ func TestCaptiveWindowRefusals(t *testing.T) {
 	h.settings.ExitCaptiveOff = true
 	h.mu.Unlock()
 	h.open(time.Minute)
-	if h.server.captiveWindow != nil || !h.fileGone() || h.lastWindow() != nil {
+	if h.windowOpen() || !h.fileGone() || h.lastWindow() != nil {
 		t.Fatal("a window opened with exit-captive off")
 	}
 
@@ -248,7 +257,7 @@ func TestCaptiveWindowRefusals(t *testing.T) {
 	h.settings = routesettings.Settings{ExitUse: "World"}
 	h.mu.Unlock()
 	h.open(time.Minute)
-	if h.server.captiveWindow == nil {
+	if !h.windowOpen() {
 		t.Fatal("no window opened")
 	}
 	// Root stops using an exit node: the window goes with the route.
@@ -258,11 +267,11 @@ func TestCaptiveWindowRefusals(t *testing.T) {
 	h.server.mu.Lock()
 	h.server.applyExitRoute()
 	h.server.mu.Unlock()
-	if h.server.captiveWindow != nil || !h.fileGone() {
+	if h.windowOpen() || !h.fileGone() {
 		t.Fatal("the window outlived the exit route")
 	}
 	h.open(time.Minute)
-	if h.server.captiveWindow != nil {
+	if h.windowOpen() {
 		t.Fatal("a window opened without an exit node")
 	}
 
@@ -283,20 +292,20 @@ func TestCaptiveWindowOffByTheExitPool(t *testing.T) {
 	t.Parallel()
 	h := newCaptiveHarness(t)
 	h.open(time.Minute)
-	if h.server.captiveWindow == nil {
+	if !h.windowOpen() {
 		t.Fatal("no window opened")
 	}
 	routing := h.ask(ExitRouteRequest{Use: true, CaptiveOff: true})
-	if h.server.captiveWindow != nil || routing.Captive != (CaptiveWindow{}) || !h.fileGone() {
+	if h.windowOpen() || routing.Captive != (CaptiveWindow{}) || !h.fileGone() {
 		t.Fatalf("the pool's captive off left the window: %+v", routing.Captive)
 	}
 	h.open(time.Minute)
-	if h.server.captiveWindow != nil || !h.fileGone() {
+	if h.windowOpen() || !h.fileGone() {
 		t.Fatal("a window opened while the pool turns them off")
 	}
 	h.ask(ExitRouteRequest{Use: true})
 	h.open(time.Minute)
-	if h.server.captiveWindow == nil {
+	if !h.windowOpen() {
 		t.Fatal("no window opened once the pool allowed them again")
 	}
 }

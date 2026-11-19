@@ -51,6 +51,7 @@ func names(config map[string]any, list string) []string {
 }
 
 func TestLoginCreatesAndKeepsOthers(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, ".kube", "config")
@@ -90,6 +91,7 @@ func TestLoginCreatesAndKeepsOthers(t *testing.T) {
 }
 
 func TestLoginRefusesWhatIsNotItsOwn(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "config")
@@ -119,6 +121,7 @@ func TestLoginRefusesWhatIsNotItsOwn(t *testing.T) {
 
 // Files are chosen as client-go chooses them.
 func TestLoginChoosesTheFile(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	first, second, third := filepath.Join(dir, "a"), filepath.Join(dir, "b"), filepath.Join(dir, "c")
@@ -155,6 +158,7 @@ func TestLoginChoosesTheFile(t *testing.T) {
 }
 
 func TestLogout(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "config")
 	for _, group := range []string{"", "sre"} {
@@ -179,6 +183,7 @@ func TestLogout(t *testing.T) {
 }
 
 func TestLoginWaitsForTheLock(t *testing.T) {
+	skipAsRoot(t)
 	file := filepath.Join(t.TempDir(), "config")
 	if err := os.WriteFile(file+".lock", nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -201,6 +206,7 @@ func must[T any](value T, err error) T {
 // Two clusters, groups or profiles never share an entry (review e2 H1); a
 // rename moves the current context (M1).
 func TestLoginNameCollisionsAndRenames(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "config")
 	first := entry("")
@@ -229,6 +235,7 @@ func TestLoginNameCollisionsAndRenames(t *testing.T) {
 }
 
 func TestLoginKeepsTheDocumentAndRefusesCredentials(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	commented := filepath.Join(dir, "commented")
@@ -285,6 +292,7 @@ func TestLoginKeepsTheDocumentAndRefusesCredentials(t *testing.T) {
 // A writer that ignores the lock changes the file under meshctl: meshctl
 // reads it again and keeps the other writer's change.
 func TestLoginRetriesWhenTheFileChanges(t *testing.T) {
+	skipAsRoot(t)
 	file := filepath.Join(t.TempDir(), "config")
 	if err := os.WriteFile(file, []byte("apiVersion: v1\nkind: Config\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -308,6 +316,7 @@ func TestLoginRetriesWhenTheFileChanges(t *testing.T) {
 
 // Find reports a context kubectl would not use as written (review e3 M5).
 func TestFind(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	earlier, ours := filepath.Join(dir, "earlier"), filepath.Join(dir, "ours")
@@ -341,6 +350,7 @@ func TestFind(t *testing.T) {
 // An empty mt-none, as meshctl wrote before e5, gets the placeholder; a
 // placeholder with anything beside it is a credential.
 func TestLoginPlaceholderUser(t *testing.T) {
+	skipAsRoot(t)
 	t.Parallel()
 	dir := t.TempDir()
 	old := filepath.Join(dir, "old")
@@ -378,5 +388,35 @@ func TestLoginPlaceholderUser(t *testing.T) {
 		if _, err := Login([]string{path}, entry(""), false, false); !errors.Is(err, ErrCredential) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// skipAsRoot skips a test that writes a kubeconfig: as root meshctl kube
+// refuses to (TestWritingAsRootIsRefused covers that), and the Linux
+// container suite runs as root.
+func skipAsRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("meshctl kube refuses root; covered by TestWritingAsRootIsRefused")
+	}
+}
+
+// As root a kubeconfig is never written: a user's link would make root
+// write anywhere (runs only as root, as in the Linux container suite).
+func TestWritingAsRootIsRefused(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("only as root")
+	}
+	file := filepath.Join(t.TempDir(), ".kube", "config")
+	_, err := writablePath(file)
+	if !errors.Is(err, ErrUnsafe) || !strings.Contains(err.Error(), "not root") {
+		t.Fatalf("writablePath() as root = %v, want ErrUnsafe naming root", err)
+	}
+	// Login passes the refusal on and writes nothing.
+	if _, err := Login([]string{file}, entry(""), true, false); !errors.Is(err, ErrUnsafe) {
+		t.Fatalf("Login() as root = %v, want ErrUnsafe", err)
+	}
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Login() as root left %s: %v", file, err)
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -336,6 +338,9 @@ func TestAcceptDoesNotTurnOnRootsPublicRoutes(t *testing.T) {
 func TestUserInGroupAsksTheSystem(t *testing.T) {
 	t.Parallel()
 	uid, gid := uint32(os.Getuid()), uint32(os.Getgid()) //nolint:gosec // IDs fit in 32 bits
+	if _, err := user.LookupId(strconv.Itoa(os.Getuid())); err != nil {
+		t.Skipf("uid %d has no account here (a container run as the caller's uid): %v", uid, err)
+	}
 	if member, err := UserInGroup(uid, gid); err != nil || !member {
 		t.Fatalf("UserInGroup(own uid, own primary group) = %v, %v", member, err)
 	}

@@ -24,3 +24,23 @@ condition = "AND"
 paths = ['''(^|/)third_party/dex/v[0-9.]+/patches/0008-inject-connector-http-client\.patch$''']
 regexTarget = "match"
 regexes = ['''Np4vUwMSYV5mopESLWOg3loBxKyLGFtgGKVCjGiQvy6zISQ4fQo=''']
+
+[[allowlists]]
+description = "SQL function names in a grant list (migration 298 quotes them as text)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)core/migrations/000298_group_role_grants\.up\.sql$''']
+regexTarget = "match"
+regexes = ['''mesh_ops\.[a-z0-9_]+_v[0-9]+''']
+
+[[allowlists]]
+description = "Fake credentials in tests: flow-log destination keys and an unsigned test JWT"
+targetRules = ["generic-api-key"]
+paths = [
+  '''(^|/)core/internal/domain/connectionlog/destination_test\.go$''',
+  '''(^|/)shared/flowlog/destination_test\.go$''',
+  '''(^|/)client/internal/kubetoken/audiences_test\.go$''',
+]
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^ui2lp2axTNmsyakw9tvNnw$''', '''^eyJhbGciOiJSUzI1NiJ9\.$''']

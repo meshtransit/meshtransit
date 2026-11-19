@@ -29,7 +29,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: role-grants test-linux-client e2e-subnet-router help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: role-grants test-linux-client e2e-subnet-router help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race test-js integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -117,13 +117,23 @@ test:
 test-race:
 	$(GO) test -timeout=$(TEST_TIMEOUT) -race -shuffle=on ./...
 
+# The Core pages' browser scripts (sign-in approval and landing), tested
+# with node --test (TD-TEST-68).
+test-js:
+	@files="$$(git ls-files 'core/*_test.mjs')"; \
+	if [ -z "$$files" ]; then echo "test-js: no tracked core/*_test.mjs" >&2; exit 1; fi; \
+	node --test $$files
+
 # Runs the client tests in a Linux container, so the Linux-only ones
 # (identity renameat2, netadmin, netwatch, secretstore, socket, ...) run on a
 # macOS workstation too. Tests that need privileges skip themselves. The
-# module cache is mounted read-only and go.mod is never rewritten.
-LINUX_GO_IMAGE ?= golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb
+# module cache is mounted read-only and go.mod is never rewritten. They run
+# as root, so the root-only paths run too; the meshctl kube tests, which
+# root may not run, skip themselves.
+LINUX_GO_IMAGE ?= golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0
 test-linux-client:
-	docker run --rm -v "$(CURDIR):/src" -v "$$($(GO) env GOMODCACHE):/go/pkg/mod:ro" -w /src \
+	docker run --rm \
+		-v "$(CURDIR):/src:ro" -v "$$($(GO) env GOMODCACHE):/go/pkg/mod:ro" -w /src \
 		-e GOFLAGS=-mod=readonly -e GOPROXY=off -e CGO_ENABLED=1 "$(LINUX_GO_IMAGE)" \
 		go test -timeout=$(TEST_TIMEOUT) -race -count=1 ./client/... ./shared/...
 
@@ -271,7 +281,7 @@ vuln:
 workflow-lint:
 	$(ACTIONLINT)
 
-quality: fmt-check tidy-check vet test test-race lint lint-integration vuln workflow-lint check-boundaries
+quality: fmt-check tidy-check vet test test-race test-js lint lint-integration vuln workflow-lint check-boundaries
 
 container-build:
 	docker build \

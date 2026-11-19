@@ -7,7 +7,7 @@ case "${go_runner}" in
 	host | container) ;;
 	*) printf '%s\n' 'Invalid platform Go runner mode.' >&2; exit 2 ;;
 esac
-go_runner_image='golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb'
+go_runner_image='golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0'
 source_dir="$(pwd -P)"
 postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
 # PLATFORM_SCALE=1 runs the opt-in map-stream scale test in place of the
@@ -335,11 +335,17 @@ if [[ "${backend_gate_mb}" != 0 && "${scale_mode}" == 0 && "${share_scale}" == 0
 		-- docker exec "${postgres_container}" &
 	sampler_pid=$!
 fi
+# Since role isolation S2.3 the tests also need control's login
+# (mesh_control, control's group only) and mesh_it_schema, a member of
+# mesh_it_legacy, which the tests fill with what mesh_runtime held before
+# S2.3. Both use the runtime password file, as the kind harness does.
 printf \
-	"CREATE ROLE mesh_migrator LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_worker LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_api_rights NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_control_rights NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_share_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_direct_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_observer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_status_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_retention NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_observer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" \
+	"CREATE ROLE mesh_migrator LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_worker LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_api_rights NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_control_rights NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_share_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_direct_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_observer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_device_alias_map_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_flowlog_status_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_retention NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_observer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_control LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nGRANT mesh_control_rights TO mesh_control WITH INHERIT TRUE, SET FALSE;\nCREATE ROLE mesh_it_legacy NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_it_schema LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nGRANT mesh_it_legacy TO mesh_it_schema WITH INHERIT TRUE, SET FALSE;\n" \
 	"${migration_password}" \
 	"${runtime_password}" \
 	"${worker_password}" \
+	"${runtime_password}" \
+	"${runtime_password}" \
 	| docker exec \
 		--interactive \
 		--env "PGPASSWORD=${postgres_password}" \
@@ -541,7 +547,21 @@ if [[ "${go_runner}" == container ]]; then
 		--quiet --no-align --tuples-only \
 		--command "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT 'owned base expiry candidates before process matrix: ' || jsonb_array_length(mesh_ops.list_due_oidc_browser_v1('01890f00-0000-7000-8000-000000000001'::UUID,128)); ROLLBACK"
 fi
+# The operator-login test drops mesh_control when it ends: make control's
+# login again, as the operator leaves it, for the control processes below.
+printf \
+	"DROP ROLE IF EXISTS mesh_control;\nCREATE ROLE mesh_control LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nGRANT mesh_control_rights TO mesh_control WITH INHERIT TRUE, SET FALSE;\n" \
+	"${runtime_password}" \
+	| docker exec \
+		--interactive \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		>/dev/null
 export MESHTRANSIT_ROLE=control
+# Control logs in as its own login since role isolation S2.3: mesh_runtime
+# holds only the api's group.
+export MESHTRANSIT_POSTGRES_RUNTIME_USER=mesh_control
 export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
 export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
@@ -571,8 +591,9 @@ run_go test \
 # Retroactive guardrails end to end: a share built through the production
 # writers leaves both maps under an enforced guardrail and comes back when it
 # is weakened. It adds Devices and alias pools, so it runs after every other
-# test of this database.
-MESHTRANSIT_GUARDRAIL_SHARE_CUT=1 run_go test \
+# test of this database. Its writers are the api's, so it runs as the api's
+# login.
+MESHTRANSIT_GUARDRAIL_SHARE_CUT=1 MESHTRANSIT_POSTGRES_RUNTIME_USER=mesh_runtime run_go test \
 	-tags=integration \
 	-count=1 \
 	-race \
@@ -580,6 +601,7 @@ MESHTRANSIT_GUARDRAIL_SHARE_CUT=1 run_go test \
 	-timeout=5m \
 	./core/test/integration
 export MESHTRANSIT_ROLE=api
+export MESHTRANSIT_POSTGRES_RUNTIME_USER=mesh_runtime
 unset MESHTRANSIT_POSTGRES_WORKER_USER MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE
 unset MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS
 

@@ -42,12 +42,19 @@ func TestRoleWorkerProcessExpiryConvergesAcrossRestart(t *testing.T) {
 		adminSettings.PostgreSQL.CAFile,
 		adminSettings.ConnectTimeout,
 	)
+	// The fixture starts logins as the api does: as the api's login, which
+	// holds the api's group (role isolation S2.3), whatever login the
+	// processes under test use; mesh_all (self-host) holds it too.
+	apiLogin := *settings.Storage.PostgreSQL.Runtime
+	if apiLogin.User != "mesh_all" {
+		apiLogin.User = "mesh_runtime"
+	}
 	pool := openDependencyRolePool(
 		ctx,
 		t,
 		postgresadapter.PoolRoleRuntime,
 		settings.Storage.PostgreSQL,
-		settings.Storage.PostgreSQL.Runtime,
+		&apiLogin,
 		settings.Dependencies.CheckTimeout,
 	)
 	creation, err := postgresadapter.NewAuthTransactionStore(pool, testProcessExpirySQLBounds())

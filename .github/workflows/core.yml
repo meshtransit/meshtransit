@@ -41,10 +41,25 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      # fmt-check tidy-check vet test test-race lint lint-integration vuln
-      # workflow-lint check-boundaries, over the whole repository.
+      # fmt-check tidy-check vet test test-race test-js lint lint-integration
+      # vuln workflow-lint check-boundaries, over the whole repository.
       - name: Run quality gates
         run: make quality
+
+      # Generated protocol code matches its .proto, and an independent
+      # Python implementation agrees with the MTCP test vectors (TD-TEST-22).
+      - name: Check generated protocol code
+        run: make proto-check
+
+      - name: Install the cross-check's cryptography library
+        run: |
+          python3 -c 'import cryptography' 2>/dev/null || {
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends python3-cryptography
+          }
+
+      - name: Cross-check MTCP against an independent implementation
+        run: make mtcp-crosscheck
 
   boundaries:
     name: Licence, dependency and doc-link boundaries

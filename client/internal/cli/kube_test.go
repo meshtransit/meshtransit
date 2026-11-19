@@ -89,6 +89,7 @@ func kubeGateway(t *testing.T, groups string) (localapi.KubernetesClusterStatus,
 }
 
 func TestKubeLoginWritesAContext(t *testing.T) {
+	skipAsRoot(t)
 	cluster, caFile := kubeGateway(t, `"view","sre"`)
 	client := &fakeClient{status: localapi.Status{
 		ActiveProfileID: "0a0a", NetworkName: "Acme Corp",
@@ -129,6 +130,7 @@ func TestKubeLoginWritesAContext(t *testing.T) {
 // the names login gave its contexts; another cluster's contexts stay
 // (TD-CLI-92).
 func TestKubeLogoutOfAClusterGoneFromTheMap(t *testing.T) {
+	skipAsRoot(t)
 	cluster, _ := kubeGateway(t, `"view","sre"`)
 	client := &fakeClient{status: localapi.Status{
 		ActiveProfileID: "0a0a", NetworkName: "acme",
@@ -177,6 +179,7 @@ func TestKubeLogoutOfAClusterGoneFromTheMap(t *testing.T) {
 // in it whose context took the same name first, finds the gone one's
 // suffixed context and its ID, and keeps another profile's (review TD-CLI-92).
 func TestKubeLogoutOfAGoneClusterKeepsOthers(t *testing.T) {
+	skipAsRoot(t)
 	cluster, _ := kubeGateway(t, `"view"`)
 	kept := cluster
 	kept.ID, kept.Name = "01890f90-0000-7000-8000-0000000000b1", "prod--eu"
@@ -335,6 +338,7 @@ func TestWithSuffixTellsEntriesApart(t *testing.T) {
 
 // doctor walks the steps and names the first that fails, with its fix.
 func TestKubeDoctor(t *testing.T) {
+	skipAsRoot(t)
 	cluster, caFile := kubeGateway(t, `"view"`)
 	client := &fakeClient{status: localapi.Status{
 		ActiveProfileID: "0a0a", NetworkName: "acme",
@@ -491,5 +495,15 @@ func TestKubeAuditCheckExitCodes(t *testing.T) {
 		if code := Run(t.Context(), test.args, &stdout, &stderr, testOptions(&fakeClient{})); code != test.want {
 			t.Errorf("%v = %d, want %d: %s%s", test.args[2:], code, test.want, stdout.String(), stderr.String())
 		}
+	}
+}
+
+// skipAsRoot skips a test that writes a kubeconfig: meshctl kube refuses
+// root (kubeconfig's TestWritingAsRootIsRefused), and the Linux container
+// suite runs as root.
+func skipAsRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("meshctl kube refuses root")
 	}
 }
