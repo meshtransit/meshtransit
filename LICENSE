@@ -1,13 +1,13 @@
 MeshTransit is distributed under two open-source licenses, chosen per directory.
 
-AGPL-3.0-only (see LICENSES/AGPL-3.0.txt):
+AGPL-3.0-only (see licenses/AGPL-3.0.txt):
   core/     MeshTransit Core, the control plane
   relay/    MeshTransit Interchange (meshrelay), the relay
 
   MeshTransit-owned code in these directories is also available under a
   separate commercial license; see COMMERCIAL-LICENSING.md.
 
-Apache-2.0 (see LICENSES/Apache-2.0.txt):
+Apache-2.0 (see licenses/Apache-2.0.txt):
   client/   meshd, meshnetd, meshcred and meshctl
   shared/   protocol libraries used by the client, the relay and Core
   api/      API and protocol contracts

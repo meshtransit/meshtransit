@@ -74,10 +74,10 @@ described in [SECURITY.md](SECURITY.md); never in a public issue.
 ## License
 
 Core and Interchange are licensed under the
-[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt), with a
+[GNU AGPL v3.0](licenses/AGPL-3.0.txt), with a
 [commercial license](COMMERCIAL-LICENSING.md) available. The client, the shared
 protocol libraries and the API contracts are licensed under the
-[Apache License 2.0](LICENSES/Apache-2.0.txt). See [LICENSE](LICENSE) for the
+[Apache License 2.0](licenses/Apache-2.0.txt). See [LICENSE](LICENSE) for the
 per-directory details.
 
 WireGuard is a registered trademark of Jason A. Donenfeld.

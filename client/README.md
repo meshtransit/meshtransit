@@ -73,6 +73,6 @@ local API, identity storage, the helper protocol or the data plane.
 
 Except for third-party components identified in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), the client is licensed under
-the [Apache License 2.0](../LICENSES/Apache-2.0.txt). The required attributions
+the [Apache License 2.0](../licenses/Apache-2.0.txt). The required attributions
 are recorded in [NOTICE](../NOTICE). Contributing:
 [CONTRIBUTING.md](../CONTRIBUTING.md).
