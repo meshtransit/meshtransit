@@ -200,7 +200,7 @@ func assertPostgreSQLDeploymentEntitlementRenewal(ctx context.Context, t *testin
 		t.Fatalf("not due = %q, %v, current %+v", outcome, err, seen)
 	}
 	// Only the api role reads it.
-	for role, want := range map[string]bool{"mesh_runtime": true, "mesh_worker": false, "mesh_observer": false} {
+	for role, want := range map[string]bool{legacyRuntimeName(): true, "mesh_worker": false, "mesh_observer": false} {
 		var allowed bool
 		if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege($1,
  'mesh_ops.read_current_deployment_entitlement_v1(uuid)', 'EXECUTE')`, role).Scan(&allowed); err != nil {

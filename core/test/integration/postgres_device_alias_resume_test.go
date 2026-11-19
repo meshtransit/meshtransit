@@ -285,7 +285,7 @@ func assertAliasMapPeers(ctx context.Context, t *testing.T, tx pgx.Tx, name stri
 		t.Fatal(err)
 	}
 	setIntegrationScope(ctx, t, tx, self.workspace, self.network)
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v7($1::BYTEA,$2::BYTEA,10000) AS edge`, self.machine, self.key)

@@ -23,7 +23,7 @@ import (
 
 func assertPostgreSQLBrowserRegistrationApproval(
 	ctx context.Context, t *testing.T, admin, runtimeConnection *pgx.Conn,
-	runtime *postgresadapter.Pool,
+	runtime, control *postgresadapter.Pool,
 ) {
 	t.Helper()
 	const deploymentPublicID = "01890f00-0000-7000-8000-000000000001"
@@ -281,8 +281,9 @@ WHERE aggregate_kind=$1 AND aggregate_public_id=$2::UUID AND event_class=$3`,
 			t.Fatalf("committed %s outbox count = %d: %v", evidence.class, outboxCount, err)
 		}
 	}
+	// Completion is control's (S2.1): it runs on control's pool.
 	completionStore, err := postgresadapter.NewBrowserCompletionStore(
-		runtime, postgresadapter.RegistrationTransactionOptions{
+		control, postgresadapter.RegistrationTransactionOptions{
 			StatementTimeout: 5 * time.Second, LockTimeout: time.Second,
 			IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256,
 		}, deploymentID, recoveryEpoch,

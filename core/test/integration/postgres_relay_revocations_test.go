@@ -17,7 +17,7 @@ import (
 // recently ended node key epoch and ended Trust Contract is listed.
 func assertPostgreSQLRelayRevocations(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool) {
 	t.Helper()
-	store, err := postgresadapter.NewRelayRevocationStore(runtimePool)
+	store, err := postgresadapter.NewRelayRevocationStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

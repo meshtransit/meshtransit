@@ -19,7 +19,7 @@ import (
 func assertPostgreSQLMTCPTimestamp(ctx context.Context, t *testing.T, pool *postgresadapter.Pool,
 	command registrationapp.Command) {
 	t.Helper()
-	store, err := postgresadapter.NewMTCPTimestampStore(pool)
+	store, err := postgresadapter.NewMTCPTimestampStore(controlPoolFor(pool))
 	if err != nil {
 		t.Fatal(err)
 	}

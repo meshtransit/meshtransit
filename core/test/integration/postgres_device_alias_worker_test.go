@@ -40,9 +40,9 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 	for _, test := range []struct{ name, query string }{
 		{"worker table read", `SET LOCAL ROLE mesh_worker; SELECT count(*) FROM mesh.device_alias_lease`},
 		{"worker readiness write", `SET LOCAL ROLE mesh_worker; DELETE FROM mesh.device_alias_client_readiness`},
-		{"runtime prepare", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v2(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
+		{"runtime prepare", legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v2(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`)},
 		{"worker inner allocator", `SET LOCAL ROLE mesh_worker; SELECT mesh_ops.reserve_device_aliases_internal_v1(NULL,NULL,NULL,NULL,NULL,NULL)`},
-		{"runtime prepare v3", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v3(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
+		{"runtime prepare v3", legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v3(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`)},
 		{"worker inner allocator v3", `SET LOCAL ROLE mesh_worker; SELECT mesh_ops.reserve_device_aliases_internal_v3(NULL,NULL,NULL,NULL,NULL,NULL)`},
 	} {
 		if _, err := tx.Exec(ctx, `SAVEPOINT alias_worker_privilege`); err != nil {

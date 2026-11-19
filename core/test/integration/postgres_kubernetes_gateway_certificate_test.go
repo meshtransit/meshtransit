@@ -511,21 +511,21 @@ func assertCertificatePrivileges(ctx context.Context, t *testing.T, admin *pgx.C
 		role, function string
 		allowed        bool
 	}{
-		{"mesh_runtime", "mesh_ops.enqueue_kubernetes_gateway_certificate_v1(BYTEA, BYTEA, UUID, BYTEA, BYTEA, BYTEA, TEXT, BYTEA, BYTEA, BYTEA)", true},
+		{controlRuntimeName(), "mesh_ops.enqueue_kubernetes_gateway_certificate_v1(BYTEA, BYTEA, UUID, BYTEA, BYTEA, BYTEA, TEXT, BYTEA, BYTEA, BYTEA)", true},
 		{"mesh_worker", "mesh_ops.enqueue_kubernetes_gateway_certificate_v1(BYTEA, BYTEA, UUID, BYTEA, BYTEA, BYTEA, TEXT, BYTEA, BYTEA, BYTEA)", false},
-		{"mesh_runtime", "mesh_ops.claim_kubernetes_gateway_certificates_v1(UUID, INTEGER, INTEGER)", false},
+		{legacyRuntimeName(), "mesh_ops.claim_kubernetes_gateway_certificates_v1(UUID, INTEGER, INTEGER)", false},
 		{"mesh_worker", "mesh_ops.claim_kubernetes_gateway_certificates_v1(UUID, INTEGER, INTEGER)", true},
-		{"mesh_runtime", "mesh_ops.issue_kubernetes_gateway_certificate_v1(UUID, UUID, UUID, UUID, UUID, UUID, BIGINT, BYTEA, BYTEA, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
-		{"mesh_runtime", "mesh_ops.mark_kubernetes_ca_restored_v1(UUID, TEXT, TEXT)", false},
+		{legacyRuntimeName(), "mesh_ops.issue_kubernetes_gateway_certificate_v1(UUID, UUID, UUID, UUID, UUID, UUID, BIGINT, BYTEA, BYTEA, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
+		{legacyRuntimeName(), "mesh_ops.mark_kubernetes_ca_restored_v1(UUID, TEXT, TEXT)", false},
 		{"mesh_observer", "mesh_ops.read_kubernetes_gateway_certificate_v1(UUID, UUID)", false},
 		// Schema 241: control reads whether anyone signs; only the worker
 		// records token claims and stamps the guard.
-		{"mesh_runtime", "mesh_ops.read_kubernetes_ca_signing_state_v1()", true},
+		{controlRuntimeName(), "mesh_ops.read_kubernetes_ca_signing_state_v1()", true},
 		{"mesh_worker", "mesh_ops.read_kubernetes_ca_signing_state_v1()", false},
 		{"mesh_observer", "mesh_ops.read_kubernetes_ca_signing_state_v1()", false},
-		{"mesh_runtime", "mesh_ops.record_kubernetes_gateway_certificate_token_v1(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
+		{legacyRuntimeName(), "mesh_ops.record_kubernetes_gateway_certificate_token_v1(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", false},
 		{"mesh_worker", "mesh_ops.record_kubernetes_gateway_certificate_token_v1(UUID, UUID, UUID, TEXT, TIMESTAMPTZ, TEXT, BIGINT)", true},
-		{"mesh_runtime", "mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT)", false},
+		{legacyRuntimeName(), "mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT)", false},
 		{"mesh_worker", "mesh_ops.stamp_kubernetes_ca_guard_v1(UUID, BIGINT)", true},
 	} {
 		var allowed bool
@@ -538,7 +538,7 @@ func assertCertificatePrivileges(ctx context.Context, t *testing.T, admin *pgx.C
 		"mesh.kubernetes_gateway_certificate", "mesh_ops.kubernetes_gateway_certificate_request",
 		"mesh_ops.kubernetes_ca_guard",
 	} {
-		for _, role := range []string{"mesh_runtime", "mesh_worker", "mesh_observer"} {
+		for _, role := range []string{legacyRuntimeName(), "mesh_worker", "mesh_observer"} {
 			var allowed bool
 			if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_table_privilege($1, $2, 'SELECT')`, role,
 				table).Scan(&allowed); err != nil || allowed {
@@ -862,7 +862,7 @@ func assertCertificateQueueStore(ctx context.Context, t *testing.T, runtimePool 
 	worker *signing.Worker, keys replicaKeys,
 ) {
 	t.Helper()
-	queue, err := postgresadapter.NewKubernetesGatewayCertificateQueueStore(runtimePool,
+	queue, err := postgresadapter.NewKubernetesGatewayCertificateQueueStore(controlPoolFor(runtimePool),
 		postgresadapter.RegistrationTransactionOptions{StatementTimeout: 5 * time.Second, LockTimeout: time.Second,
 			IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256})
 	if err != nil {

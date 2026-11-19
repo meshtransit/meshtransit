@@ -27,7 +27,7 @@ func assertPostgreSQLMapSessionSnapshot(
 	command registrationapp.Command,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{
 		StatementTimeout:   3 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates,

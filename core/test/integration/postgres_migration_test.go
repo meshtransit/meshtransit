@@ -431,7 +431,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertGroupTagUpgrade(ctx, t, adminConnection)
 	assertBrowserEnrollmentNetworkChoices(ctx, t, adminConnection)
 	assertBrowserRegistrationIntentIssue(ctx, t, adminConnection)
-	assertPostgreSQLBrowserRegistrationApproval(ctx, t, adminConnection, runtimeConnection, runtimePool)
+	assertPostgreSQLBrowserRegistrationApproval(ctx, t, adminConnection, runtimeConnection, runtimePool, controlPool)
 	assertPostgreSQLBrowserWorkspaceSelection(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLResourceAuthority(
 		ctx,

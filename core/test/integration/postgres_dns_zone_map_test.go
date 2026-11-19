@@ -37,7 +37,7 @@ func assertDNSZoneMaps(ctx context.Context, t *testing.T, admin *pgx.Conn, runti
 	resolverIdentity, consumerIdentity := fixtureDeviceIdentity(ctx, t, admin, resolver),
 		fixtureDeviceIdentity(ctx, t, admin, consumer)
 	storeWith := func(dnsZones bool) *postgresmapsession.Store {
-		store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+		store, err := postgresadapter.NewMapSessionStore(controlPoolFor(runtimePool), postgresadapter.MapSessionOptions{
 			StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 			PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 			RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,
@@ -156,7 +156,7 @@ func dnsRuleIntent(t *testing.T, scope network.Scope, source devicegroup.ID, res
 func assertDNSNameMaps(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool,
 	target, other node.ID) {
 	t.Helper()
-	store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(runtimePool), postgresadapter.MapSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 		RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,

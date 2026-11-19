@@ -160,7 +160,7 @@ func assertEnforcementHistoryRead(ctx context.Context, t *testing.T, admin *pgx.
 		}
 		return encoded
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	var mayRecord bool
@@ -185,7 +185,7 @@ FROM mesh.permission AS permission WHERE permission.permission_key = 'device.rea
     WHERE existing.role_definition_id = 856 AND existing.permission_id = permission.id AND existing.state = 'active')`); err != nil {
 		t.Fatal("seed temporary device.read", err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	type page struct {

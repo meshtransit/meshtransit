@@ -577,7 +577,7 @@ VALUES (-1)`,
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`)
+		_, err = tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`))
 		if err == nil {
 			_, err = tx.Exec(ctx, statement)
 		}
@@ -761,7 +761,7 @@ func assertDatabaseChecksTheCode(ctx context.Context, t *testing.T, admin *pgx.C
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`,
@@ -784,7 +784,7 @@ func assertDatabaseChecksTheCode(ctx context.Context, t *testing.T, admin *pgx.C
 func newIntegrationJoinCompletions(t *testing.T,
 	runtimePool *postgresadapter.Pool) *postgresadapter.KubernetesJoinCompletionStore {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesJoinCompletionStore(runtimePool,
+	store, err := postgresadapter.NewKubernetesJoinCompletionStore(controlPoolFor(runtimePool),
 		postgresadapter.RegistrationTransactionOptions{StatementTimeout: 5 * time.Second, LockTimeout: time.Second,
 			IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256})
 	if err != nil {

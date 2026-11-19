@@ -209,7 +209,7 @@ FROM mesh_ops.resolve_map_session_scope($1, $2)`, machine, nodeKey).Scan(&worksp
 func assertGatewayLogoutThroughCore(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
 	keys replicaKeys) {
 	t.Helper()
-	store, err := postgresadapter.NewDeviceLogoutStore(runtimePool, postgresadapter.AccountSessionOptions{
+	store, err := postgresadapter.NewDeviceLogoutStore(controlPoolFor(runtimePool), postgresadapter.AccountSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 	})
 	if err != nil {
@@ -252,7 +252,7 @@ FROM mesh_ops.accept_mtcp_timestamp_v2($1, $2, $3)`, machine[:], nodeKey[:], int
 func assertGatewayMapThroughCore(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
 	keys replicaKeys) {
 	t.Helper()
-	store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(runtimePool), postgresadapter.MapSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 		RelayDirectory: integrationRelayDirectory(t), RoutePeerLimit: mapsession.DefaultPeerLimit,
@@ -288,7 +288,7 @@ func assertGatewayMapThroughCore(ctx context.Context, t *testing.T, runtimePool 
 func assertGatewayMachineKeyRotation(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn,
 	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string) replicaKeys {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayKeyStore(runtimePool, postgresadapter.RegistrationTransactionOptions{
+	store, err := postgresadapter.NewKubernetesGatewayKeyStore(controlPoolFor(runtimePool), postgresadapter.RegistrationTransactionOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second,
 		AddressCandidateLimit: 64,
 	})

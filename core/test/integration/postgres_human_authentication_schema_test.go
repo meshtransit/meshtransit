@@ -864,7 +864,7 @@ func assertHumanAuthenticationPrivilegeContract(
 
 	var runtimeHasTableAccess, workerHasTableAccess, observerHasTableAccess bool
 	var runtimeCanResolve, runtimeCanRevoke, workerCanResolve, workerCanRevoke bool
-	if err := adminConnection.QueryRow(ctx, `SELECT
+	if err := adminConnection.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     COALESCE(pg_catalog.bool_or(
         pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
         OR pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT')
@@ -911,7 +911,7 @@ WHERE namespace.nspname = 'mesh'
       'account_session',
       'identity_link_request',
       'oidc_logout_replay'
-  )`).Scan(
+  )`)).Scan(
 		&runtimeHasTableAccess,
 		&workerHasTableAccess,
 		&observerHasTableAccess,

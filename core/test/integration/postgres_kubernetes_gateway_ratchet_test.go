@@ -24,7 +24,7 @@ func assertGatewayTokenRatchet(ctx context.Context, t *testing.T, admin, runtime
 	runtimePool *postgresadapter.Pool, keys replicaKeys, deviceID string,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewMTCPTimestampStore(runtimePool)
+	store, err := postgresadapter.NewMTCPTimestampStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func assertGatewaySessionTokenEvents(ctx context.Context, t *testing.T, admin *p
 	runtimePool *postgresadapter.Pool, machine [32]byte, deviceID string,
 ) {
 	t.Helper()
-	events, err := postgresadapter.NewKubernetesGatewayKeyEventStore(runtimePool)
+	events, err := postgresadapter.NewKubernetesGatewayKeyEventStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

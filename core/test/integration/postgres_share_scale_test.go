@@ -832,7 +832,7 @@ func measureShareScaleReaders(ctx context.Context, t *testing.T, admin *pgx.Conn
 			t.Fatalf("enable auto_explain: %v", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	machine, key := device.machine.Fingerprint(), device.key.Bytes()
@@ -887,7 +887,7 @@ func measureShareScaleMap(ctx context.Context, t *testing.T, pool *postgresadapt
 	t.Helper()
 	// Core's default bounds: 3s per statement, 10s per share reader and per
 	// map request. A map that needs more fails here as it would in service.
-	store, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{
 		StatementTimeout: 3 * time.Second, ShareStatementTimeout: 10 * time.Second, IdleTimeout: 5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 		RelayDirectory: integrationRelayDirectory(t), EnableDeviceAliases: true,

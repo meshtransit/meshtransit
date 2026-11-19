@@ -17,7 +17,7 @@ import (
 
 func assertPostgreSQLDeviceAliasClientVersion(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, pool *postgresadapter.Pool, command registrationapp.Command) {
 	t.Helper()
-	store, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second,
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules, RelayDirectory: integrationRelayDirectory(t), EnableDeviceAliases: true})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func assertPostgreSQLDeviceAliasClientVersion(ctx context.Context, t *testing.T,
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"mesh_runtime", "mesh_worker", "mesh_observer", "mesh_share_writer", "mesh_direct_map_reader"} {
+	for _, role := range []string{legacyRuntimeName(), "mesh_worker", "mesh_observer", "mesh_share_writer", "mesh_direct_map_reader"} {
 		var readable, writable bool
 		if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_table_privilege($1::TEXT,'mesh.device_alias_client_version','SELECT'),
    pg_catalog.has_table_privilege($1::TEXT,'mesh.device_alias_client_version','INSERT,UPDATE,DELETE')`, role).Scan(&readable, &writable); err != nil {

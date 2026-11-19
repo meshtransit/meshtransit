@@ -417,9 +417,9 @@ func assertExpiryEntryPointsAreWorkerOnly(
 		name, role, query, code string
 		args                    []any
 	}{
-		{name: "runtime list", role: "mesh_runtime", code: "42501", args: []any{scope},
+		{name: "runtime list", role: legacyRuntimeName(), code: "42501", args: []any{scope},
 			query: `SELECT mesh_ops.list_expired_trust_contracts_v1($1::UUID, NULL, NULL, 1)`},
-		{name: "runtime prepare", role: "mesh_runtime", code: "42501", args: []any{scope, target, change},
+		{name: "runtime prepare", role: legacyRuntimeName(), code: "42501", args: []any{scope, target, change},
 			query: `SELECT mesh_ops.prepare_trust_contract_expiry_v1($1::UUID, $2::UUID, $3::UUID)`},
 		{name: "worker proof helper", role: "mesh_worker", code: "42501", args: []any{change},
 			query: `SELECT mesh_ops.trust_contract_expiry_proof_internal_v1(1, $1::UUID)`},

@@ -192,36 +192,32 @@ FOR VALUES FROM ('2020-01-01 00:00:00+00') TO ('2020-02-01 00:00:00+00')`); err 
 		t.Fatalf("maintain = %s, %v", maintained, err)
 	}
 
-	// Roles: the runtime records; only the worker maintains and erases.
-	for role, functions := range map[string]map[string]bool{
-		"mesh_runtime": {
-			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    true,
-			"mesh_ops.record_kubernetes_operation_outcomes_v1(jsonb, jsonb)":     true,
-			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    true,
-			"mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)":     true,
-			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      false,
-			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
-			"mesh_ops.ensure_kubernetes_operation_partitions_v1(integer)":        false,
-		},
-		"mesh_worker": {
-			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
-			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    false,
-			"mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)":     false,
-			"mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)":      true,
-			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": true,
-		},
-		"mesh_observer": {
-			"mesh_ops.record_kubernetes_operations_v1(jsonb)":                    false,
-			"mesh_ops.record_kubernetes_operations_v2(jsonb)":                    false,
-			"mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)": false,
-		},
+	// Roles: control records (v2; v1 is retired, held only by what
+	// mesh_runtime held); only the worker maintains and erases.
+	for _, check := range []struct {
+		role, function string
+		want           bool
+	}{
+		{legacyRuntimeName(), "mesh_ops.record_kubernetes_operations_v1(jsonb)", true},
+		{legacyRuntimeName(), "mesh_ops.record_kubernetes_operation_outcomes_v1(jsonb, jsonb)", true},
+		{controlRuntimeName(), "mesh_ops.record_kubernetes_operations_v2(jsonb)", true},
+		{controlRuntimeName(), "mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)", true},
+		{legacyRuntimeName(), "mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)", false},
+		{legacyRuntimeName(), "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", false},
+		{legacyRuntimeName(), "mesh_ops.ensure_kubernetes_operation_partitions_v1(integer)", false},
+		{"mesh_worker", "mesh_ops.record_kubernetes_operations_v1(jsonb)", false},
+		{"mesh_worker", "mesh_ops.record_kubernetes_operations_v2(jsonb)", false},
+		{"mesh_worker", "mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)", false},
+		{"mesh_worker", "mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)", true},
+		{"mesh_worker", "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", true},
+		{"mesh_observer", "mesh_ops.record_kubernetes_operations_v1(jsonb)", false},
+		{"mesh_observer", "mesh_ops.record_kubernetes_operations_v2(jsonb)", false},
+		{"mesh_observer", "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", false},
 	} {
-		for function, want := range functions {
-			var granted bool
-			if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege($1, $2, 'EXECUTE')`, role,
-				function).Scan(&granted); err != nil || granted != want {
-				t.Fatalf("%s on %s = %v (%v), want %v", role, function, granted, err, want)
-			}
+		var granted bool
+		if err := admin.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege($1, $2, 'EXECUTE')`, check.role,
+			check.function).Scan(&granted); err != nil || granted != check.want {
+			t.Fatalf("%s on %s = %v (%v), want %v", check.role, check.function, granted, err, check.want)
 		}
 	}
 	for _, table := range []string{"kubernetes_operation", "kubernetes_operation_outcome", "kubernetes_operation_denial"} {
@@ -267,7 +263,7 @@ func assertKubernetesOperationStore(ctx context.Context, t *testing.T, runtimePo
 	keys replicaKeys, peer string,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesOperationStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesOperationStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +317,7 @@ func assertKubernetesOperationProfiles(ctx context.Context, t *testing.T, admin 
 	runtimePool *postgresadapter.Pool, keys replicaKeys, peer string,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesOperationStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesOperationStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

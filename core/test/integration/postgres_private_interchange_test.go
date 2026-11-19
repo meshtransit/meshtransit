@@ -57,7 +57,7 @@ func assertPostgreSQLPrivateInterchange(ctx context.Context, t *testing.T, admin
 	if err != nil {
 		t.Fatal(err)
 	}
-	directoryStore, err := postgresadapter.NewPrivateInterchangeDirectoryStore(runtimePool)
+	directoryStore, err := postgresadapter.NewPrivateInterchangeDirectoryStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

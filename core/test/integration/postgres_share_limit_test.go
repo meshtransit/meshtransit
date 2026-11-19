@@ -18,22 +18,22 @@ func assertShareLimitGuardPrivileges(ctx context.Context, t *testing.T, admin *p
 		role, function string
 		want           bool
 	}{
-		{"mesh_runtime", "mesh_ops.decide_resource_share_offer_v5(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)", true},
+		{legacyRuntimeName(), "mesh_ops.decide_resource_share_offer_v5(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)", true},
 		{"mesh_worker", "mesh_ops.decide_resource_share_offer_v5(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)", false},
-		{"mesh_runtime", "mesh_ops.share_limit_reached_v1(bigint,bigint,bigint,bigint,bigint)", false},
+		{legacyRuntimeName(), "mesh_ops.share_limit_reached_v1(bigint,bigint,bigint,bigint,bigint)", false},
 		{"mesh_worker", "mesh_ops.share_limit_reached_v1(bigint,bigint,bigint,bigint,bigint)", false},
 		{"mesh_share_writer", "mesh_ops.share_limit_reached_v1(bigint,bigint,bigint,bigint,bigint)", true},
 		{"mesh_worker", "mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)", true},
-		{"mesh_runtime", "mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)", false},
-		{"mesh_runtime", "mesh_ops.load_device_alias_map_edges_v5(bytea,bytea,integer)", true},
-		{"mesh_runtime", "mesh_ops.load_device_sharing_dependencies_v3(bytea,bytea,integer)", true},
-		{"mesh_runtime", "mesh_ops.load_device_alias_map_edges_v6(bytea,bytea,integer)", true},
-		{"mesh_runtime", "mesh_ops.load_device_sharing_dependencies_v4(bytea,bytea,integer)", true},
+		{legacyRuntimeName(), "mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)", false},
+		{legacyRuntimeName(), "mesh_ops.load_device_alias_map_edges_v5(bytea,bytea,integer)", true},
+		{legacyRuntimeName(), "mesh_ops.load_device_sharing_dependencies_v3(bytea,bytea,integer)", true},
+		{legacyRuntimeName(), "mesh_ops.load_device_alias_map_edges_v6(bytea,bytea,integer)", true},
+		{legacyRuntimeName(), "mesh_ops.load_device_sharing_dependencies_v4(bytea,bytea,integer)", true},
 		{"mesh_worker", "mesh_ops.load_device_alias_map_edges_v6(bytea,bytea,integer)", false},
 		{"mesh_share_writer", "mesh_ops.load_device_sharing_dependencies_v4(bytea,bytea,integer)", false},
 		{"mesh_worker", "mesh_ops.load_device_alias_map_edges_v5(bytea,bytea,integer)", false},
 		{"mesh_device_alias_writer", "mesh_ops.load_device_alias_map_endpoint_edges_v1(bytea,bytea,uuid)", true},
-		{"mesh_runtime", "mesh_ops.load_device_alias_map_endpoint_edges_v1(bytea,bytea,uuid)", false},
+		{legacyRuntimeName(), "mesh_ops.load_device_alias_map_endpoint_edges_v1(bytea,bytea,uuid)", false},
 		{"mesh_worker", "mesh_ops.load_device_alias_map_endpoint_edges_v1(bytea,bytea,uuid)", false},
 	} {
 		var allowed bool
@@ -68,10 +68,10 @@ func assertPolicyImportedResourceScalePrivileges(ctx context.Context, t *testing
 		role, function string
 		want           bool
 	}{
-		{"mesh_runtime", publish, true}, {"mesh_worker", publish, false},
-		{"mesh_runtime", resolve, true}, {"mesh_worker", resolve, false},
-		{"mesh_runtime", lock, false}, {"mesh_migrator", lock, true},
-		{"mesh_runtime", attach, false}, {"mesh_share_writer", attach, false},
+		{legacyRuntimeName(), publish, true}, {"mesh_worker", publish, false},
+		{legacyRuntimeName(), resolve, true}, {"mesh_worker", resolve, false},
+		{legacyRuntimeName(), lock, false}, {"mesh_migrator", lock, true},
+		{legacyRuntimeName(), attach, false}, {"mesh_share_writer", attach, false},
 	} {
 		var allowed bool
 		if err := admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, check.role, check.function).Scan(&allowed); err != nil {

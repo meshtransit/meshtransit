@@ -170,7 +170,7 @@ func newIntegrationRegistrationService(
 ) *registrationapp.Service {
 	t.Helper()
 	transactions, err := postgresadapter.NewRegistrationTransactions(
-		runtimePool,
+		controlPoolFor(runtimePool),
 		postgresadapter.RegistrationTransactionOptions{
 			StatementTimeout:      5 * time.Second,
 			LockTimeout:           2 * time.Second,
@@ -181,7 +181,7 @@ func newIntegrationRegistrationService(
 	if err != nil {
 		t.Fatalf("postgres.NewRegistrationTransactions() for Service error = %v", err)
 	}
-	replayStore, err := postgresadapter.NewRegistrationReplayStore(runtimePool)
+	replayStore, err := postgresadapter.NewRegistrationReplayStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatalf("postgres.NewRegistrationReplayStore() for Service error = %v", err)
 	}

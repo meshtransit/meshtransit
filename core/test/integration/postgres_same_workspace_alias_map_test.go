@@ -93,7 +93,7 @@ func assertSameWorkspaceAliasAllocation(ctx context.Context, t *testing.T, admin
 		name string
 		want bool
 	}{
-		{"mesh_runtime", false}, {"mesh_worker", false}, {"mesh_observer", false},
+		{legacyRuntimeName(), false}, {"mesh_worker", false}, {"mesh_observer", false},
 		{"mesh_share_writer", true}, {"mesh_device_alias_writer", true},
 	} {
 		var allowed bool
@@ -217,7 +217,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 			t.Fatal(err)
 		}
 		setIntegrationScope(ctx, t, tx, 103, perspective.network)
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		assertReachableAliasMapMatches(ctx, t, tx, machine, key)
@@ -313,7 +313,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		t.Fatal(err)
 	}
 	setIntegrationScope(ctx, t, tx, 103, 204)
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	assertSharingBinds(ctx, t, tx, "consumer without a rule", consumerDevice, false)
@@ -343,7 +343,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		network int64
 	}{{name: "consumer after revoke", network: 204}, {name: "provider after revoke", network: 203}} {
 		setIntegrationScope(ctx, t, tx, 103, scope.network)
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		assertNetworkSharing(ctx, t, tx, scope.name, false)

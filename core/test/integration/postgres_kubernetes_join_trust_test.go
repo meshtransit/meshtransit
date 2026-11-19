@@ -195,7 +195,7 @@ func assertJoinTrust(ctx context.Context, t *testing.T, admin *pgx.Conn, service
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = tx.Exec(ctx, `SELECT mesh_ops.approve_kubernetes_replica_request_v1(
@@ -280,7 +280,7 @@ func assertLegacyCodeFailureRefused(ctx context.Context, t *testing.T, admin *pg
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`,

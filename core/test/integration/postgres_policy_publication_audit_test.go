@@ -128,7 +128,7 @@ func assertPolicyReleaseFingerprintGuards(
 		assertPostgreSQLCode(t, inTransaction(name, 103, 203, record(frame)), "23514")
 	}
 	assertPostgreSQLCode(t, inTransaction("runtime read", 103, 203, func(transaction pgx.Tx) error {
-		if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := transaction.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			return err
 		}
 		_, err := transaction.Exec(ctx, `SELECT count(*) FROM mesh.policy_release_rule_fingerprint`)

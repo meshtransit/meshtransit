@@ -60,7 +60,7 @@ WHERE inheritance.inhparent = 'mesh_audit.audit_event'::REGCLASS
 		t.Fatal(err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	var ignored int

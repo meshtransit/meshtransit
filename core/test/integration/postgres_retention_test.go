@@ -115,7 +115,7 @@ WHERE event.state = 'pending' ORDER BY event.id LIMIT 1`).Scan(&answered); err !
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := runtime.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := runtime.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		_, err = runtime.Exec(ctx, call)

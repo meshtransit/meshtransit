@@ -64,7 +64,7 @@ JOIN mesh.permission AS permission ON permission.permission_key=addition.permiss
 	if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	read := func(networkPublicID string, after any) *string {
@@ -146,7 +146,7 @@ WHERE id IN (12001,12003)`); err != nil {
 	if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	if read(networkID.String(), nil) != nil {
@@ -161,7 +161,7 @@ WHERE id IN (12001,12003)`); err != nil {
 		t.Fatal(err)
 	}
 	var runtimeExecute, workerExecute, publicExecute, forcedRLS bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE'),
     pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE'),
     EXISTS (SELECT 1 FROM pg_catalog.aclexplode(procedure.proacl) AS privilege
@@ -169,7 +169,7 @@ WHERE id IN (12001,12003)`); err != nil {
     (SELECT relrowsecurity AND relforcerowsecurity FROM pg_catalog.pg_class WHERE oid='mesh.device'::regclass)
 FROM pg_catalog.pg_proc AS procedure
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
-WHERE namespace.nspname='mesh_ops' AND procedure.proname='read_console_devices_v1'`).Scan(
+WHERE namespace.nspname='mesh_ops' AND procedure.proname='read_console_devices_v1'`)).Scan(
 		&runtimeExecute, &workerExecute, &publicExecute, &forcedRLS); err != nil || !runtimeExecute ||
 		workerExecute || publicExecute || !forcedRLS {
 		t.Fatal("inventory privilege/RLS boundary changed", err)

@@ -49,7 +49,7 @@ func assertDirectMapSQLProjection(ctx context.Context, t *testing.T, tx pgx.Tx, 
 		{provider, consumer.id}, {consumer, provider.id},
 	} {
 		setIntegrationScope(ctx, t, tx, 103, perspective.self.network)
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.Exec(ctx, `SELECT set_config('mesh.direct_map_remote_network_id', '999999', TRUE)`); err != nil {
@@ -99,7 +99,7 @@ func assertDirectMapSQLProjection(ctx context.Context, t *testing.T, tx pgx.Tx, 
 				t.Fatal(err)
 			}
 			setIntegrationScope(ctx, t, tx, 103, invalid.network)
-			if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 				t.Fatal(err)
 			}
 			var count int

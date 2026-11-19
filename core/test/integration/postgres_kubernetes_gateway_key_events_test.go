@@ -44,7 +44,7 @@ func assertGatewayKeyEvents(ctx context.Context, t *testing.T, admin *pgx.Conn, 
 	service *kubecluster.Service, owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID,
 	deviceID string) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ WHERE device.public_id = $1::UUID`, deviceID); err != nil {
 func assertRemovedGatewayKeyEvent(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool *postgresadapter.Pool, deviceID string) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

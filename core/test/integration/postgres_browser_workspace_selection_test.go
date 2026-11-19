@@ -211,7 +211,7 @@ WHERE workspace_id=102 AND network_id=202`).Scan(&revision); err != nil {
 			t.Fatal(err)
 		}
 	}
-	completion, err := postgresadapter.NewBrowserCompletionStore(runtime, postgresadapter.RegistrationTransactionOptions{
+	completion, err := postgresadapter.NewBrowserCompletionStore(controlPoolFor(runtime), postgresadapter.RegistrationTransactionOptions{
 		StatementTimeout: 5 * time.Second, LockTimeout: time.Second, IdleTimeout: 10 * time.Second, AddressCandidateLimit: 256,
 	}, deploymentID, epoch)
 	if err != nil {

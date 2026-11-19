@@ -108,7 +108,7 @@ WHERE event_class = 'network.revision.advanced' AND aggregate_kind = 'network_dn
 	}
 
 	// Maps leave the member Device without DNS.
-	store, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(runtimePool), postgresadapter.MapSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 		RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,

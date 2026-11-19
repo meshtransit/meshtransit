@@ -43,7 +43,7 @@ func assertPostgreSQLRegistrationIntake(
 	t.Helper()
 	fixture := seedRegistrationIntakeAuthority(ctx, t, adminConnection)
 	transactions, err := postgresadapter.NewRegistrationIntakeTransactions(
-		runtimePool,
+		controlPoolFor(runtimePool),
 		registrationintake.Options{
 			StatementTimeout: 5 * time.Second,
 			LockTimeout:      time.Second,

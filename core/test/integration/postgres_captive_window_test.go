@@ -24,7 +24,7 @@ import (
 func assertPostgreSQLCaptiveWindows(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool *postgresadapter.Pool) {
 	t.Helper()
-	store, err := postgresadapter.NewCaptiveWindowStore(runtimePool)
+	store, err := postgresadapter.NewCaptiveWindowStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

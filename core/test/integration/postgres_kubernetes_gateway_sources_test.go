@@ -29,7 +29,7 @@ type kubernetesSourceRow struct {
 func readKubernetesSources(ctx context.Context, t *testing.T, tx pgx.Tx, scope network.Scope, scoped bool) (
 	map[int64]kubernetesSourceRow, int, error) {
 	t.Helper()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if scoped {
@@ -167,7 +167,7 @@ ORDER BY device.id LIMIT 1`, scope.NetworkID().String()).Scan(&device); err != n
 		device).Scan(&after); err != nil || after.IsZero() || before != nil && !after.After(*before) {
 		t.Fatalf("owner change = %v (before %v), %v", after, before, err)
 	}
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `SAVEPOINT direct`); err != nil {

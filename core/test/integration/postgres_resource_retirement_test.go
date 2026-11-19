@@ -242,9 +242,9 @@ func assertResourceRetirementWorkerOnly(ctx context.Context, t *testing.T, admin
 		name, role, query, code string
 		args                    []any
 	}{
-		{name: "runtime list", role: "mesh_runtime", code: "42501", args: []any{scope},
+		{name: "runtime list", role: legacyRuntimeName(), code: "42501", args: []any{scope},
 			query: `SELECT mesh_ops.list_resource_device_removals_v1($1::UUID, NULL, NULL, 1)`},
-		{name: "runtime prepare", role: "mesh_runtime", code: "42501", args: []any{scope, target, change},
+		{name: "runtime prepare", role: legacyRuntimeName(), code: "42501", args: []any{scope, target, change},
 			query: `SELECT mesh_ops.prepare_resource_device_removal_v1($1::UUID, $2::UUID, $3::UUID)`},
 		{name: "worker in-use check", role: "mesh_worker", code: "42501",
 			query: `SELECT mesh_ops.resource_retirement_blocked_internal_v1(1)`},

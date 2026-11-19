@@ -22,7 +22,7 @@ func assertCompiledPacketPolicyPrivilegeContract(
 	var runtimeGroupRead, runtimeGroupWrite, workerGroupAccess bool
 	var runtimeAttachGroup, workerAttachGroup bool
 	var runtimeExplain, workerExplain bool
-	if err := connection.QueryRow(ctx, `SELECT
+	if err := connection.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.policy_release', 'SELECT'),
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.compiled_policy_rule', 'SELECT'),
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.policy_release', 'INSERT')
@@ -103,7 +103,7 @@ func assertCompiledPacketPolicyPrivilegeContract(
         'mesh_worker',
         'mesh_ops.explain_active_policy_v2(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
         'EXECUTE'
-    )`).Scan(
+    )`)).Scan(
 		&runtimeReleaseRead,
 		&runtimeRuleRead,
 		&runtimeReleaseWrite,

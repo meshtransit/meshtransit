@@ -28,7 +28,7 @@ func assertGatewayRatchetSuspension(ctx context.Context, t *testing.T, admin, ru
 	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewMTCPTimestampStore(runtimePool)
+	store, err := postgresadapter.NewMTCPTimestampStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

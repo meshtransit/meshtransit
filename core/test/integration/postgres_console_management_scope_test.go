@@ -167,7 +167,7 @@ JOIN mesh.permission AS permission
 
 	var functionCount int
 	var runtimeExecute, foreignExecute, publicExecute, securityDefiner, volatile bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.count(*),
     pg_catalog.bool_and(pg_catalog.has_function_privilege(
         'mesh_runtime', procedure.oid, 'EXECUTE'
@@ -192,7 +192,7 @@ JOIN mesh.permission AS permission
 FROM pg_catalog.pg_proc AS procedure
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
 WHERE namespace.nspname = 'mesh_ops'
-  AND procedure.proname = 'read_console_management_scopes_v1'`).Scan(
+  AND procedure.proname = 'read_console_management_scopes_v1'`)).Scan(
 		&functionCount,
 		&runtimeExecute,
 		&foreignExecute,

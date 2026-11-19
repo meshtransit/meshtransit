@@ -52,7 +52,7 @@ SELECT 13301, '01890f00-0000-7000-8000-000000013301'::UUID, 1, 103, 856, permiss
 FROM mesh.permission AS permission WHERE permission.permission_key='device.read'`); err != nil {
 		t.Fatal("seed temporary device.read", err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	read := func(networkPublicID string) *string {
@@ -109,7 +109,7 @@ WHERE workspace_id=103 AND network_id=(SELECT id FROM mesh.network WHERE public_
 updated_at=pg_catalog.now() WHERE id=13301`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	if read(networkID.String()) != nil {
@@ -119,14 +119,14 @@ updated_at=pg_catalog.now() WHERE id=13301`); err != nil {
 		t.Fatal(err)
 	}
 	var runtimeExecute, workerExecute, publicExecute bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE'),
     pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE'),
     EXISTS (SELECT 1 FROM pg_catalog.aclexplode(procedure.proacl) AS privilege
             WHERE privilege.grantee=0 AND privilege.privilege_type='EXECUTE')
 FROM pg_catalog.pg_proc AS procedure
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
-WHERE namespace.nspname='mesh_ops' AND procedure.proname='read_device_distribution_v1'`).Scan(
+WHERE namespace.nspname='mesh_ops' AND procedure.proname='read_device_distribution_v1'`)).Scan(
 		&runtimeExecute, &workerExecute, &publicExecute); err != nil || !runtimeExecute || workerExecute || publicExecute {
 		t.Fatal("distribution privilege boundary changed", err)
 	}

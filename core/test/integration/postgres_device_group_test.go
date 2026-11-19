@@ -260,7 +260,7 @@ func resolvedGroupEdges(ctx context.Context, t *testing.T, admin *pgx.Conn) map[
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 	setIntegrationScope(ctx, t, transaction, 103, 203)
-	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := transaction.Query(ctx, `SELECT source.public_id::TEXT || '>' || destination.public_id::TEXT

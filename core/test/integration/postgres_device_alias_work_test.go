@@ -155,7 +155,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 		code               string
 	}{
 		{role: "mesh_worker", installation: "01890fb0-0000-7000-8000-000000004198", limit: 1, code: "42501"},
-		{role: "mesh_runtime", installation: deploymentID, limit: 1, code: "42501"},
+		{role: legacyRuntimeName(), installation: deploymentID, limit: 1, code: "42501"},
 		{role: "mesh_worker", installation: deploymentID, limit: 129, code: "22023"},
 	} {
 		if _, err := tx.Exec(ctx, `RESET ROLE;SAVEPOINT alias_work_denied`); err != nil {
@@ -166,7 +166,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 				t.Fatal(err)
 			}
 		} else {
-			if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 				t.Fatal(err)
 			}
 		}

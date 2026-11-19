@@ -28,7 +28,7 @@ func assertGatewayGroupReports(ctx context.Context, t *testing.T, admin, runtime
 	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayGroupReportStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesGatewayGroupReportStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

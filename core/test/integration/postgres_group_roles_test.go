@@ -55,6 +55,88 @@ func openIntegrationRoleSplit(ctx context.Context, t *testing.T, admin *pgx.Conn
 	if _, err := admin.Exec(ctx, roleSplitNarrowingSQL); err != nil {
 		t.Fatalf("narrow the database as S2.3 will: %v", err)
 	}
+	assertRoleSplitNarrowed(ctx, t, admin)
+	legacyRuntimeRole = "mesh_it_legacy"
+	t.Cleanup(func() { legacyRuntimeRole = "" })
+	grantIntegrationRuntimeGroups(ctx, t, admin, user)
+	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role: postgresadapter.PoolRoleRuntime, Address: address, Database: database, User: user,
+		PasswordFile: passwordFile, CAFile: caFile, MaxConnections: 2, ConnectTimeout: timeout,
+	})
+	if err != nil {
+		t.Fatalf("open the control pool as %s: %v", user, err)
+	}
+	t.Cleanup(func() {
+		if err := pool.Close(); err != nil {
+			t.Errorf("control pool Close() error = %v", err)
+		}
+	})
+	if err := pool.Check(ctx); err != nil {
+		t.Fatalf("control pool Check() error = %v", err)
+	}
+	integrationControlPool, integrationRuntimePool = pool, runtimePool
+	t.Cleanup(func() { integrationControlPool, integrationRuntimePool = nil, nil })
+	return pool
+}
+
+// legacyRuntimeSQL points a privilege contract's 'mesh_runtime' (and a
+// schema test's SET ROLE mesh_runtime) at the role holding what mesh_runtime
+// held directly before S2.3: mesh_runtime itself, or mesh_it_legacy once the
+// split run narrowed the database (S2.1). It is for contracts on retired
+// versions no serving role calls and for schema tests of them; a contract on
+// an object the api calls keeps mesh_runtime, one on control's object uses
+// controlRuntimeName. Some wrapped contracts run before the narrowing, where
+// it changes nothing. S2.3 rewrites the retired ones as "no serving role".
+func legacyRuntimeSQL(query string) string {
+	if legacyRuntimeRole == "" {
+		return query
+	}
+	return strings.NewReplacer("'mesh_runtime'", "'"+legacyRuntimeRole+"'",
+		"ROLE mesh_runtime", "ROLE "+legacyRuntimeRole).Replace(query)
+}
+
+// integrationControlPool is control's pool once the split run narrowed the
+// database (S2.1); controlPoolFor hands it to the stores control builds in
+// cmd/meshcore, and the pool given otherwise.
+var integrationControlPool *postgresadapter.Pool
+
+func controlPoolFor(pool *postgresadapter.Pool) *postgresadapter.Pool {
+	if integrationControlPool != nil && pool == integrationRuntimePool {
+		return integrationControlPool
+	}
+	return pool
+}
+
+// integrationRuntimePool is the api's pool the control pool stands in for.
+var integrationRuntimePool *postgresadapter.Pool
+
+// controlRuntimeName is the role a privilege contract on an object control
+// calls checks: mesh_control once the split run narrowed the database,
+// mesh_runtime (which control logged in as through S2.2) otherwise.
+func controlRuntimeName() string {
+	if legacyRuntimeRole == "" {
+		return "mesh_runtime"
+	}
+	return "mesh_control"
+}
+
+// legacyRuntimeName is the role name a privilege contract written for
+// mesh_runtime checks (see legacyRuntimeSQL).
+func legacyRuntimeName() string {
+	if legacyRuntimeRole == "" {
+		return "mesh_runtime"
+	}
+	return legacyRuntimeRole
+}
+
+// legacyRuntimeRole is set once the split run narrowed the database.
+var legacyRuntimeRole string
+
+// assertRoleSplitNarrowed checks the state the split run (S2.1) works in:
+// mesh_runtime holds nothing directly, no policy names it, and mesh_control
+// is not its member.
+func assertRoleSplitNarrowed(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
 	var directGrants, policies int
 	var controlInRuntime bool
 	if err := admin.QueryRow(ctx, `SELECT
@@ -74,23 +156,6 @@ func openIntegrationRoleSplit(ctx context.Context, t *testing.T, admin *pgx.Conn
 		t.Fatalf("narrowed state: mesh_runtime direct grants %d, policies %d, mesh_control in mesh_runtime %v",
 			directGrants, policies, controlInRuntime)
 	}
-	grantIntegrationRuntimeGroups(ctx, t, admin, user)
-	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
-		Role: postgresadapter.PoolRoleRuntime, Address: address, Database: database, User: user,
-		PasswordFile: passwordFile, CAFile: caFile, MaxConnections: 2, ConnectTimeout: timeout,
-	})
-	if err != nil {
-		t.Fatalf("open the control pool as %s: %v", user, err)
-	}
-	t.Cleanup(func() {
-		if err := pool.Close(); err != nil {
-			t.Errorf("control pool Close() error = %v", err)
-		}
-	})
-	if err := pool.Check(ctx); err != nil {
-		t.Fatalf("control pool Check() error = %v", err)
-	}
-	return pool
 }
 
 // grantIntegrationRuntimeGroups does what the operator command keeps for a
@@ -124,14 +189,21 @@ func applyGroupFunctionGrantsSoFar(ctx context.Context, t *testing.T, admin *pgx
 		if err := admin.QueryRow(ctx, `SELECT EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc AS routine CROSS JOIN LATERAL pg_catalog.aclexplode(routine.proacl) AS acl
     WHERE routine.oid = pg_catalog.to_regprocedure($1) AND acl.privilege_type = 'EXECUTE'
-      AND acl.grantee = (SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = 'mesh_runtime'))`,
-			match[1]).Scan(&held); err != nil {
+      AND acl.grantee IN (SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname IN ('mesh_runtime', $2)))`,
+			match[1], legacyRuntimeName()).Scan(&held); err != nil {
 			t.Fatalf("read mesh_runtime's grant on %s: %v", match[1], err)
 		}
 		if held {
 			if _, err := admin.Exec(ctx, match[0]); err != nil {
 				t.Fatalf("%s: %v", match[0], err)
 			}
+		}
+	}
+	// A step applied after the split run narrowed the database granted to
+	// mesh_runtime again: narrow once more (S2.1).
+	if legacyRuntimeRole != "" {
+		if _, err := admin.Exec(ctx, roleSplitNarrowingSQL); err != nil {
+			t.Fatalf("narrow again after an operator step: %v", err)
 		}
 	}
 }
@@ -203,13 +275,14 @@ const groupRoleUsageSQL = `SELECT
             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
             WHERE namespace.nspname || '.' || routine.proname = wanted.name
               AND pg_catalog.has_function_privilege($1::TEXT, routine.oid, 'EXECUTE'))
-          -- Only what mesh_runtime can use today: the manifest names a few
-          -- objects the code reaches through a definer, never directly.
-          AND EXISTS (
+          -- Only what mesh_runtime can use today (or a function created for
+          -- the groups only, $5): the manifest names a few objects the code
+          -- reaches through a definer, never directly.
+          AND (wanted.name = ANY($5::TEXT[]) OR EXISTS (
             SELECT 1 FROM pg_catalog.pg_proc AS routine
             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
             WHERE namespace.nspname || '.' || routine.proname = wanted.name
-              AND pg_catalog.has_function_privilege('mesh_runtime', routine.oid, 'EXECUTE'))
+              AND pg_catalog.has_function_privilege('mesh_runtime', routine.oid, 'EXECUTE')))
         ORDER BY 1),
     ARRAY(
         SELECT wanted.relation || ' ' || wanted.privilege
@@ -257,8 +330,13 @@ WHERE relation.relrowsecurity AND relation.relkind IN ('r', 'p')
 // RLS policy that lets mesh_runtime reach rows lets the group reach them.
 func assertGroupRolesWithinRuntime(ctx context.Context, t *testing.T, admin *pgx.Conn) {
 	t.Helper()
+	// Split run: no operator step applied since gave mesh_runtime anything
+	// back (each must be followed by applyGroupFunctionGrantsSoFar).
+	if legacyRuntimeRole != "" {
+		assertRoleSplitNarrowed(ctx, t, admin)
+	}
 	var excess []string
-	if err := admin.QueryRow(ctx, groupRoleExcessSQL, groupOnlyFunctions(t)).Scan(&excess); err != nil {
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(groupRoleExcessSQL), groupOnlyFunctions(t)).Scan(&excess); err != nil {
 		t.Fatalf("read group role privileges: %v", err)
 	}
 	for _, entry := range excess {
@@ -285,7 +363,8 @@ func assertGroupRolesWithinRuntime(ctx context.Context, t *testing.T, admin *pgx
 			}
 		}
 		var missingFunctions, missingTables []string
-		if err := admin.QueryRow(ctx, groupRoleUsageSQL, group, usage.Functions, relations, privileges).Scan(
+		if err := admin.QueryRow(ctx, legacyRuntimeSQL(groupRoleUsageSQL), group, usage.Functions, relations, privileges,
+			groupOnlyFunctions(t)).Scan(
 			&missingFunctions, &missingTables); err != nil {
 			t.Fatalf("read %s usage: %v", group, err)
 		}
@@ -298,7 +377,7 @@ func assertGroupRolesWithinRuntime(ctx context.Context, t *testing.T, admin *pgx
 	}
 
 	var gaps []string
-	if err := admin.QueryRow(ctx, groupRolePolicyGapSQL).Scan(&gaps); err != nil {
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(groupRolePolicyGapSQL)).Scan(&gaps); err != nil {
 		t.Fatalf("read group role policies: %v", err)
 	}
 	for _, gap := range gaps {

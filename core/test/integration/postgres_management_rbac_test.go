@@ -712,7 +712,7 @@ func assertNetworkManagementRBACPrivileges(
 ) {
 	t.Helper()
 	var runtimeCanResolve, workerCanResolve, runtimeHasTableAccess bool
-	if err := adminConnection.QueryRow(ctx, `SELECT
+	if err := adminConnection.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.has_function_privilege(
         'mesh_runtime',
         'mesh_ops.resolve_network_permission_v1(uuid,uuid,uuid,uuid,bigint,bigint,bigint,bigint,bigint,uuid,uuid,text,timestamptz)',
@@ -734,7 +734,7 @@ JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespa
 WHERE namespace.nspname = 'mesh'
   AND relation.relname IN (
       'workspace_membership', 'role_definition', 'role_permission', 'role_binding'
-  )`).Scan(&runtimeCanResolve, &workerCanResolve, &runtimeHasTableAccess); err != nil {
+  )`)).Scan(&runtimeCanResolve, &workerCanResolve, &runtimeHasTableAccess); err != nil {
 		t.Fatalf("query management RBAC privileges: %v", err)
 	}
 	if !runtimeCanResolve || workerCanResolve || runtimeHasTableAccess {

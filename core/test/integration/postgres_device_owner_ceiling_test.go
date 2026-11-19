@@ -185,7 +185,7 @@ func directDeviceRevocations(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		t.Fatal(err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`,

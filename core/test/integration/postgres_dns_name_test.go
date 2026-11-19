@@ -49,7 +49,7 @@ func legacyDNSCall(ctx context.Context, t *testing.T, admin *pgx.Conn, scope net
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	var workspaceInternal, networkInternal int64

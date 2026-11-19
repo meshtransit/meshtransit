@@ -230,7 +230,7 @@ func newPeerCandidateStore(
 	limit int,
 ) mapsession.SnapshotStore {
 	t.Helper()
-	store, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+	store, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{
 		StatementTimeout:   5 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: limit,

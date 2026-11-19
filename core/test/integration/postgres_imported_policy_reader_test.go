@@ -68,7 +68,7 @@ WHERE release.public_id = $1::UUID`, releaseID.String()).Scan(
 		name, role, expectedCode string
 		workspaceID, networkID   int64
 	}{
-		{name: "runtime cannot call private reader", role: "mesh_runtime", expectedCode: "42501", workspaceID: workspaceID, networkID: networkID},
+		{name: "runtime cannot call private reader", role: legacyRuntimeName(), expectedCode: "42501", workspaceID: workspaceID, networkID: networkID},
 		{name: "migration role cannot select foreign Consumer projection", role: "mesh_migrator", expectedCode: "23514", workspaceID: providerWorkspaceID, networkID: providerNetworkID},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

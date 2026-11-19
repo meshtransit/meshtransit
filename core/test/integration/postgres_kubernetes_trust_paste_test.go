@@ -163,7 +163,7 @@ WHERE event.action = 'kubernetes_cluster.signing_trust_replaced' AND cluster.pub
 
 	// A token signed by a key the trust lacks names it, since the trust was
 	// set.
-	events, err := postgresadapter.NewKubernetesGatewayKeyEventStore(runtimePool)
+	events, err := postgresadapter.NewKubernetesGatewayKeyEventStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

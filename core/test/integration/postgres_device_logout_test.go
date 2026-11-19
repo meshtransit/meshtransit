@@ -47,7 +47,7 @@ ORDER BY device.public_id LIMIT 1`).Scan(&deviceText, &machine, &nodeKey); err !
 func assertPostgreSQLDeviceLogout(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool, workerPool *postgresadapter.Pool) {
 	t.Helper()
-	store, err := postgresadapter.NewDeviceLogoutStore(runtimePool, postgresadapter.AccountSessionOptions{
+	store, err := postgresadapter.NewDeviceLogoutStore(controlPoolFor(runtimePool), postgresadapter.AccountSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 	})
 	if err != nil {
@@ -171,7 +171,7 @@ FROM mesh.device WHERE public_id = $1::UUID`, device.String()).Scan(&state, &sig
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(

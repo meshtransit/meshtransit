@@ -17,10 +17,10 @@ func assertTenantDisplayIdentities(ctx context.Context, t *testing.T, admin *pgx
 	t.Helper()
 	assertDisplayIdentityCoverage(ctx, t, admin)
 	var canRead, canAllocate, canProject bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     has_table_privilege('mesh_runtime','mesh_ops.tenant_display_identity','SELECT'),
     has_function_privilege('mesh_runtime','mesh_ops.assign_tenant_display_code_v1(text,uuid)','EXECUTE'),
-    has_function_privilege('mesh_runtime','mesh_ops.read_console_management_scopes_v2(uuid,uuid,uuid,uuid,bigint,bigint,bigint,bigint,bigint,uuid,timestamptz,uuid,integer)','EXECUTE')`).Scan(&canRead, &canAllocate, &canProject); err != nil {
+    has_function_privilege('mesh_runtime','mesh_ops.read_console_management_scopes_v2(uuid,uuid,uuid,uuid,bigint,bigint,bigint,bigint,bigint,uuid,timestamptz,uuid,integer)','EXECUTE')`)).Scan(&canRead, &canAllocate, &canProject); err != nil {
 		t.Fatal(err)
 	}
 	if canRead || canAllocate || !canProject {

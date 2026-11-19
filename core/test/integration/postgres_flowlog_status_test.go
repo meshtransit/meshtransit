@@ -32,7 +32,7 @@ func assertFlowlogReceiverStatus(ctx context.Context, t *testing.T, admin *pgx.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	gates, err := postgresadapter.NewFlowlogGateStore(runtimePool)
+	gates, err := postgresadapter.NewFlowlogGateStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

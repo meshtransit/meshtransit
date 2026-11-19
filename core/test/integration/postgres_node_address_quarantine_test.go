@@ -187,7 +187,7 @@ func registerAddressTestNode(
 		nodeMaterial:           keys.node,
 	})
 	transactions, err := postgresadapter.NewRegistrationTransactions(
-		runtimePool,
+		controlPoolFor(runtimePool),
 		postgresadapter.RegistrationTransactionOptions{
 			StatementTimeout:      5 * time.Second,
 			LockTimeout:           time.Second,

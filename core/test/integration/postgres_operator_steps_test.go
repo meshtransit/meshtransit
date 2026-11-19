@@ -464,6 +464,11 @@ func assertCreateRoleOperator(ctx context.Context, t *testing.T, admin *pgx.Conn
 func assertOperatorLogins(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	operator *postgresadapter.OperatorRunner, operatorConfig, migrationConfig config.MigrationConfig) {
 	t.Helper()
+	// The split harness (S2.1) made mesh_control for its control pool: the
+	// apply here must create the login itself.
+	if _, err := admin.Exec(ctx, "DROP ROLE IF EXISTS mesh_control"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		_, _ = admin.Exec(context.WithoutCancel(ctx), "DROP ROLE IF EXISTS mesh_control")
 	})

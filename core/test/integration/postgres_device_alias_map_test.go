@@ -98,7 +98,7 @@ func assertAliasMapCount(ctx context.Context, t *testing.T, tx pgx.Tx, self alia
 		t.Fatal(err)
 	}
 	setIntegrationScope(ctx, t, tx, self.workspace, self.network)
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime; SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE)`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime; SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE)`)); err != nil {
 		t.Fatal(err)
 	}
 	assertReachableAliasMapMatches(ctx, t, tx, self.machine, self.key)
@@ -263,14 +263,14 @@ func assertAliasMapPrivileges(ctx context.Context, t *testing.T, admin *pgx.Conn
  FROM pg_roles AS role WHERE rolname='mesh_device_alias_map_reader'`).Scan(&safe); err != nil || !safe {
 		t.Fatal("alias map owner is not isolated")
 	}
-	for _, role := range []string{"mesh_runtime", "mesh_worker", "mesh_observer", "mesh_share_writer", "mesh_direct_map_reader"} {
+	for _, role := range []string{legacyRuntimeName(), "mesh_worker", "mesh_observer", "mesh_share_writer", "mesh_direct_map_reader"} {
 		var read, write, execute bool
 		if err := admin.QueryRow(ctx, `SELECT has_table_privilege($1,'mesh.device_alias_client_readiness','SELECT'),
  has_table_privilege($1,'mesh.device_alias_client_readiness','INSERT,UPDATE,DELETE'),
  has_function_privilege($1,'mesh_ops.load_device_alias_map_edges_v3(bytea,bytea,integer)','EXECUTE')`, role).Scan(&read, &write, &execute); err != nil {
 			t.Fatal(err)
 		}
-		if read || write || execute != (role == "mesh_runtime") {
+		if read || write || execute != (role == legacyRuntimeName()) {
 			t.Fatalf("excess alias readiness capability for %s", role)
 		}
 	}
@@ -298,7 +298,7 @@ func assertAliasMapAuthentication(ctx context.Context, t *testing.T, tx pgx.Tx, 
 				t.Fatal(err)
 			}
 			setIntegrationScope(ctx, t, tx, self.workspace, self.network)
-			role := "mesh_runtime"
+			role := legacyRuntimeName()
 			if fault.role == "mesh_worker" {
 				role = "mesh_worker"
 			}
@@ -458,7 +458,7 @@ func assertEndpointAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx,
 		t.Fatal(err)
 	}
 	defer func() {
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 	}()

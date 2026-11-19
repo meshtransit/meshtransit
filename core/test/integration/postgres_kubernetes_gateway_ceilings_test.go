@@ -30,7 +30,7 @@ func assertGatewayCeilings(ctx context.Context, t *testing.T, admin, runtime *pg
 	owner accountsession.Session, scope network.Scope, clusterID kubecluster.ID,
 ) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayCeilingStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesGatewayCeilingStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

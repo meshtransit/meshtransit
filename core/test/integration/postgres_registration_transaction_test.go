@@ -34,7 +34,7 @@ WHERE workspace_id = 101 AND network_id = 201`).Scan(
 		t.Fatalf("read revisions before registration transaction: %v", err)
 	}
 	transactions, err := postgresadapter.NewRegistrationTransactions(
-		runtimePool,
+		controlPoolFor(runtimePool),
 		postgresadapter.RegistrationTransactionOptions{
 			StatementTimeout:      5 * time.Second,
 			LockTimeout:           time.Second,
@@ -93,7 +93,7 @@ WHERE workspace_id = 101 AND network_id = 201`).Scan(
 		beforeNetworkRevision+1,
 		beforeInventoryRevision+1,
 	)
-	replayStore, err := postgresadapter.NewRegistrationReplayStore(runtimePool)
+	replayStore, err := postgresadapter.NewRegistrationReplayStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatalf("postgres.NewRegistrationReplayStore() error = %v", err)
 	}

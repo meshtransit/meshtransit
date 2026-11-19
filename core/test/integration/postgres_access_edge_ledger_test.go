@@ -182,7 +182,7 @@ func assertAccessGraphHistoryRead(ctx context.Context, t *testing.T, admin *pgx.
 		}
 		return encoded
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	if read(time.Now().UTC()) != nil {
@@ -205,7 +205,7 @@ WHERE NOT EXISTS (SELECT 1 FROM mesh.role_permission AS existing
     WHERE existing.role_definition_id = 856 AND existing.permission_id = permission.id AND existing.state = 'active')`); err != nil {
 		t.Fatal("seed temporary read permissions", err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	type page struct {

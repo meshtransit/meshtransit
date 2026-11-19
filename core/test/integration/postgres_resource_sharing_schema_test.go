@@ -14,7 +14,7 @@ func assertResourceSharingPrivilegeContract(ctx context.Context, t *testing.T, a
 
 	var tableCount int
 	var allRLS, allForceRLS, runtimeMutation, runtimeReadBounded, publicDML, writerBounded bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.count(*)::INTEGER,
     pg_catalog.bool_and(class.relrowsecurity),
     pg_catalog.bool_and(class.relforcerowsecurity),
@@ -54,7 +54,7 @@ WHERE namespace.nspname = 'mesh'
       'trust_contract', 'imported_resource', 'imported_resource_access_name',
 	  'federation_alias_lease', 'private_endpoint', 'direct_device_endpoint',
 	  'private_endpoint_readiness', 'imported_resource_dns_publication'
-  ]::TEXT[])`).Scan(
+  ]::TEXT[])`)).Scan(
 		&tableCount,
 		&allRLS,
 		&allForceRLS,
@@ -82,7 +82,7 @@ WHERE namespace.nspname = 'mesh'
 	var functionCount int
 	var runtimeExecute, foreignExecute, publicExecute, securityDefiner, volatile bool
 	var dedicatedOwner, fixedSearchPath bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.count(*)::INTEGER,
     pg_catalog.bool_and(pg_catalog.has_function_privilege(
         'mesh_runtime', procedure.oid, 'EXECUTE'
@@ -114,7 +114,7 @@ WHERE namespace.nspname = 'mesh_ops'
 		'decide_resource_share_offer_v3',
 		'activate_resource_share_v4',
 		'revoke_resource_share_v6'
-  ]::TEXT[])`).Scan(
+  ]::TEXT[])`)).Scan(
 		&functionCount,
 		&runtimeExecute,
 		&foreignExecute,
@@ -279,7 +279,7 @@ func assertPrivateEndpointPublicationPrivilegeContract(
 
 	var tableCount int
 	var runtimeRead, applicationWrite, publicAccess, sequenceAccess bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.count(*)::INTEGER,
     pg_catalog.bool_and(pg_catalog.has_table_privilege('mesh_runtime', class.oid, 'SELECT')),
     pg_catalog.bool_or(
@@ -317,7 +317,7 @@ JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
 WHERE namespace.nspname = 'mesh'
   AND class.relname = ANY(ARRAY[
       'private_endpoint_readiness', 'imported_resource_dns_publication'
-  ]::TEXT[])`).Scan(
+  ]::TEXT[])`)).Scan(
 		&tableCount,
 		&runtimeRead,
 		&applicationWrite,
@@ -489,7 +489,7 @@ func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, ad
 
 	var rls, forceRLS, runtimeRead, runtimeWrite, foreignAccess, publicAccess bool
 	var readerRead, readerWrite bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     class.relrowsecurity,
     class.relforcerowsecurity,
     pg_catalog.has_table_privilege('mesh_runtime', class.oid, 'SELECT'),
@@ -512,7 +512,7 @@ func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, ad
 FROM pg_catalog.pg_class AS class
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
 WHERE namespace.nspname = 'mesh'
-  AND class.relname = 'compiled_policy_imported_resource_destination'`).Scan(
+  AND class.relname = 'compiled_policy_imported_resource_destination'`)).Scan(
 		&rls,
 		&forceRLS,
 		&runtimeRead,
@@ -559,7 +559,7 @@ WHERE namespace.nspname = 'mesh'
 	var runtimeContract, migratorContract, foreignExecute, publicExecute, securityContract bool
 	var ownerContract bool
 	var fixedSearchPath, volatile, v2ChainPresent, legacyExplainClosed bool
-	if err := admin.QueryRow(ctx, `SELECT
+	if err := admin.QueryRow(ctx, legacyRuntimeSQL(`SELECT
     pg_catalog.count(*)::INTEGER,
     pg_catalog.bool_and(CASE
         WHEN procedure.proname IN (
@@ -644,7 +644,7 @@ WHERE namespace.nspname = 'mesh_ops'
       'explain_active_policy_v2',
       'explain_active_policy_v3',
       'read_access_graph_v1'
-  ]::TEXT[])`).Scan(
+  ]::TEXT[])`)).Scan(
 		&functionCount,
 		&runtimeContract,
 		&migratorContract,

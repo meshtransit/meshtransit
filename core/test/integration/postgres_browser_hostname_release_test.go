@@ -160,7 +160,7 @@ func assertPostgreSQLBrowserHostnameRelease(
 	deploymentID deployment.ID, epoch int64, session accountsession.Digest, networkID network.ID,
 ) {
 	t.Helper()
-	logoutStore, err := postgresadapter.NewDeviceLogoutStore(runtime, postgresadapter.AccountSessionOptions{
+	logoutStore, err := postgresadapter.NewDeviceLogoutStore(controlPoolFor(runtime), postgresadapter.AccountSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 	})
 	if err != nil {

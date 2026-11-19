@@ -29,7 +29,7 @@ func assertSharingDependenciesBeforeRule(ctx context.Context, t *testing.T, tx p
 			t.Fatal(err)
 		}
 		setIntegrationScope(ctx, t, tx, consumer.workspace, consumer.network)
-		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 			t.Fatal(err)
 		}
 		_, err := tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_v1($1::BYTEA,$2::BYTEA,257)`, invalid.machine, invalid.key)
@@ -66,7 +66,7 @@ func assertSharingDependenciesBeforeRule(ctx context.Context, t *testing.T, tx p
 			}
 			if fault.name == "quarantined recovery" {
 				setIntegrationScope(ctx, t, tx, consumer.workspace, consumer.network)
-				if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+				if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 					t.Fatal(err)
 				}
 				_, err := tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_v1($1::BYTEA,$2::BYTEA,257)`, consumer.machine, consumer.key)
@@ -113,9 +113,9 @@ func assertSharingDependencyCount(ctx context.Context, t *testing.T, tx pgx.Tx, 
 		}
 	}
 	setIntegrationScope(ctx, t, tx, self.workspace, self.network)
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime;
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime;
  SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),
- set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE),set_config('mesh.direct_map_remote_network_id','999',TRUE)`); err != nil {
+ set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE),set_config('mesh.direct_map_remote_network_id','999',TRUE)`)); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := tx.Query(ctx, `SELECT dependency::TEXT FROM mesh_ops.load_device_sharing_dependencies_v1($1::BYTEA,$2::BYTEA,257) AS dependency`, self.machine, self.key)

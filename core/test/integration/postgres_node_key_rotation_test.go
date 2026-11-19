@@ -182,7 +182,7 @@ func newIntegrationNodeKeyRotationService(
 ) *keyrotation.Service {
 	t.Helper()
 	store, err := postgresadapter.NewNodeKeyRotationStore(
-		runtimePool,
+		controlPoolFor(runtimePool),
 		postgresadapter.NodeKeyRotationOptions{
 			StatementTimeout: 5 * time.Second,
 			LockTimeout:      2 * time.Second,

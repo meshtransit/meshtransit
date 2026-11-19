@@ -392,7 +392,7 @@ func assertPostgreSQLSignOutAndSignIn(ctx context.Context, t *testing.T, admin *
 	scope network.Scope, device node.ID, identity node.RegistrationIdentity,
 	browserLogin func() registration.Result) {
 	t.Helper()
-	store, err := postgresadapter.NewDeviceLogoutStore(runtime, postgresadapter.AccountSessionOptions{
+	store, err := postgresadapter.NewDeviceLogoutStore(controlPoolFor(runtime), postgresadapter.AccountSessionOptions{
 		StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 	})
 	if err != nil {
@@ -680,7 +680,7 @@ JOIN mesh.device_node_key_epoch AS node_key
 WHERE device.public_id = $1::UUID`, device.String()).Scan(&fingerprint, &nodeKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 		t.Fatal(err)
 	}
 	var suspended bool
@@ -721,7 +721,7 @@ WHERE device.public_id = $1::UUID`, device.String()).Scan(&deviceID, &fingerprin
 	}
 	revokedFor := func(machine, key []byte) bool {
 		t.Helper()
-		if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+		if _, err := transaction.Exec(ctx, legacyRuntimeSQL("SET LOCAL ROLE mesh_runtime")); err != nil {
 			t.Fatal(err)
 		}
 		var result bool

@@ -47,7 +47,7 @@ func assertPostgreSQLDeviceAliasReservation(
 	}
 	consumerID := integrationPublicID("01890fa1-0000-7000-8000-", 2301)
 	args := []any{endpointID, consumerID, int64(1), int64(1), int64(1), deviceAliasPublicIDs(3400)}
-	for _, role := range []string{"mesh_runtime", "mesh_worker", "mesh_observer", "mesh_share_writer"} {
+	for _, role := range []string{legacyRuntimeName(), "mesh_worker", "mesh_observer", "mesh_share_writer"} {
 		var read, write, reserve, quarantine bool
 		if err := admin.QueryRow(ctx, `SELECT
             has_table_privilege($1, 'mesh.device_alias_lease', 'SELECT'),

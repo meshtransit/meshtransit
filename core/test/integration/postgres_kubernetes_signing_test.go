@@ -24,7 +24,7 @@ func assertGatewayTokenAuditAndSigning(ctx context.Context, t *testing.T, admin,
 	runtimePool *postgresadapter.Pool, service *kubecluster.Service, owner, reader accountsession.Session,
 	scope network.Scope, clusterID kubecluster.ID, deviceID string) {
 	t.Helper()
-	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(runtimePool)
+	store, err := postgresadapter.NewKubernetesGatewayKeyEventStore(controlPoolFor(runtimePool))
 	if err != nil {
 		t.Fatal(err)
 	}

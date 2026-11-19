@@ -107,7 +107,7 @@ func assertPostgreSQLSiteMaps(ctx context.Context, t *testing.T, admin *pgx.Conn
 	publish(candidate, base)
 
 	store := func(routes bool) *postgresmapsession.Store {
-		shared, err := postgresadapter.NewMapSessionStore(runtimePool, postgresadapter.MapSessionOptions{
+		shared, err := postgresadapter.NewMapSessionStore(controlPoolFor(runtimePool), postgresadapter.MapSessionOptions{
 			StatementTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 			PeerCandidateLimit: mapsession.MaximumPeerCandidates, PolicyRuleLimit: mapsession.MaximumPacketPolicyRules,
 			RelayDirectory: integrationRelayDirectory(t), SharedInventory: true,

@@ -79,7 +79,7 @@ func assertSameWorkspaceAliasEndpoint(
 					t.Errorf("roll back alias endpoint RLS check: %v", rollbackErr)
 				}
 			}()
-			if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 				t.Fatal(err)
 			}
 			networkValue := ""
@@ -222,7 +222,7 @@ func assertLegacyRevokeWithdrawsSameWorkspaceAlias(ctx context.Context, t *testi
 			t.Errorf("roll back legacy alias withdrawal check: %v", rollbackErr)
 		}
 	}()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := tx.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `SELECT

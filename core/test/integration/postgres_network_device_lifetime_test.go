@@ -126,7 +126,7 @@ func assertRuntimeCannotSetDeviceLifetime(ctx context.Context, t *testing.T, adm
 		t.Fatal(err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+	if _, err := transaction.Exec(ctx, legacyRuntimeSQL(`SET LOCAL ROLE mesh_runtime`)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = transaction.Exec(ctx, `UPDATE mesh.enrollment_profile SET device_never_expires = TRUE`)

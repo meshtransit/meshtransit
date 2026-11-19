@@ -30,7 +30,7 @@ func assertSharedInventoryMatchesDirectRead(
 	identities ...control.AuthenticatedNode,
 ) {
 	t.Helper()
-	shared, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+	shared, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{
 		StatementTimeout:          5 * time.Second,
 		IdleTimeout:               5 * time.Second,
 		PeerCandidateLimit:        mapsession.MaximumPeerCandidates,
@@ -207,7 +207,7 @@ ORDER BY device.id`, networkPublicID)
 	if len(identities) == 0 {
 		t.Fatal("no active Devices to compare")
 	}
-	direct, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+	direct, err := postgresadapter.NewMapSessionStore(controlPoolFor(pool), postgresadapter.MapSessionOptions{
 		StatementTimeout:   5 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates,
