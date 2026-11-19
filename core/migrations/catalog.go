@@ -707,6 +707,7 @@ func Catalog() []Migration {
 		newMigration(299, "Row-level security policies apply to the group roles", groupRolePoliciesSQL),
 		newMigration(300, "mesh_runtime holds only what its group holds", narrowRuntimeToGroupsSQL),
 		newMigration(301, "No MeshTransit function is open to PUBLIC", closePublicFunctionsSQL),
+		newMigration(302, "Groups cannot change enrollment credentials or profiles", narrowEnrollmentWritesSQL),
 	}
 }
 
@@ -1389,3 +1390,6 @@ var narrowRuntimeToGroupsSQL string
 
 //go:embed 000301_close_public_functions.up.sql
 var closePublicFunctionsSQL string
+
+//go:embed 000302_narrow_enrollment_writes.up.sql
+var narrowEnrollmentWritesSQL string

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 301 {
-		t.Fatalf("len(Catalog()) = %d, want 301", len(catalog))
+	if len(catalog) != 302 {
+		t.Fatalf("len(Catalog()) = %d, want 302", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 301 {
-		t.Fatalf("LatestVersion() = %d, want 301", LatestVersion())
+	if LatestVersion() != 302 {
+		t.Fatalf("LatestVersion() = %d, want 302", LatestVersion())
 	}
 }
 
@@ -8810,6 +8810,36 @@ func TestClosePublicFunctionsGrantsBeforeRevoking(t *testing.T) {
 	} {
 		if !strings.Contains(sql, required) {
 			t.Errorf("schema 301 lacks %q", required)
+		}
+	}
+}
+
+// Schema 302 (TD-SEC-90, design §3.3): no group changes a credential's state
+// or a profile's content; the profile lock keeps UPDATE on updated_at only.
+func TestNarrowEnrollmentWrites(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[301]
+	if migration.Version != 302 {
+		t.Fatalf("migration 302 version = %d", migration.Version)
+	}
+	for _, required := range []string{
+		"REVOKE UPDATE (state, revoked_at, deleted_at) ON mesh.enrollment_credential FROM mesh_control_rights, mesh_api_rights;",
+		"GRANT UPDATE (updated_at) ON mesh.enrollment_profile TO mesh_api_rights, mesh_control_rights;",
+		"REVOKE UPDATE (authorized_principal_id) ON mesh.pending_registration FROM mesh_api_rights, mesh_control_rights;",
+		"REVOKE UPDATE (device_id, completed_hostname, completed_disposition, completed_network_revision)\n    ON mesh.pending_registration FROM mesh_api_rights;",
+		"'a role can still change enrollment credentials, profiles or registration authorization'",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 302 lacks %q", required)
+		}
+	}
+	for _, line := range strings.Split(migration.SQL, "\n") {
+		if strings.HasPrefix(line, "REVOKE") && strings.Contains(line, "used_count") {
+			t.Error("schema 302 must leave control's used_count, which registration counts")
+		}
+		if strings.HasPrefix(line, "REVOKE") && strings.Contains(line, "pending_registration") &&
+			strings.Contains(line, "mesh_control_rights") && strings.Contains(line, "device_id") {
+			t.Error("schema 302 must leave control's completion columns, which registration writes")
 		}
 	}
 }
