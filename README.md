@@ -1,5 +1,5 @@
 <p align="center"><strong>MeshTransit</strong></p>
-<p align="center">Zero Trust access to private infrastructure: a WireGuard® mesh with an<br>explainable access graph, sealed audit history and sovereign addressing.</p>
+<p align="center">Zero Trust access to private infrastructure: a WireGuard® mesh that shares<br>servers and services across organisations, with an explainable access graph<br>and sealed audit history.</p>
 
 <p align="center">
   <a href="https://github.com/meshtransit/meshtransit/actions/workflows/core.yml"><img alt="Core" src="https://github.com/meshtransit/meshtransit/actions/workflows/core.yml/badge.svg"></a>
@@ -19,6 +19,9 @@ at any past moment, and is recorded in a tamper-evident audit trail.
 
 ## Features
 
+- **Share across organisations:** give another organisation, or another team,
+  a server or service under explicit, expiring terms (Trust Contracts), with
+  address sovereignty on both sides.
 - **Access Graph and Policy Explain:** see every allowed connection, ask why a
   connection is allowed or blocked, and preview the impact of a change.
 - **Connection history:** answer who could reach what at any moment, since
@@ -26,8 +29,6 @@ at any past moment, and is recorded in a tamper-evident audit trail.
 - **Policy distribution status:** know which devices already run the current
   rules.
 - **Groups, user groups and tags** resolved live, without republishing rules.
-- **Trust Contracts:** share a device with another organisation with explicit,
-  expiring terms and address sovereignty on both sides.
 - **Guardrails:** organisation-wide rules that block risky changes.
 - **Sealed audit history** with export and offline verification.
 - **Direct paths first:** NAT traversal with relay fallback through
