@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,7 +25,19 @@ const (
 	// envOperatorLoginRotate ("true"/"false") lets an apply replace a login
 	// password that differs from the stored one.
 	envOperatorLoginRotate = "MESHTRANSIT_OPERATOR_LOGIN_ROTATE"
+	// envOperatorConnectionLimits lists role=limit pairs, comma-separated:
+	// the most connections PostgreSQL lets each serving login hold
+	// (TD-CORE-139, V1-03); -1 removes the limit. A login not listed keeps
+	// its limit.
+	envOperatorConnectionLimits = "MESHTRANSIT_OPERATOR_CONNECTION_LIMITS"
+	maxOperatorConnectionLimit  = 10000
 )
+
+// operatorConnectionLimitRoles are the serving logins a connection limit may
+// name: the api, control, worker and self-host logins.
+var operatorConnectionLimitRoles = map[string]bool{
+	"mesh_runtime": true, "mesh_control": true, "mesh_worker": true, "mesh_all": true,
+}
 
 // OperatorMigrationConfig contains the privileged database operator identity
 // that runs the operator SQL steps. It is separate from the migrator and the
@@ -40,6 +53,9 @@ type OperatorMigrationConfig struct {
 	// RotateLoginPasswords lets the apply replace a differing stored login
 	// password.
 	RotateLoginPasswords bool
+	// ConnectionLimits holds, by serving login, the most connections it may
+	// hold; empty when the apply sets none.
+	ConnectionLimits map[string]int
 }
 
 // LoadOperatorMigration reads only the MESHTRANSIT_OPERATOR_* settings of the
@@ -97,9 +113,14 @@ func LoadOperatorMigration(lookup LookupFunc) (OperatorMigrationConfig, error) {
 	if present && rotate != "true" && rotate != "false" {
 		return OperatorMigrationConfig{}, settingError(envOperatorLoginRotate)
 	}
+	connectionLimits, err := loadOperatorConnectionLimits(lookup)
+	if err != nil {
+		return OperatorMigrationConfig{}, err
+	}
 	return OperatorMigrationConfig{
 		LoginPasswordFiles:   loginPasswordFiles,
 		RotateLoginPasswords: rotate == "true",
+		ConnectionLimits:     connectionLimits,
 		PostgreSQL: MigrationPostgreSQLConfig{
 			Address:      address,
 			Database:     database,
@@ -143,4 +164,30 @@ func loadOperatorLoginPasswordFiles(lookup LookupFunc) (map[string]SecretFile, e
 		files[name] = file
 	}
 	return files, nil
+}
+
+// loadOperatorConnectionLimits reads role=limit pairs: a serving login at
+// most once, each limit between 1 and maxOperatorConnectionLimit, or -1 for
+// none.
+func loadOperatorConnectionLimits(lookup LookupFunc) (map[string]int, error) {
+	value, present := lookup(envOperatorConnectionLimits)
+	limits := map[string]int{}
+	if !present || value == "" {
+		return limits, nil
+	}
+	for _, pair := range strings.Split(value, ",") {
+		name, text, found := strings.Cut(strings.TrimSpace(pair), "=")
+		if !found || !operatorConnectionLimitRoles[name] {
+			return nil, settingError(envOperatorConnectionLimits)
+		}
+		if _, duplicate := limits[name]; duplicate {
+			return nil, settingError(envOperatorConnectionLimits)
+		}
+		limit, err := strconv.Atoi(text)
+		if err != nil || (limit < 1 && limit != -1) || limit > maxOperatorConnectionLimit {
+			return nil, settingError(envOperatorConnectionLimits)
+		}
+		limits[name] = limit
+	}
+	return limits, nil
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -160,6 +161,7 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoPendingOperatorSteps(ctx, t, freshMigration)
+	assertOperatorConnectionLimits(ctx, t, admin, operator)
 
 	// A membership of a MeshTransit role makes verification incomplete.
 	if _, err := admin.Exec(ctx, "CREATE ROLE mesh_operator_test_member NOLOGIN"); err != nil {
@@ -775,5 +777,53 @@ WHERE member_role.rolname = 'mesh_runtime' AND granted_role.rolname = 'mesh_api_
 	// without ADMIN on the group cannot grant it again).
 	if !held() {
 		t.Fatal("the membership S2.2 keeps is gone")
+	}
+}
+
+// V1-03 (TD-CORE-139): the apply sets each named serving login's connection
+// limit after the logins, and refuses a login that does not exist without
+// changing anything. The limit is put back afterwards: roles are shared by
+// every database of the cluster.
+func assertOperatorConnectionLimits(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	operator *postgresadapter.OperatorRunner,
+) {
+	t.Helper()
+	var previous int
+	if err := admin.QueryRow(ctx, `SELECT rolconnlimit FROM pg_catalog.pg_roles WHERE rolname = 'mesh_worker'`).
+		Scan(&previous); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.WithoutCancel(ctx), fmt.Sprintf("ALTER ROLE mesh_worker CONNECTION LIMIT %d", previous))
+	})
+	result, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+		ConnectionLimits: map[string]int{"mesh_worker": 7}})
+	if err != nil || len(result.ConnectionLimits) != 1 || result.ConnectionLimits[0] !=
+		(postgresadapter.OperatorConnectionLimitResult{Name: "mesh_worker", Limit: 7, Previous: previous}) {
+		t.Fatalf("apply with a connection limit = %+v, %v", result.ConnectionLimits, err)
+	}
+	var limit int
+	if err := admin.QueryRow(ctx, `SELECT rolconnlimit FROM pg_catalog.pg_roles WHERE rolname = 'mesh_worker'`).
+		Scan(&limit); err != nil || limit != 7 {
+		t.Fatalf("mesh_worker connection limit = %d/%v, want 7", limit, err)
+	}
+	if _, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+		ConnectionLimits: map[string]int{"mesh_worker": 9, "mesh_it_absent": 3}}); !errors.Is(err,
+		postgresadapter.ErrOperatorConnectionLimit) {
+		t.Fatalf("apply with a missing login = %v, want ErrOperatorConnectionLimit", err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT rolconnlimit FROM pg_catalog.pg_roles WHERE rolname = 'mesh_worker'`).
+		Scan(&limit); err != nil || limit != 7 {
+		t.Fatalf("a refused apply changed the limit to %d/%v", limit, err)
+	}
+	// -1 removes the limit, and is nothing to do for a login that is missing.
+	result, err = operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true,
+		ConnectionLimits: map[string]int{"mesh_worker": -1, "mesh_it_absent": -1}})
+	if err != nil || len(result.ConnectionLimits) != 1 {
+		t.Fatalf("apply removing limits = %+v, %v", result.ConnectionLimits, err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT rolconnlimit FROM pg_catalog.pg_roles WHERE rolname = 'mesh_worker'`).
+		Scan(&limit); err != nil || limit != -1 {
+		t.Fatalf("mesh_worker connection limit = %d/%v, want none", limit, err)
 	}
 }

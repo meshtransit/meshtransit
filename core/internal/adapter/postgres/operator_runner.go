@@ -214,6 +214,12 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 			}
 			result.Logins = logins
 		}
+		// After the logins: keeping a login resets its limit.
+		limits, err := ensureOperatorConnectionLimits(ctx, transaction, options.ConnectionLimits)
+		if err != nil {
+			return err
+		}
+		result.ConnectionLimits = limits
 		after, err := readOperatorReport(ctx, queryRow, version)
 		if err != nil {
 			return err

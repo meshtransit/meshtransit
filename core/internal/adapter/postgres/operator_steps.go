@@ -125,6 +125,9 @@ type OperatorApplyOptions struct {
 	// RotateLoginPasswords allows replacing a login's stored password that
 	// differs from the given one (the serving pods must restart after).
 	RotateLoginPasswords bool
+	// ConnectionLimits, by serving login, are the most connections each may
+	// hold (TD-CORE-139); a login not named keeps its limit.
+	ConnectionLimits map[string]int
 }
 
 // OperatorWaiting is one step an apply left for later.
@@ -152,6 +155,8 @@ type OperatorApplyResult struct {
 	// Memberships is what the apply did to each membership of an existing
 	// role (S2.2).
 	Memberships []OperatorMembershipResult
+	// ConnectionLimits are the limits the apply set, by login.
+	ConnectionLimits []OperatorConnectionLimitResult
 }
 
 type operatorPlan struct {
