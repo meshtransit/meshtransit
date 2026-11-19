@@ -3,6 +3,7 @@ package daemon
 import (
 	"sync"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/profile"
 )
@@ -89,7 +90,7 @@ func (s *Service) displayMapApplied(profileID string, snapshot networkmap.Snapsh
 			}
 		}
 		display.DeviceID, display.Hostname, display.RegisteredOnce = applied.deviceID, applied.hostname, true
-		display.RemovedAt, display.SignInStopped = nil, false
+		display.RemovedAt, display.SignInStopped, display.LastRefusal = nil, false, nil
 		if applied.named {
 			display.OwnerEmail = nextOwnerEmail(*display, applied.identity)
 			display.Network, display.Workspace = applied.identity.Network, applied.identity.Workspace
@@ -177,6 +178,31 @@ func (s *Service) displaySignInStopped(profileID string) error {
 		return ErrStopSignInUnavailable
 	}
 	return nil
+}
+
+// displaySignInRefused records Core's final refusal of the profile's
+// sign-in (desktop UX A1). Best effort: the refusal is also the caller's
+// answer.
+func (s *Service) displaySignInRefused(profileID string, rejected *controlplane.RejectedError) {
+	if s.display == nil || s.gateway || rejected == nil {
+		return
+	}
+	refusal := &profile.SignInRefusal{Code: rejected.Code, Message: rejected.Message, At: s.clock().UTC()}
+	s.updateDisplay(profileID, func(display *Display) { display.LastRefusal = refusal })
+	s.forgetDisplay(profileID)
+}
+
+// displaySignInCleared drops the last refusal: a new sign-in waits, or the
+// profile holds its Device.
+func (s *Service) displaySignInCleared(profileID string) {
+	if s.display == nil || s.gateway {
+		return
+	}
+	if display, found := s.ProfileDisplay(profileID); !found || display.LastRefusal == nil {
+		return
+	}
+	s.updateDisplay(profileID, func(display *Display) { display.LastRefusal = nil })
+	s.forgetDisplay(profileID)
 }
 
 // displayAccountAdded records that AddAccount created the profile while

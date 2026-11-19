@@ -542,6 +542,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		ProfileCount:       status.ProfileCount,
 		ControlTrust:       status.ControlTrust,
 		Registration:       status.Registration,
+		SignIn:             mapSignIn(status.SignIn),
 		Disconnected:       status.Disconnected,
 		ControlFingerprint: status.ControlFingerprint,
 		ControlSession:     status.ControlSession,
@@ -941,7 +942,8 @@ func (s *Server) handleListProfiles(writer http.ResponseWriter, request *http.Re
 		mapped := mapProfile(item, snapshot.ActiveProfileID)
 		mapped.State = states[item.ID]
 		display, found := s.service.ProfileDisplay(item.ID)
-		canCancel := mapped.State == daemon.RegistrationPending && s.service.CanCancelAddAccount(request.Context(), item.ID)
+		canCancel := (mapped.State == daemon.RegistrationPending || mapped.State == daemon.RegistrationUnregistered) &&
+			s.service.CanCancelAddAccount(request.Context(), item.ID)
 		profiles = append(profiles, mapped.withDisplay(display, found, canCancel))
 	}
 

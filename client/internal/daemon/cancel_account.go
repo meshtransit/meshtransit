@@ -10,9 +10,9 @@ import (
 )
 
 // ErrNotCancelable means the profile is not an account Add account created
-// that never held a Device and still waits for its first approval: it may
-// be a signed-out or expired Device signing in again, which cancelling
-// would remove (S4b §4.3). StopSignIn is its way out.
+// that never held a Device: it may be a signed-out or expired Device signing
+// in again, which cancelling would remove (S4b §4.3). StopSignIn is its way
+// out.
 var ErrNotCancelable = errors.New("daemon: only an added account that never held a device can be cancelled")
 
 // ErrStopSignInUnavailable means meshd could not record a stopped sign-in,
@@ -27,12 +27,13 @@ func (s *Service) CanCancelAddAccount(ctx context.Context, id string) bool {
 	return err == nil
 }
 
-// CancelAddAccount undoes an Add account whose browser approval is still
-// pending: it switches back to the profile in use before (or another one
-// that holds a Device) and removes the added one. It takes only a profile
-// AddAccount created, never registered, and whose keys wait for their
-// first approval, so it never removes a Device anyone used. If the
-// approval lands just before, the brand-new Device is removed with it.
+// CancelAddAccount undoes an Add account whose first sign-in is pending,
+// or ended without a Device (Core refused it, or it was stopped: desktop UX
+// A6): it switches back to the profile in use before (or another one that
+// holds a Device) and removes the added one. It takes only a profile
+// AddAccount created that was never registered, so it never removes a
+// Device anyone used. If the approval lands just before, the brand-new
+// Device is removed with it.
 func (s *Service) CancelAddAccount(ctx context.Context, id string) (ProfileRemoval, profile.Profile, error) {
 	if s.gateway {
 		return ProfileRemoval{}, profile.Profile{}, ErrGatewayProfiles
@@ -73,7 +74,7 @@ func (s *Service) cancelTarget(ctx context.Context, id string) (profile.Profile,
 	if err != nil {
 		return profile.Profile{}, fmt.Errorf("reading identity: %w", err)
 	}
-	if !record.HasPendingAuth() || record.IsRegistered() || record.SignedOut() {
+	if record.IsRegistered() || record.SignedOut() {
 		return profile.Profile{}, ErrNotCancelable
 	}
 	snapshot := s.profiles.Snapshot()

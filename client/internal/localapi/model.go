@@ -26,6 +26,8 @@ type statusResponse struct {
 	ProfileCount    int          `json:"profile_count"`
 	ControlTrust    string       `json:"control_trust"`
 	Registration    string       `json:"registration"`
+	// SignIn is the active profile's browser sign-in (desktop UX A1).
+	SignIn signInResponse `json:"sign_in"`
 	// Disconnected: meshctl down keeps meshd off the network until up.
 	Disconnected       bool     `json:"disconnected,omitempty"`
 	ControlFingerprint string   `json:"control_key_fingerprint,omitempty"`
@@ -372,9 +374,13 @@ type profileResponse struct {
 	// Removed is set once meshd learned Core removed the profile's Device:
 	// signing in again adds a new one.
 	Removed bool `json:"removed,omitempty"`
-	// CanCancel is set on an added account that never held a Device and
-	// waits for its first approval: DELETE /v1/accounts/{id} takes it.
+	// CanCancel is set on an added account that never held a Device, while
+	// its first sign-in waits or after it ended without one (refused or
+	// stopped): DELETE /v1/accounts/{id} takes it.
 	CanCancel bool `json:"can_cancel,omitempty"`
+	// PreviousProfileID is, for an added account, the account in use when it
+	// was added: where cancelling it goes back to.
+	PreviousProfileID string `json:"previous_profile_id,omitempty"`
 }
 
 // profileIdentity is the account's names (ownership: member or workspace;
@@ -396,6 +402,9 @@ func (response profileResponse) withDisplay(display daemon.Display, found, canCa
 		return response
 	}
 	response.Hostname, response.Removed = display.Hostname, display.RemovedAt != nil
+	if display.CreatedByAddAccount {
+		response.PreviousProfileID = display.PreviousProfileID
+	}
 	if display.Network != "" && display.Workspace != "" && display.Ownership != "" {
 		response.Identity = &profileIdentity{
 			Network: display.Network, Workspace: display.Workspace,
@@ -539,4 +548,22 @@ type captiveStatus struct {
 // captiveCheckResponse answers a captive portal window check.
 type captiveCheckResponse struct {
 	APIVersion string `json:"api_version"`
+}
+
+// signInResponse is the active profile's browser sign-in: state waiting,
+// refused (with Core's code, sentence and when) or none.
+type signInResponse struct {
+	State   string     `json:"state"`
+	Code    string     `json:"code,omitempty"`
+	Message string     `json:"message,omitempty"`
+	At      *time.Time `json:"at,omitempty"`
+}
+
+func mapSignIn(status daemon.SignInStatus) signInResponse {
+	response := signInResponse{State: status.State, Code: status.Code, Message: status.Message}
+	if !status.At.IsZero() {
+		at := status.At.UTC()
+		response.At = &at
+	}
+	return response
 }

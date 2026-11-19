@@ -58,10 +58,22 @@ type Display struct {
 	// (already_in_network, duplicate-device design §9) until meshd finished
 	// the switch: a crash before then is finished on the next start.
 	JoinedProfileID string `json:"joined_profile_id,omitempty"`
+	// LastRefusal is Core's final refusal of the profile's last sign-in
+	// (desktop UX A1): kept until a new sign-in waits or registers, a map
+	// arrives, or the profile goes, so every client can say why.
+	LastRefusal *SignInRefusal `json:"last_refusal,omitempty"`
 	// RemovedAt is when meshd learned Core removed the Device; the names
 	// stay so the apps can say which one.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`
 	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// SignInRefusal is Core's rejection code (mtcp-v1 §6.1, lower case), its
+// sentence, and when meshd received it.
+type SignInRefusal struct {
+	Code    string    `json:"code"`
+	Message string    `json:"message"`
+	At      time.Time `json:"at"`
 }
 
 // DisplayStore keeps one Display per profile in its own directory. It is

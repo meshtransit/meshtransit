@@ -43,9 +43,16 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 	if status.ActiveProfileID == "" || status.ControlFingerprint == "" {
 		return profile.Profile{}, profile.Profile{}, ErrAddAccountUntrusted
 	}
+	// A profile whose sign-in ended without a Device (Core refused it, or it
+	// was stopped: desktop UX A6) may add another account, with new keys;
+	// one that never signed in, or still waits for approval, may not.
 	switch status.Registration {
-	case RegistrationUnregistered, RegistrationPending:
+	case RegistrationPending:
 		return profile.Profile{}, profile.Profile{}, ErrAddAccountNoDevice
+	case RegistrationUnregistered:
+		if display, found := s.ProfileDisplay(status.ActiveProfileID); !found || !display.SignInStopped {
+			return profile.Profile{}, profile.Profile{}, ErrAddAccountNoDevice
+		}
 	}
 	// One browser sign-in waits per server (duplicate-device §4.3, N4): no
 	// profile is made for a second one. StartLogin checks it again.
@@ -72,6 +79,9 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 	if active.ID == "" {
 		return profile.Profile{}, profile.Profile{}, fmt.Errorf("%w: the active profile is not listed", ErrAddAccount)
 	}
+	// Added from an added account that never held a Device: going back
+	// leads to the account in use before that one, not to the refused one.
+	back := s.addAccountBack(active, snapshot.Profiles)
 	if strings.TrimSpace(name) == "" {
 		name = profile.NextName(active.Name, taken)
 	}
@@ -79,7 +89,7 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 	if err != nil {
 		return profile.Profile{}, profile.Profile{}, err
 	}
-	s.displayAccountAdded(created.ID, active.ID)
+	s.displayAccountAdded(created.ID, back.ID)
 	// Pinned before it is active: the profile in use is untouched if the
 	// server does not prove the key, and no other switch is pinned instead.
 	if _, err := s.trustProfile(ctx, created, status.ControlFingerprint); err != nil {
@@ -90,7 +100,23 @@ func (s *Service) AddAccount(ctx context.Context, name string) (profile.Profile,
 		return profile.Profile{}, profile.Profile{}, errors.Join(fmt.Errorf("%w: switching to it: %w", ErrAddAccount,
 			err), s.dropAddedProfile(ctx, created.ID))
 	}
-	return created, active, nil
+	return created, back, nil
+}
+
+// addAccountBack is where cancelling an account added while active was in
+// use goes back to: active itself, or, when active is an added account
+// that never held a Device, the account it was added from.
+func (s *Service) addAccountBack(active profile.Profile, profiles []profile.Profile) profile.Profile {
+	display, found := s.ProfileDisplay(active.ID)
+	if !found || !display.CreatedByAddAccount || display.RegisteredOnce || display.PreviousProfileID == "" {
+		return active
+	}
+	for _, item := range profiles {
+		if item.ID == display.PreviousProfileID {
+			return item
+		}
+	}
+	return active
 }
 
 // dropAddedProfile removes a profile AddAccount created and could not set

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -387,5 +388,116 @@ func TestService_DisplayOwnerEmailEdges(t *testing.T) {
 	gateway.displayMapApplied(profileID, snapshot(networkmap.OwnershipMember, "Alice", "alice@example.test", true))
 	if _, found := gateway.display.Get(profileID); found {
 		t.Fatal("a gateway keeps no display file")
+	}
+}
+
+// refuseAddedAccount makes Core refuse the added account's pending sign-in,
+// as when its keys hold another account's Device (desktop UX A6).
+func refuseAddedAccount(t *testing.T, service *Service, control *fakeControl) {
+	t.Helper()
+	control.mu.Lock()
+	control.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, &controlplane.RejectedError{
+			Code: "conflict", Message: "this machine is already in that Network under another account",
+		}
+	}
+	control.mu.Unlock()
+	if _, err := service.CompleteLogin(t.Context()); !errors.Is(err, ErrRegistration) {
+		t.Fatalf("CompleteLogin() = %v, want Core's refusal", err)
+	}
+	control.mu.Lock()
+	control.registerFunc = nil
+	control.mu.Unlock()
+}
+
+// A6: an added account Core refused is still cancelled back to the account
+// in use before; and another account may be added from it, which goes back
+// to that same account, not to the refused one.
+func TestService_RefusedAddedAccount(t *testing.T) {
+	t.Parallel()
+
+	service, control, first, added := addedPendingAccount(t)
+	refuseAddedAccount(t, service, control)
+	if !service.CanCancelAddAccount(t.Context(), added) {
+		t.Fatal("a refused added account cannot be cancelled")
+	}
+	status, err := service.Status(t.Context())
+	if err != nil || status.ActiveProfileID != added || status.Registration != RegistrationUnregistered {
+		t.Fatalf("after the refusal: %+v, %v", status, err)
+	}
+	// A1: every client reads why, whoever completed the sign-in.
+	if sign := status.SignIn; sign.State != SignInRefused || sign.Code != "conflict" ||
+		sign.Message != "this machine is already in that Network under another account" || sign.At.IsZero() {
+		t.Fatalf("sign-in after the refusal = %+v", sign)
+	}
+	// A new sign-in clears it.
+	control.registrationResults = []controlplane.RegistrationResult{
+		{State: controlplane.RegistrationStateAuthorizationRequired, AuthURL: "https://control.example.com/a/2"},
+	}
+	if login, err := service.StartLogin(t.Context(), ""); err != nil || login.State != RegistrationPending {
+		t.Fatalf("StartLogin() again = %+v, %v", login, err)
+	}
+	if status, err := service.Status(t.Context()); err != nil || status.SignIn.State != SignInWaiting {
+		t.Fatalf("sign-in while waiting again = %+v, %v", status.SignIn, err)
+	}
+	refuseAddedAccount(t, service, control)
+	again, back, err := service.AddAccount(t.Context(), "")
+	if err != nil || back.ID != first {
+		t.Fatalf("AddAccount() from the refused account = %+v, back %+v, %v; want back to %s", again, back, err, first)
+	}
+	if display, found := service.ProfileDisplay(again.ID); !found || display.PreviousProfileID != first {
+		t.Fatalf("second added account display = %+v, %t", display, found)
+	}
+	removal, back, err := service.CancelAddAccount(t.Context(), added)
+	if err != nil || back.ID != first || removal.Profile.ID != added {
+		t.Fatalf("CancelAddAccount(refused) = %+v, %+v, %v", removal, back, err)
+	}
+}
+
+// A profile that never signed in has no reason to add another account: it
+// signs in itself.
+func TestService_AddAccountNeedsAnEndedSignIn(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _ := addedPendingAccount(t)
+	if _, _, err := service.AddAccount(t.Context(), ""); !errors.Is(err, ErrAddAccountNoDevice) {
+		t.Fatalf("AddAccount() while a sign-in waits = %v, want ErrAddAccountNoDevice", err)
+	}
+}
+
+// A1: a sign-in that fails to start keeps the last refusal; one that
+// registers ends it, and a registered profile never reads as refused.
+func TestService_LastRefusalLifecycle(t *testing.T) {
+	t.Parallel()
+
+	service, control, _, added := addedPendingAccount(t)
+	refuseAddedAccount(t, service, control)
+	control.mu.Lock()
+	control.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, errors.New("control unreachable")
+	}
+	control.mu.Unlock()
+	if _, err := service.StartLogin(t.Context(), ""); err == nil {
+		t.Fatal("StartLogin() with Core unreachable succeeded")
+	}
+	if status, err := service.Status(t.Context()); err != nil || status.SignIn.State != SignInRefused {
+		t.Fatalf("a sign-in that failed to start lost the refusal: %+v, %v", status.SignIn, err)
+	}
+	control.mu.Lock()
+	control.registerFunc = nil
+	control.mu.Unlock()
+	control.registrationResults = []controlplane.RegistrationResult{
+		{State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true},
+	}
+	if login, err := service.StartLogin(t.Context(), ""); err != nil || login.State != RegistrationRegistered ||
+		login.ProfileID != added {
+		t.Fatalf("StartLogin() approved at once = %+v, %v", login, err)
+	}
+	status, err := service.Status(t.Context())
+	if err != nil || status.Registration != RegistrationRegistered || status.SignIn.State != SignInNone {
+		t.Fatalf("a registered profile reads %s, %+v, %v; want no refusal", status.Registration, status.SignIn, err)
+	}
+	if login, err := service.CompleteLogin(t.Context()); err != nil || login.State != RegistrationRegistered {
+		t.Fatalf("CompleteLogin() on a registered profile = %+v, %v; want registered", login, err)
 	}
 }

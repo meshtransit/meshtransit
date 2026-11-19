@@ -76,7 +76,8 @@ func (s *Service) checkPendingElsewhere(ctx context.Context, active profile.Prof
 		probeCtx, cancel := context.WithTimeout(ctx, pendingProbeTimeout)
 		login, err := s.registerWithRecord(probeCtx, ctx, item, record, "", record.PendingAuthURL())
 		cancel()
-		if _, refused := errors.AsType[*controlplane.RejectedError](err); refused {
+		if rejected, refused := errors.AsType[*controlplane.RejectedError](err); refused {
+			s.displaySignInRefused(item.ID, rejected)
 			if endErr := s.endRefusedSignIn(ctx, item.ID); endErr != nil {
 				return &SignInPendingElsewhereError{ProfileID: item.ID}
 			}

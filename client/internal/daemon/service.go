@@ -156,6 +156,9 @@ type Status struct {
 	CompatibilityNote string
 	ControlTrust      string
 	Registration      string
+	// SignIn is the active profile's browser sign-in (desktop UX A1):
+	// waiting for approval, refused by Core, or none.
+	SignIn SignInStatus
 	// Disconnected: meshctl down keeps meshd off the network until up.
 	Disconnected       bool
 	ControlFingerprint string
@@ -2694,6 +2697,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		CompatibilityNote:  compatibilityNote,
 		ControlTrust:       controlTrust,
 		Registration:       registration,
+		SignIn:             s.signInStatus(snapshot.ActiveProfileID, registration),
 		Disconnected:       snapshot.Disconnected,
 		ControlFingerprint: controlFingerprint,
 		ControlSession:     syncState.state,
@@ -2824,7 +2828,13 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 		}
 	}
 
-	return s.register(ctx, authKey, "")
+	login, err := s.register(ctx, authKey, "")
+	// The last refusal answers nothing once a new sign-in waits or the
+	// profile holds its Device; a sign-in that failed to start keeps it.
+	if err == nil && (login.State == RegistrationPending || login.State == RegistrationRegistered) {
+		s.displaySignInCleared(login.ProfileID)
+	}
+	return login, err
 }
 
 // CompleteLogin performs a short follow-up poll using the persisted browser URL.
@@ -2836,7 +2846,35 @@ func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
 			return s.finishJoined(ctx, active, display.JoinedProfileID, true)
 		}
 	}
-	login, err := s.completeLogin(ctx, completionPollTimeout)
+	login, err := s.completeLoginWithin(ctx, completionPollTimeout)
+	if errors.Is(err, ErrNoPendingAuthorization) {
+		return s.completedSignIn(ctx, err)
+	}
+	return login, err
+}
+
+// completedSignIn answers a client asking for a sign-in another client
+// already completed (desktop UX K2): registered, or Core's refusal (A1),
+// rather than "nothing pending".
+func (s *Service) completedSignIn(ctx context.Context, noPending error) (Login, error) {
+	status, err := s.Status(ctx)
+	if err != nil {
+		return Login{}, noPending
+	}
+	switch {
+	case status.Registration == RegistrationRegistered:
+		return Login{State: RegistrationRegistered, ProfileID: status.ActiveProfileID}, nil
+	case status.SignIn.State == SignInRefused:
+		return Login{}, fmt.Errorf("%w: %w", ErrRegistration,
+			&controlplane.RejectedError{Code: status.SignIn.Code, Message: status.SignIn.Message})
+	}
+	return Login{}, noPending
+}
+
+// completeLoginWithin is CompleteLogin with a poll of Core bounded by
+// pollTimeout.
+func (s *Service) completeLoginWithin(ctx context.Context, pollTimeout time.Duration) (Login, error) {
+	login, err := s.completeLogin(ctx, pollTimeout)
 	if err != nil || login.State != RegistrationAlreadyInNetwork || login.joinedFrom == "" {
 		return login, err
 	}
@@ -3005,7 +3043,8 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 		if ctx.Err() != nil {
 			return Login{}, ctx.Err()
 		}
-		if _, refused := errors.AsType[*controlplane.RejectedError](err); refused {
+		if rejected, refused := errors.AsType[*controlplane.RejectedError](err); refused {
+			s.displaySignInRefused(active.ID, rejected)
 			return Login{}, errors.Join(err, s.endRefusedSignIn(ctx, active.ID))
 		}
 		if errors.Is(err, controlplane.ErrRegistrationTemporary) {
@@ -3779,4 +3818,35 @@ func (s *Service) mapFreshAtValue() time.Time {
 		return *at
 	}
 	return time.Time{}
+}
+
+// Sign-in states in Status (desktop UX A1).
+const (
+	SignInNone    = "none"
+	SignInWaiting = "waiting"
+	SignInRefused = "refused"
+)
+
+// SignInStatus is the active profile's browser sign-in: waiting for
+// approval, or, while it has no Device, Core's last refusal (Code, Message,
+// At) until a new sign-in waits or registers, or the profile goes.
+type SignInStatus struct {
+	State   string
+	Code    string
+	Message string
+	At      time.Time
+}
+
+func (s *Service) signInStatus(profileID, registration string) SignInStatus {
+	if registration == RegistrationPending {
+		return SignInStatus{State: SignInWaiting}
+	}
+	// A refusal answers only a profile still without its Device.
+	if profileID != "" && (registration == RegistrationUnregistered || registration == RegistrationSignedOut) {
+		if display, found := s.ProfileDisplay(profileID); found && display.LastRefusal != nil {
+			refusal := display.LastRefusal
+			return SignInStatus{State: SignInRefused, Code: refusal.Code, Message: refusal.Message, At: refusal.At}
+		}
+	}
+	return SignInStatus{State: SignInNone}
 }

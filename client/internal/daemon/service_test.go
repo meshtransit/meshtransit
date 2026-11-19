@@ -583,8 +583,10 @@ func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first CompleteLogin() error = %v", err)
 	}
-	if _, err := service.CompleteLogin(t.Context()); !errors.Is(err, ErrNoPendingAuthorization) {
-		t.Fatalf("completed flow error = %v, want ErrNoPendingAuthorization", err)
+	// A2: a client asking after the sign-in completed reads the result,
+	// without asking Core again.
+	if login, err := service.CompleteLogin(t.Context()); err != nil || login.State != RegistrationRegistered {
+		t.Fatalf("completed flow = %+v, %v, want registered", login, err)
 	}
 	control.mu.Lock()
 	registerCalls := len(control.registerOptions)
@@ -691,8 +693,20 @@ func TestService_CompleteLoginEndsSignInCoreRefused(t *testing.T) {
 	if record.HasPendingAuth() || record.IsRegistered() {
 		t.Fatalf("registration after a refusal = %s, want neither pending nor registered", record)
 	}
-	if _, err := service.CompleteLogin(t.Context()); !errors.Is(err, ErrNoPendingAuthorization) {
-		t.Fatalf("CompleteLogin() after the refusal = %v, want nothing pending", err)
+	// A2: asking again reads Core's refusal (A1), without asking Core again.
+	control.mu.Lock()
+	callsBefore := len(control.registerOptions)
+	control.mu.Unlock()
+	again, againErr := service.CompleteLogin(t.Context())
+	if rejected, ok := errors.AsType[*controlplane.RejectedError](againErr); !ok || rejected.Code != "conflict" ||
+		!errors.Is(againErr, ErrRegistration) || again.State != "" {
+		t.Fatalf("CompleteLogin() after the refusal = %+v, %v, want Core's refusal again", again, againErr)
+	}
+	control.mu.Lock()
+	callsAfter := len(control.registerOptions)
+	control.mu.Unlock()
+	if callsAfter != callsBefore {
+		t.Fatalf("asking again reached Core: %d calls, want %d", callsAfter, callsBefore)
 	}
 	// The keys may hold a Device (a conflict proves one): removing the profile
 	// asks Core first, as after Stop Signing In.
