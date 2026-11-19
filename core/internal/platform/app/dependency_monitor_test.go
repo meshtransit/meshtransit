@@ -301,3 +301,49 @@ func (checker *fakeChecker) setError(err error) {
 	defer checker.mu.Unlock()
 	checker.err = err
 }
+
+// TD-CORE-139: with a StartupWait, Start tries the first check again while
+// a required dependency is unavailable, and starts once it answers; past
+// the wait it still fails closed.
+func TestDependencyMonitorWaitsForADependencyAtStartup(t *testing.T) {
+	t.Parallel()
+
+	state := mustRuntimeState(t, RoleWorker)
+	var tries atomic.Int32
+	postgres := &fakeChecker{component: ComponentPostgreSQL, check: func(context.Context) error {
+		if tries.Add(1) < 3 {
+			return errors.New("too many connections for role")
+		}
+		return nil
+	}}
+	redis := &fakeChecker{component: ComponentRedis}
+	monitor, err := NewDependencyMonitor(MonitorOptions{
+		CheckTimeout: 50 * time.Millisecond, CheckInterval: time.Hour, StartupWait: 10 * time.Second,
+	}, state, postgres, redis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Start(t.Context()); err != nil {
+		t.Fatalf("Start() while PostgreSQL comes back = %v", err)
+	}
+	t.Cleanup(func() { _ = monitor.Shutdown(context.Background()) })
+	if tries.Load() != 3 {
+		t.Fatalf("first check tried %d times, want 3", tries.Load())
+	}
+
+	never := &fakeChecker{component: ComponentPostgreSQL, err: errors.New("down")}
+	short, err := NewDependencyMonitor(MonitorOptions{
+		CheckTimeout: 50 * time.Millisecond, CheckInterval: time.Hour, StartupWait: 1500 * time.Millisecond,
+	}, mustRuntimeState(t, RoleWorker), never, &fakeChecker{component: ComponentRedis})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := short.Start(t.Context()); !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("Start() past the wait = %v, want ErrDependencyUnavailable", err)
+	}
+	if _, err := NewDependencyMonitor(MonitorOptions{
+		CheckTimeout: time.Second, CheckInterval: time.Hour, StartupWait: -time.Second,
+	}, mustRuntimeState(t, RoleWorker), never, redis); !errors.Is(err, ErrInvalidDependencyMonitor) {
+		t.Fatalf("a negative wait = %v", err)
+	}
+}

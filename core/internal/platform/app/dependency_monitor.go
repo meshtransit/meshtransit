@@ -32,7 +32,16 @@ type DependencyChecker interface {
 type MonitorOptions struct {
 	CheckTimeout  time.Duration
 	CheckInterval time.Duration
+	// StartupWait is how long Start tries the first check again while a
+	// required dependency is unavailable, before it fails; zero fails at
+	// once. A rolling update can leave PostgreSQL refusing a new pod's
+	// connections (a login's CONNECTION LIMIT, TD-CORE-139) until old pods
+	// finish shutting down: the new pod waits, unready, instead of exiting.
+	StartupWait time.Duration
 }
+
+// startupRetry spaces the first check's tries while Start waits.
+const startupRetry = time.Second
 
 // DependencyMonitor owns periodic dependency checks and their single
 // goroutine. Start performs the first check synchronously before any listener
@@ -57,7 +66,8 @@ func NewDependencyMonitor(
 	state *RuntimeState,
 	checkers ...DependencyChecker,
 ) (*DependencyMonitor, error) {
-	if state == nil || options.CheckTimeout <= 0 || options.CheckInterval <= options.CheckTimeout {
+	if state == nil || options.CheckTimeout <= 0 || options.CheckInterval <= options.CheckTimeout ||
+		options.StartupWait < 0 {
 		return nil, ErrInvalidDependencyMonitor
 	}
 
@@ -91,6 +101,28 @@ func NewDependencyMonitor(
 	}, nil
 }
 
+// firstCheck is the fail-closed initial check, tried again every
+// startupRetry while a required dependency is unavailable, up to
+// StartupWait.
+func (monitor *DependencyMonitor) firstCheck(ctx context.Context) error {
+	deadline := time.Now().Add(monitor.options.StartupWait)
+	for {
+		err := monitor.checkAll(ctx)
+		// The next try must finish, its check timeout included, by the deadline.
+		next := time.Now().Add(startupRetry + monitor.options.CheckTimeout)
+		if err == nil || !errors.Is(err, ErrDependencyUnavailable) || !next.Before(deadline) {
+			return err
+		}
+		timer := time.NewTimer(startupRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
 // Start performs the fail-closed initial check and then starts periodic checks.
 func (monitor *DependencyMonitor) Start(ctx context.Context) error {
 	if ctx == nil {
@@ -109,7 +141,7 @@ func (monitor *DependencyMonitor) Start(ctx context.Context) error {
 	monitor.startDone = startDone
 	monitor.mu.Unlock()
 
-	if err := monitor.checkAll(startCtx); err != nil {
+	if err := monitor.firstCheck(startCtx); err != nil {
 		startCancel()
 		monitor.mu.Lock()
 		monitor.starting = false

@@ -112,6 +112,9 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		// Input checks differ by replica while a rollout turns it on (K2h f5).
 		logger.InfoContext(ctx, "rules to Kubernetes clusters must name their access")
 	}
+	// One deadline for every wait on dependencies at start-up, so the waits
+	// together stay under the chart's startup probe (TD-CORE-139).
+	startupDeadline := time.Now().Add(dependencyStartupWait)
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
 	additionalMetrics := make([]prometheus.Collector, 0, 6)
 	var scaleHandler http.Handler // control role only: the autoscaler's session total
@@ -136,6 +139,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		checkers = append(checkers, postgresChecker)
+		// The roles query PostgreSQL while they are composed (control's
+		// probes), before the monitor: wait for it here first.
+		if err := waitForDependency(ctx, logger, postgresChecker,
+			processConfig.Dependencies.CheckTimeout, startupDeadline); err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_unavailable", "error", err)
+			return 1
+		}
 		postgresMetrics, metricsErr := storagePools.metricsCollector()
 		if metricsErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_metrics_failure", "error", metricsErr)
@@ -998,6 +1008,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		app.MonitorOptions{
 			CheckTimeout:  processConfig.Dependencies.CheckTimeout,
 			CheckInterval: processConfig.Dependencies.CheckInterval,
+			StartupWait:   max(0, time.Until(startupDeadline)),
 		},
 		readiness,
 		checkers...,
@@ -1084,6 +1095,13 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}
 	return 0
 }
+
+// dependencyStartupWait is how long a starting process waits for its
+// required dependencies (app.MonitorOptions.StartupWait): long enough for
+// old pods to shut down during a rolling update (a 10 s preStop and their
+// shutdown), and under the chart's startup probe (30 × 2 s), which would
+// otherwise restart the container while it waits.
+const dependencyStartupWait = 45 * time.Second
 
 func runtimeFailurePhase(err error) string {
 	switch {
