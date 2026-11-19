@@ -1,6 +1,7 @@
 package kubeproxy
 
 import (
+	"bufio"
 	"crypto/tls"
 	"io"
 	"net"
@@ -75,8 +76,9 @@ func TestLimitsMemoryPressure(t *testing.T) {
 	}
 }
 
-// A Device past its connections fails the TLS handshake; one closed frees
-// its place.
+// A Device past its connections finishes the TLS handshake and is answered
+// 429 with Retry-After and Connection: close, never an EOF (TD-CLI-91); one
+// closed frees its place.
 func TestLimitsDeviceConnections(t *testing.T) {
 	t.Parallel()
 	f := limitedFixture(t, func(limits *Limits) { limits.DeviceConnections = 1 })
@@ -89,10 +91,24 @@ func TestLimitsDeviceConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second, err := dial(); err == nil {
-		_ = second.Close()
-		t.Fatal("a second connection was taken")
+	second, err := dial()
+	if err != nil {
+		t.Fatalf("a Device past its connections did not finish the handshake: %v", err)
 	}
+	if _, err := second.Write([]byte("GET /version HTTP/1.1\r\nHost: " + clusterName + "\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(second), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") != "1" ||
+		!response.Close {
+		t.Fatalf("past its connections: %d, Retry-After %q, close %t", response.StatusCode,
+			response.Header.Get("Retry-After"), response.Close)
+	}
+	_ = second.Close()
 	_ = first.Close()
 	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		third, err := dial()
@@ -103,6 +119,47 @@ func TestLimitsDeviceConnections(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("the place was never freed: %v", err)
 		}
+	}
+}
+
+// A known Device's source past its connections is taken from a small
+// budget of its own, flagged with the limit, to answer a 429; past that
+// budget it is refused; and the counts go back to nothing (TD-CLI-91).
+func TestGateAcceptKnown(t *testing.T) {
+	t.Parallel()
+	limits := DefaultLimits()
+	g := newGate(limits)
+	device := netip.MustParseAddr("100.64.7.7")
+	for index := range limits.DeviceConnections {
+		limit, admit, over := g.acceptKnown(device)
+		if !admit || over || limit != "" {
+			t.Fatalf("connection %d = %q, %t, %t", index+1, limit, admit, over)
+		}
+		// Named, as its handshake would, so the source's connections fill.
+		g.mu.Lock()
+		g.named(device)
+		g.mu.Unlock()
+	}
+	for index := range overLimitPerSource {
+		if limit, admit, over := g.acceptKnown(device); !admit || !over || limit != limitDeviceConnections {
+			t.Fatalf("over-limit connection %d = %q, %t, %t", index+1, limit, admit, over)
+		}
+	}
+	if limit, admit, _ := g.acceptKnown(device); admit || limit != limitOverBudget {
+		t.Fatalf("past the over-limit budget = %q, %t; want refused", limit, admit)
+	}
+	g.mu.Lock()
+	unidentified := g.unidentified
+	g.mu.Unlock()
+	for range overLimitPerSource {
+		g.releaseOver(device)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.overOpen != 0 || len(g.overSources) != 0 || g.unidentified != unidentified ||
+		g.open != limits.DeviceConnections {
+		t.Fatalf("after the over-limit ones closed: over %d/%v, unidentified %d, open %d",
+			g.overOpen, g.overSources, g.unidentified, g.open)
 	}
 }
 

@@ -42,9 +42,17 @@ const (
 	// sourceUnidentified bounds one address's connections not yet through
 	// their handshake: a Device's take milliseconds, so those that never
 	// bind stay few (re-review b6b R1). 12 lets a tool open its usual ten at
-	// once, as Terraform does: past it, a connection is closed unanswered
-	// and client-go does not send a POST again (K1f, Q188).
+	// once, as Terraform does; past it, a source that is no known Device's
+	// is closed unanswered, and a known Device's is answered a 429
+	// (acceptKnown, TD-CLI-91).
 	sourceUnidentified = 12
+	// overLimitPerSource bounds one address's connections taken past its
+	// limits to answer a 429; overLimitShare is the replica's share of them
+	// (1/overLimitShare of its connections); overLimitHold is how long one
+	// stays open for its request (TD-CLI-91).
+	overLimitPerSource = 4
+	overLimitShare     = 16
+	overLimitHold      = 5 * time.Second
 	// maximumLimiters bounds the per-address and per-Device rate limiters
 	// kept; past it they start over, which only forgives.
 	maximumLimiters = 16384
@@ -65,6 +73,9 @@ const (
 	limitStreams           = "streams"
 	limitFairShare         = "fair_share"
 	limitMemory            = "memory"
+	// limitOverBudget: a known Device past its limits found the over-limit
+	// budget full too, and was closed unanswered (TD-CLI-91).
+	limitOverBudget = "over_limit_budget"
 )
 
 // gate holds the connection and rate counts behind the limits.
@@ -81,6 +92,13 @@ type gate struct {
 	devices      map[string]int     // connections by Device
 	handshakes   map[netip.Addr]*rate.Limiter
 	rates        map[string]*rate.Limiter
+	// A known Device's connections past its limits (TD-CLI-91), held only to
+	// answer a 429: their own small budget, so they never take the unnamed
+	// share or the Device's: overOpen the replica's, overSources each
+	// address's, overPace each address's pace.
+	overOpen    int
+	overSources map[netip.Addr]int
+	overPace    map[netip.Addr]*rate.Limiter
 
 	limitedMu sync.Mutex
 	limited   map[string]uint64
@@ -108,9 +126,10 @@ func (server *Server) Unrecorded() map[string]uint64 {
 
 func newGate(limits Limits) *gate {
 	return &gate{limits: limits, devices: map[string]int{}, sources: map[netip.Addr]int{},
-		pending:    map[netip.Addr]int{},
-		handshakes: map[netip.Addr]*rate.Limiter{},
-		rates:      map[string]*rate.Limiter{}, limited: map[string]uint64{}, unrecorded: map[string]uint64{}}
+		pending:     map[netip.Addr]int{},
+		handshakes:  map[netip.Addr]*rate.Limiter{},
+		overSources: map[netip.Addr]int{}, overPace: map[netip.Addr]*rate.Limiter{},
+		rates: map[string]*rate.Limiter{}, limited: map[string]uint64{}, unrecorded: map[string]uint64{}}
 }
 
 // count records a request limited.
@@ -168,6 +187,71 @@ func (g *gate) accept(source netip.Addr) string {
 	g.sources[source]++
 	g.pending[source]++
 	return ""
+}
+
+// acceptKnown counts a connection from a source the map names as a
+// Device's (TD-CLI-91). Within its limits it is counted as accept counts
+// it (over empty). Past the source's connections, unnamed ones, the
+// replica's unnamed share or the source's pace it is still taken (over
+// names the limit) from a small budget of its own (overLimitPerSource,
+// overLimitShare, a pace of SourceHandshakes), so the Device gets a 429 to
+// come back after rather than an EOF client-go never sends a POST again
+// for. Past that budget, or the replica's connections, it is refused
+// (admit false, limit names why) and closed.
+func (g *gate) acceptKnown(source netip.Addr) (limit string, admit, over bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.open >= g.limits.Connections {
+		return limitConnections, false, false
+	}
+	limiter := g.sourceLimiter(g.handshakes, source,
+		max(1, int(g.limits.SourceHandshakes), g.limits.DeviceConnections))
+	switch {
+	case g.sources[source] >= g.limits.DeviceConnections:
+		limit = limitDeviceConnections
+	case g.pending[source] >= sourceUnidentified:
+		limit = limitSourceUnnamed
+	case g.unidentified >= max(1, g.limits.Connections/4):
+		limit = limitUnidentified
+	case !limiter.Allow():
+		limit = limitHandshakes
+	}
+	if limit == "" {
+		g.open++
+		g.unidentified++
+		g.sources[source]++
+		g.pending[source]++
+		return "", true, false
+	}
+	if g.overSources[source] >= overLimitPerSource || g.overOpen >= max(1, g.limits.Connections/overLimitShare) ||
+		!g.sourceLimiter(g.overPace, source, overLimitPerSource).Allow() {
+		return limitOverBudget, false, false
+	}
+	g.open++
+	g.overOpen++
+	g.overSources[source]++
+	return limit, true, true
+}
+
+// sourceLimiter is source's limiter in limiters, made at SourceHandshakes a
+// second with burst if it had none. The caller holds the lock.
+func (g *gate) sourceLimiter(limiters map[netip.Addr]*rate.Limiter, source netip.Addr, burst int) *rate.Limiter {
+	limiter, ok := limiters[source]
+	if !ok {
+		prune(limiters, time.Now())
+		limiter = rate.NewLimiter(rate.Limit(g.limits.SourceHandshakes), burst)
+		limiters[source] = limiter
+	}
+	return limiter
+}
+
+// releaseOver lets a connection acceptKnown took past its limits go.
+func (g *gate) releaseOver(source netip.Addr) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.open--
+	g.overOpen--
+	decrement(g.overSources, source)
 }
 
 // ConnectionStats are the replica's connections: open, not yet named for

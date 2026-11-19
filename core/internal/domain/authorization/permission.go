@@ -286,3 +286,38 @@ func Permissions() []Permission {
 		PermissionConnectionLogManage,
 	}
 }
+
+// withoutOperation are catalog permissions no operation checks yet
+// (TD-API-21): roles keep them, so a later release grants nothing new, but
+// the management API never shows them, so the Console never offers a power
+// it does not have.
+var withoutOperation = map[Permission]bool{
+	PermissionWorkspaceOwnerTransfer:  true,
+	PermissionWorkspaceDelete:         true,
+	PermissionIdentityProviderManage:  true,
+	PermissionRoleDefinitionManage:    true,
+	PermissionPolicyDraft:             true,
+	PermissionPolicyRollback:          true,
+	PermissionApprovalPolicyManage:    true,
+	PermissionConnectorRead:           true,
+	PermissionConnectorManage:         true,
+	PermissionEnrollmentProfileManage: true,
+}
+
+// HasOperation reports whether some operation checks permission: the
+// management API shows only these (TD-API-21).
+func HasOperation(permission Permission) bool {
+	return !withoutOperation[permission]
+}
+
+// PublishedStrings returns the permissions that have an operation, as
+// strings, in their order.
+func PublishedStrings[P ~string](permissions []P) []string {
+	published := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if HasOperation(Permission(permission)) {
+			published = append(published, string(permission))
+		}
+	}
+	return published
+}

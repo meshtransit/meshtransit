@@ -137,12 +137,17 @@ func (server *Server) TLSConfig() *tls.Config {
 				if _, _, known := conn.bind(server.options.Peer); !known {
 					return nil, errors.New("kubeproxy: a source no Device holds")
 				}
-				if limit, joined := conn.join(); !joined {
-					if limit == "" {
-						return nil, errors.New("kubeproxy: the connection closed")
+				if conn.overReason() == "" {
+					if limit, joined := conn.join(); !joined {
+						if limit == "" {
+							return nil, errors.New("kubeproxy: the connection closed")
+						}
+						// A Device past its connections (from another of its
+						// addresses) finishes the handshake and gets a 429 it
+						// can retry after, not an EOF (TD-CLI-91).
+						server.gate.count(limit)
+						conn.answerOverLimit(limit)
 					}
-					server.gate.count(limit)
-					return nil, errors.New("kubeproxy: the Device holds too many connections")
 				}
 			}
 			certificate, ok := server.options.Certificate()
@@ -206,7 +211,8 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener) error {
 		endRequests()
 		_ = served.Close()
 	})
-	err := served.ServeTLS(identifying{Listener: listener, gate: server.gate, logger: server.options.Logger}, "", "")
+	err := served.ServeTLS(identifying{Listener: listener, gate: server.gate, logger: server.options.Logger,
+		peer: server.options.Peer}, "", "")
 	if !stop() {
 		<-drained
 	}
@@ -269,6 +275,13 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the connection ends its other HTTP/2 streams too, as it must.
 		_ = who.Conn.Close()
 		panic(http.ErrAbortHandler)
+	}
+	if limit := who.overReason(); limit != "" {
+		// Connection: close ends an HTTP/1.1 connection after this answer
+		// and makes HTTP/2 send GOAWAY: the client comes back on another.
+		w.Header().Set("Connection", "close")
+		server.deny(w, peer.DeviceID, limit, http.StatusTooManyRequests, overLimitMessage(limit), time.Second)
+		return
 	}
 	escaped := r.URL.EscapedPath()
 	switch {
@@ -895,4 +908,15 @@ func allowedUpgrade(header http.Header) bool {
 		}
 	}
 	return true
+}
+
+// overLimitMessage says which of its limits a Device's connection was past.
+func overLimitMessage(limit string) string {
+	switch limit {
+	case limitHandshakes:
+		return "the Device opens connections to the gateway too fast"
+	case limitSourceUnnamed, limitUnidentified:
+		return "too many of the Device's connections to the gateway are still starting"
+	}
+	return "the Device holds too many connections to the gateway"
 }

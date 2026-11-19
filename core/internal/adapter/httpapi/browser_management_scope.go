@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"meshtransit.net/core/internal/domain/authorization"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/identity/sessioncontext"
 	"meshtransit.net/core/internal/domain/network"
@@ -99,11 +100,7 @@ func managementScopeView(session accountsession.Session, page sessioncontext.Pag
 	items := page.Items()
 	networks := make([]managementScopeNetwork, len(items))
 	for index, item := range items {
-		permissions := item.Permissions()
-		encodedPermissions := make([]string, len(permissions))
-		for permissionIndex, permission := range permissions {
-			encodedPermissions[permissionIndex] = string(permission)
-		}
+		encodedPermissions := authorization.PublishedStrings(item.Permissions())
 		networks[index] = managementScopeNetwork{
 			ID: item.NetworkID().String(), DisplayName: item.DisplayName(), Permissions: encodedPermissions,
 			DisplayCode: item.DisplayCode().String(),
@@ -130,11 +127,7 @@ func managementScopeView(session accountsession.Session, page sessioncontext.Pag
 }
 
 func workspacePermissionStrings(page sessioncontext.Page) []string {
-	permissions := make([]string, 0, len(page.WorkspacePermissions()))
-	for _, permission := range page.WorkspacePermissions() {
-		permissions = append(permissions, string(permission))
-	}
-	return permissions
+	return authorization.PublishedStrings(page.WorkspacePermissions())
 }
 
 func classifyManagementScopeError(err error) managementError {

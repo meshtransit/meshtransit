@@ -26,8 +26,13 @@ const (
 	directProvenWithin = 2 * time.Second
 	// relayPongWithin is how long a relayed PING waits for its PONG.
 	relayPongWithin = 5 * time.Second
-	// relayPingAnswerSpacing paces the PONGs this node sends one peer.
-	relayPingAnswerSpacing = time.Second
+	// relayPingAnswerSpacing paces the PONGs this node sends one peer. It
+	// sits relayAnswerJitter under relayLivenessSpacing: PINGs sent a second
+	// apart arrive closer when the one-way delay varies, and an answer
+	// refused for that left a router or exit node with no PONG for 3.5 s,
+	// at the edge of the 4 s failover window (TD-CLI-55).
+	relayPingAnswerSpacing = relayLivenessSpacing - relayAnswerJitter
+	relayAnswerJitter      = 250 * time.Millisecond
 	// maxRelayPending bounds the relay PINGs waiting for a PONG: liveness
 	// pings, and on-demand measurements (measure.go), whose PINGs stay
 	// pending until their deadline, one a second for each running one.

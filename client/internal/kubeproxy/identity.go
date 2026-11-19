@@ -21,8 +21,9 @@ const ConnectionReceiveWindow = 256 << 10
 
 // identified is a connection and the Device it serves (K1-I1): named in
 // its TLS handshake, from the key its packets come under, then held for
-// every request after. Naming it there, not in Accept, keeps one slow
-// lookup from holding other connections back (review b5a M2).
+// every request after. Accept only asks the in-memory map whether the
+// address is a Device's, for its limits (TD-CLI-91); the key is checked at
+// the handshake.
 type identified struct {
 	net.Conn
 	source netip.Addr
@@ -34,10 +35,16 @@ type identified struct {
 
 	// gate counts the connection; joined: it counts against deviceID too;
 	// closed: its counts went (review b6b M1).
-	gate         *gate
-	countMu      sync.Mutex
-	joined       bool
-	closed       bool
+	gate    *gate
+	countMu sync.Mutex
+	joined  bool
+	closed  bool
+	// overLimit names the limit a known Device's connection was past, at
+	// accept or at its handshake: it is served only a 429 that closes it
+	// (TD-CLI-91), never counted against the Device. overCounted: it was
+	// taken from the over-limit budget at accept (gate.acceptKnown).
+	overLimit    atomic.Value // string
+	overCounted  bool
 	writeTimeout time.Duration
 	// writeDeadline is the last deadline set on the connection (time.Time).
 	writeDeadline atomic.Value
@@ -92,13 +99,31 @@ func (conn *identified) Close() error {
 	conn.countMu.Lock()
 	if !conn.closed && conn.gate != nil {
 		conn.closed = true
-		conn.gate.release(conn.source, !conn.joined)
-		if conn.joined {
-			conn.gate.leaveDevice(conn.deviceID)
+		switch {
+		case conn.overCounted:
+			conn.gate.releaseOver(conn.source)
+		default:
+			conn.gate.release(conn.source, !conn.joined)
+			if conn.joined {
+				conn.gate.leaveDevice(conn.deviceID)
+			}
 		}
 	}
 	conn.countMu.Unlock()
 	return conn.Conn.Close()
+}
+
+// answerOverLimit marks the connection past limit: it is served a 429,
+// and closed after overLimitHold whatever it does (TD-CLI-91).
+func (conn *identified) answerOverLimit(limit string) {
+	conn.overLimit.Store(limit)
+	time.AfterFunc(overLimitHold, func() { _ = conn.Close() })
+}
+
+// overReason is the limit the connection is past, or empty.
+func (conn *identified) overReason() string {
+	limit, _ := conn.overLimit.Load().(string)
+	return limit
 }
 
 // bind names the connection's Device the first time it is asked.
@@ -118,6 +143,9 @@ type identifying struct {
 	net.Listener
 	gate   *gate
 	logger *slog.Logger
+	// peer names the Device an address is, if any: a Device's connections
+	// past its limits get a 429 instead of being closed (TD-CLI-91).
+	peer func(netip.Addr) (Peer, bool)
 }
 
 func (listener identifying) Accept() (net.Conn, error) {
@@ -130,6 +158,27 @@ func (listener identifying) Accept() (net.Conn, error) {
 		if !ok {
 			_ = conn.Close()
 			continue
+		}
+		// The map is in memory: naming the source here holds no other
+		// connection back (review b5a M2).
+		if listener.peer != nil {
+			if _, known := listener.peer(source); known {
+				limit, admit, over := listener.gate.acceptKnown(source)
+				if limit != "" {
+					listener.gate.count(limit)
+				}
+				if !admit {
+					listener.logger.Debug("kube connection refused", "source", source, "limit", limit)
+					_ = conn.Close()
+					continue
+				}
+				held := &identified{Conn: conn, source: source, gate: listener.gate, writeTimeout: clientWriteTimeout,
+					overCounted: over}
+				if over {
+					held.answerOverLimit(limit)
+				}
+				return held, nil
+			}
 		}
 		if limit := listener.gate.accept(source); limit != "" {
 			listener.gate.count(limit)

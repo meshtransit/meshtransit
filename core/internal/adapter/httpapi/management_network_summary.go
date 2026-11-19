@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/domain/authorization"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/networksummary"
@@ -141,7 +142,7 @@ type networkSummaryItem struct {
 
 func networkSummaryItemView(figures networksummary.Figures) networkSummaryItem {
 	item := networkSummaryItem{NetworkID: figures.NetworkID.String(), DisplayName: figures.DisplayName,
-		DisplayCode: figures.DisplayCode, Permissions: append([]string{}, figures.Permissions...),
+		DisplayCode: figures.DisplayCode, Permissions: authorization.PublishedStrings(figures.Permissions),
 		AddressesCapacity: figures.AddressesCapacity, AddressesInUse: figures.AddressesInUse,
 		AddressesHeld: figures.AddressesHeld, KubernetesClusters: figures.KubernetesClusters,
 		ActiveDevices: figures.ActiveDevices, RuleCount: figures.RuleCount, PolicyRevision: figures.PolicyRevision,
