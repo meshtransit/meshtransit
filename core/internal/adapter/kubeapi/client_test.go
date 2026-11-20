@@ -22,6 +22,8 @@ type fakeAPI struct {
 	configMaps map[string]map[string]any
 	version    int
 	tokens     []string
+	pods       string // the JSON a pod list answers
+	selector   string
 }
 
 func (api *fakeAPI) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -32,6 +34,9 @@ func (api *fakeAPI) ServeHTTP(response http.ResponseWriter, request *http.Reques
 	kind, name, _ := strings.Cut(path, "/")
 	body, _ := io.ReadAll(request.Body)
 	switch {
+	case request.Method == http.MethodGet && kind == "pods":
+		api.selector = request.URL.Query().Get("labelSelector")
+		_, _ = response.Write([]byte(api.pods))
 	case kind == "redirect":
 		http.Redirect(response, request, "https://elsewhere.example/", http.StatusFound)
 	case request.Method == http.MethodGet && kind == "secrets":
@@ -200,5 +205,25 @@ func TestNewRefusesInvalidConfig(t *testing.T) {
 	}
 	if _, err := inCluster(func(string) string { return "" }, t.TempDir()); !errors.Is(err, ErrConfig) {
 		t.Fatalf("outside a pod: %v", err)
+	}
+}
+
+func TestListPods(t *testing.T) {
+	t.Parallel()
+	client, api := newClient(t)
+	api.pods = `{"metadata":{},"items":[{"metadata":{"name":"a","labels":{"app.kubernetes.io/component":"api"},
+		"deletionTimestamp":"2026-11-20T00:00:00Z"},"spec":{"containers":[{"name":"api","image":"r@sha256:1"}]},
+		"status":{"phase":"Running"}}]}`
+	pods, err := client.ListPods(t.Context(), "app.kubernetes.io/instance=r")
+	if err != nil || len(pods) != 1 || pods[0].Metadata.DeletionTimestamp == nil ||
+		pods[0].Spec.Containers[0].Image != "r@sha256:1" || api.selector != "app.kubernetes.io/instance=r" {
+		t.Fatalf("pods = %+v, %v, selector %q", pods, err, api.selector)
+	}
+	api.pods = `{"metadata":{"continue":"next"},"items":[]}`
+	if _, err := client.ListPods(t.Context(), "app.kubernetes.io/instance=r"); err == nil {
+		t.Fatal("a list longer than the page bound must fail, not be cut")
+	}
+	if _, err := client.ListPods(t.Context(), ""); err == nil {
+		t.Fatal("an empty selector must be refused")
 	}
 }

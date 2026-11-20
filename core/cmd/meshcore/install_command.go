@@ -32,6 +32,7 @@ type installDependencies struct {
 	databaseExists func(context.Context, postgresadapter.ServerBootstrapOptions, string) (bool, error)
 	secretStore    func() (installSecretStore, error)
 	readPlan       func(path string) ([]byte, error)
+	pods           func() (rolloutLister, error)
 	random         io.Reader
 }
 
@@ -47,12 +48,20 @@ func productionInstallDependencies() installDependencies {
 			return kubeapi.New(kubeConfig)
 		},
 		readPlan: readInstallPlan,
-		random:   rand.Reader,
+		pods: func() (rolloutLister, error) {
+			kubeConfig, err := kubeapi.InCluster()
+			if err != nil {
+				return nil, err
+			}
+			return kubeapi.New(kubeConfig)
+		},
+		random: rand.Reader,
 	}
 }
 
 // runInstall runs "meshcore install bootstrap postgres|kubernetes" (V1-11
-// step 2). postgres: as the database administrator, create or check the
+// step 2) and "meshcore install wait-rollout" (step 3, see
+// runInstallWaitRollout). postgres: as the database administrator, create or check the
 // logins, group roles and databases Core's migrations need, changing only
 // what differs, with the logins' passwords from files. kubernetes: first
 // create or check the plan's Secrets (and publish their public halves),
@@ -64,17 +73,21 @@ func runInstall(ctx context.Context, args []string, lookup config.LookupFunc, ou
 	if err != nil {
 		return 1
 	}
-	if len(args) != 2 || args[0] != "bootstrap" || dependencies.bootstrap == nil {
-		return writeInstallUsage(errorOutput)
+	switch strings.Join(args, " ") {
+	case "wait-rollout":
+		if dependencies.pods != nil {
+			return runInstallWaitRollout(ctx, lookup, output, errorOutput, dependencies.pods, rolloutPoll)
+		}
+	case "bootstrap postgres":
+		if dependencies.bootstrap != nil {
+			return runInstallPostgres(ctx, lookup, output, logger, dependencies)
+		}
+	case "bootstrap kubernetes":
+		if dependencies.bootstrap != nil {
+			return runInstallKubernetes(ctx, lookup, output, logger, dependencies)
+		}
 	}
-	switch args[1] {
-	case "postgres":
-		return runInstallPostgres(ctx, lookup, output, logger, dependencies)
-	case "kubernetes":
-		return runInstallKubernetes(ctx, lookup, output, logger, dependencies)
-	default:
-		return writeInstallUsage(errorOutput)
-	}
+	return writeInstallUsage(errorOutput)
 }
 
 func writeInstallUsage(errorOutput io.Writer) int {

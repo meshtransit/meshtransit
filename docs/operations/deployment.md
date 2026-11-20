@@ -124,6 +124,22 @@ drops a pool whose server became read-only.
 3. Run `meshcore migrate operator apply --after-rollout` (on a fresh install
    no previous release runs), then `meshcore migrate verify`, which must exit 0.
 
+On Kubernetes the chart can run step 3 itself (`operator.afterRollout`): a
+post-install/post-upgrade Job first runs `meshcore install wait-rollout`,
+which lists the release's pods and ReplicaSets (a token that may only list
+them) and waits until every pod whose container serves Core
+(`MESHTRANSIT_ROLE` api, control, worker or all) runs this release's image
+for its component (compared by digest), none is shutting down, no
+ReplicaSet with another image has a replica, and no component this release
+removed has a pod left (`MESHTRANSIT_ROLLOUT_INSTANCE`,
+`MESHTRANSIT_ROLLOUT_CHART`, `MESHTRANSIT_ROLLOUT_IMAGES` as
+`component=image,…`, `MESHTRANSIT_ROLLOUT_TIMEOUT`, at most 30m). A passing
+API error is retried; a denied one fails at once. A pod stuck terminating
+holds the wait until it is removed. Run Helm with `--wait` and a
+`--timeout` above the wait plus the Job's deadline, and not with
+`--atomic`: once these steps ran, the previous release's code lacks grants
+it needs, so rolling back to it is a forward fix instead.
+
 The operator steps are the SQL files in `core/migrations/operator/`, embedded
 in the binary. The command never runs a file from disk, nor a file's text:
 it parses each file with a narrow grammar (whole-line `--` comments only;

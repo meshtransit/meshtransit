@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -125,6 +126,125 @@ type Secret struct {
 type ConfigMap struct {
 	Metadata Metadata          `json:"metadata"`
 	Data     map[string]string `json:"data,omitempty"`
+}
+
+// Container is the part of a container a rollout check reads.
+type Container struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	Env   []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"env,omitempty"`
+}
+
+// EnvValue is the literal value of name in the container's env, if any.
+func (container Container) EnvValue(name string) string {
+	for _, variable := range container.Env {
+		if variable.Name == name {
+			return variable.Value
+		}
+	}
+	return ""
+}
+
+// ObjectMeta is the part of an object's metadata a rollout check reads.
+type ObjectMeta struct {
+	Name              string            `json:"name"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
+}
+
+// Pod is the part of a Pod a rollout check reads.
+type Pod struct {
+	Metadata ObjectMeta `json:"metadata"`
+	Spec     struct {
+		Containers []Container `json:"containers"`
+	} `json:"spec"`
+	Status struct {
+		Phase string `json:"phase"`
+	} `json:"status"`
+}
+
+// ReplicaSet is the part of a ReplicaSet a rollout check reads.
+type ReplicaSet struct {
+	Metadata ObjectMeta `json:"metadata"`
+	Spec     struct {
+		Replicas *int32 `json:"replicas,omitempty"`
+		Template struct {
+			Metadata ObjectMeta `json:"metadata"`
+			Spec     struct {
+				Containers []Container `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+	Status struct {
+		Replicas int32 `json:"replicas"`
+	} `json:"status"`
+}
+
+const (
+	// listPage is one page of a list; each page is also bounded by
+	// maxResponseBytes.
+	listPage = 100
+	// maxListPages bounds a whole list (2 000 objects).
+	maxListPages = 20
+)
+
+// ErrDenied reports a request the API server refused for the token (401 or
+// 403): waiting will not help.
+var ErrDenied = errors.New("kubeapi: denied")
+
+// ListPods lists the namespace's pods that match labelSelector.
+func (c *Client) ListPods(ctx context.Context, labelSelector string) ([]Pod, error) {
+	return listAll[Pod](ctx, c, c.base+"/pods", "pods", labelSelector)
+}
+
+// ListReplicaSets lists the namespace's ReplicaSets that match
+// labelSelector.
+func (c *Client) ListReplicaSets(ctx context.Context, labelSelector string) ([]ReplicaSet, error) {
+	base := strings.Replace(c.base, "/api/v1/", "/apis/apps/v1/", 1)
+	return listAll[ReplicaSet](ctx, c, base+"/replicasets", "replicasets", labelSelector)
+}
+
+// listAll reads every page of a list, at most maxListPages.
+func listAll[T any](ctx context.Context, c *Client, target, kind, labelSelector string) ([]T, error) {
+	if labelSelector == "" || len(labelSelector) > 1024 {
+		return nil, ErrConfig
+	}
+	items := []T{}
+	next := ""
+	for page := 0; page < maxListPages; page++ {
+		query := url.Values{"labelSelector": {labelSelector}, "limit": {strconv.Itoa(listPage)}}
+		if next != "" {
+			query.Set("continue", next)
+		}
+		code, payload, err := c.do(ctx, http.MethodGet, target+"?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		if code == http.StatusUnauthorized || code == http.StatusForbidden {
+			return nil, errors.Join(ErrDenied, statusError("list "+kind, code, payload))
+		}
+		if code != http.StatusOK {
+			return nil, statusError("list "+kind, code, payload)
+		}
+		var list struct {
+			Metadata struct {
+				Continue string `json:"continue"`
+			} `json:"metadata"`
+			Items []T `json:"items"`
+		}
+		if err := json.Unmarshal(payload, &list); err != nil {
+			return nil, fmt.Errorf("kubeapi: decoding %s: %w", kind, err)
+		}
+		items = append(items, list.Items...)
+		if list.Metadata.Continue == "" {
+			return items, nil
+		}
+		next = list.Metadata.Continue
+	}
+	return nil, fmt.Errorf("kubeapi: more than %d %s match %q", maxListPages*listPage, kind, labelSelector)
 }
 
 // GetSecret reads a Secret; false when it does not exist.
