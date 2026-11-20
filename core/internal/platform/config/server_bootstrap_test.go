@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"maps"
 	"testing"
 )
 
@@ -60,6 +61,32 @@ func TestLoadServerBootstrapRefuses(t *testing.T) {
 		change(environment)
 		if _, err := LoadServerBootstrap(lookupFrom(environment)); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: LoadServerBootstrap() = %v", name, err)
+		}
+	}
+}
+
+func TestLoadKubernetesBootstrap(t *testing.T) {
+	t.Parallel()
+	environment := serverBootstrapEnvironment()
+	delete(environment, envBootstrapLoginPasswordFiles)
+	environment[envInstallPlanFile] = "/run/meshtransit/plan/plan.json"
+	loaded, err := LoadKubernetesBootstrap(lookupFrom(environment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.PlanFile != "/run/meshtransit/plan/plan.json" || loaded.Database.LoginPasswordFiles != nil ||
+		loaded.Database.CoreDatabase != "meshtransit" {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+	for name, change := range map[string]func(map[string]string){
+		"no plan":       func(e map[string]string) { delete(e, envInstallPlanFile) },
+		"relative plan": func(e map[string]string) { e[envInstallPlanFile] = "plan.json" },
+		"login files":   func(e map[string]string) { e[envBootstrapLoginPasswordFiles] = "mesh_migrator=/run/m" },
+	} {
+		changed := maps.Clone(environment)
+		change(changed)
+		if _, err := LoadKubernetesBootstrap(lookupFrom(changed)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: LoadKubernetesBootstrap() = %v", name, err)
 		}
 	}
 }

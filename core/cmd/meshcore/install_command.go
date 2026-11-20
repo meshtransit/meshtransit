@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"meshtransit.net/core/internal/adapter/kubeapi"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/core/internal/platform/observability"
@@ -23,55 +25,110 @@ var installLogins = []string{
 	"identity_migrator", "identity_runtime",
 }
 
-// runInstall runs "meshcore install bootstrap postgres" (V1-11 step 2): as
-// the database administrator, create or check the logins, group roles and
-// databases Core's migrations need, changing only what differs.
+// installDependencies are what "meshcore install" reaches outside the
+// process; tests replace them.
+type installDependencies struct {
+	bootstrap      func(context.Context, postgresadapter.ServerBootstrapOptions) (postgresadapter.ServerBootstrapReport, error)
+	databaseExists func(context.Context, postgresadapter.ServerBootstrapOptions, string) (bool, error)
+	secretStore    func() (installSecretStore, error)
+	readPlan       func(path string) ([]byte, error)
+	random         io.Reader
+}
+
+func productionInstallDependencies() installDependencies {
+	return installDependencies{
+		bootstrap:      postgresadapter.BootstrapServer,
+		databaseExists: postgresadapter.ServerCoreSchemaExists,
+		secretStore: func() (installSecretStore, error) {
+			kubeConfig, err := kubeapi.InCluster()
+			if err != nil {
+				return nil, err
+			}
+			return kubeapi.New(kubeConfig)
+		},
+		readPlan: readInstallPlan,
+		random:   rand.Reader,
+	}
+}
+
+// runInstall runs "meshcore install bootstrap postgres|kubernetes" (V1-11
+// step 2). postgres: as the database administrator, create or check the
+// logins, group roles and databases Core's migrations need, changing only
+// what differs, with the logins' passwords from files. kubernetes: first
+// create or check the plan's Secrets (and publish their public halves),
+// then the same database step with the passwords from those Secrets.
 func runInstall(ctx context.Context, args []string, lookup config.LookupFunc, output, errorOutput io.Writer,
-	bootstrap func(context.Context, postgresadapter.ServerBootstrapOptions) (postgresadapter.ServerBootstrapReport, error),
+	dependencies installDependencies,
 ) int {
 	logger, err := observability.NewLogger(errorOutput, slog.LevelInfo)
 	if err != nil {
 		return 1
 	}
-	if len(args) != 2 || args[0] != "bootstrap" || args[1] != "postgres" || bootstrap == nil {
-		if _, err := io.WriteString(errorOutput, usage); err != nil {
-			return 1
-		}
-		return 2
+	if len(args) != 2 || args[0] != "bootstrap" || dependencies.bootstrap == nil {
+		return writeInstallUsage(errorOutput)
 	}
+	switch args[1] {
+	case "postgres":
+		return runInstallPostgres(ctx, lookup, output, logger, dependencies)
+	case "kubernetes":
+		return runInstallKubernetes(ctx, lookup, output, logger, dependencies)
+	default:
+		return writeInstallUsage(errorOutput)
+	}
+}
+
+func writeInstallUsage(errorOutput io.Writer) int {
+	if _, err := io.WriteString(errorOutput, usage); err != nil {
+		return 1
+	}
+	return 2
+}
+
+func runInstallPostgres(ctx context.Context, lookup config.LookupFunc, output io.Writer, logger *slog.Logger,
+	dependencies installDependencies,
+) int {
 	bootstrapConfig, err := config.LoadServerBootstrap(lookup)
 	if err != nil {
 		logger.ErrorContext(ctx, "install bootstrap failed", "error_code", "invalid_bootstrap_configuration", "error", err)
 		return 1
 	}
-	options, err := serverBootstrapOptions(bootstrapConfig)
-	defer func() {
-		for _, login := range options.Logins {
-			clear(login.Password)
+	passwords := map[string][]byte{}
+	defer clearPasswords(passwords)
+	for name, file := range bootstrapConfig.LoginPasswordFiles {
+		password, err := file.Read()
+		if err != nil {
+			logger.ErrorContext(ctx, "install bootstrap failed", "error_code", "bootstrap_password_unreadable", "login", name)
+			return 1
 		}
-	}()
+		passwords[name] = []byte(password)
+	}
+	options, err := serverBootstrapOptions(bootstrapConfig, passwords)
 	if err != nil {
-		code := "bootstrap_password_unreadable"
-		var unknown errBootstrapUnknownLogin
-		if errors.As(err, &unknown) {
-			code = "bootstrap_unknown_login"
-		}
-		logger.ErrorContext(ctx, "install bootstrap failed", "error_code", code, "login", err.Error())
+		logger.ErrorContext(ctx, "install bootstrap failed", "error_code", "bootstrap_unknown_login", "login", err.Error())
 		return 1
 	}
-	report, err := bootstrap(ctx, options)
+	report, err := dependencies.bootstrap(ctx, options)
 	if err != nil {
 		logger.ErrorContext(ctx, "install bootstrap failed", "error_code", serverBootstrapErrorCode(err), "error", err)
 		return 1
 	}
-	encoder := json.NewEncoder(output)
-	if err := encoder.Encode(struct {
+	return writeInstallReport(output, struct {
 		Operation string `json:"operation"`
 		postgresadapter.ServerBootstrapReport
-	}{Operation: "install bootstrap postgres", ServerBootstrapReport: report}); err != nil {
+	}{Operation: "install bootstrap postgres", ServerBootstrapReport: report})
+}
+
+func writeInstallReport(output io.Writer, report any) int {
+	if err := json.NewEncoder(output).Encode(report); err != nil {
 		return 1
 	}
 	return 0
+}
+
+func clearPasswords(passwords map[string][]byte) {
+	for _, password := range passwords {
+		clear(password)
+	}
 }
 
 // errBootstrapUnknownLogin names a login the bootstrap does not keep.
@@ -79,12 +136,10 @@ type errBootstrapUnknownLogin string
 
 func (login errBootstrapUnknownLogin) Error() string { return string(login) }
 
-// errBootstrapPasswordUnreadable names the login whose file did not read.
-type errBootstrapPasswordUnreadable string
-
-func (login errBootstrapPasswordUnreadable) Error() string { return string(login) }
-
-func serverBootstrapOptions(bootstrapConfig config.ServerBootstrapConfig) (postgresadapter.ServerBootstrapOptions, error) {
+// serverBootstrapOptions builds the database step's options; passwords maps
+// a login to its password (the caller clears them after the run).
+func serverBootstrapOptions(bootstrapConfig config.ServerBootstrapConfig, passwords map[string][]byte,
+) (postgresadapter.ServerBootstrapOptions, error) {
 	options := postgresadapter.ServerBootstrapOptions{
 		Address: bootstrapConfig.Address, MaintenanceDatabase: bootstrapConfig.MaintenanceDatabase,
 		Admin: bootstrapConfig.Admin, AdminPasswordFile: bootstrapConfig.AdminPasswordFile,
@@ -98,8 +153,8 @@ func serverBootstrapOptions(bootstrapConfig config.ServerBootstrapConfig) (postg
 		options.Databases = append(options.Databases,
 			postgresadapter.ServerBootstrapDatabase{Name: bootstrapConfig.IdentityDatabase, Owner: "identity_migrator"})
 	}
-	for name := range bootstrapConfig.LoginPasswordFiles {
-		if !slices.Contains(installLogins, name) {
+	for name := range passwords {
+		if !slices.Contains(installLogins, name) || name == "mesh_observer" {
 			// A typo would otherwise leave the intended login unmanaged.
 			return options, errBootstrapUnknownLogin(name)
 		}
@@ -109,25 +164,19 @@ func serverBootstrapOptions(bootstrapConfig config.ServerBootstrapConfig) (postg
 		catalog[login.Name] = login
 	}
 	for _, name := range installLogins {
-		file, configured := bootstrapConfig.LoginPasswordFiles[name]
+		password, configured := passwords[name]
 		if !configured && name != "mesh_observer" {
 			continue
 		}
 		login := postgresadapter.ServerBootstrapLogin{
 			Name: name, Database: bootstrapConfig.CoreDatabase, MemberOf: migrations.OperatorRequiredGroups(name),
+			Password: password,
 		}
 		if strings.HasPrefix(name, "identity_") {
 			login.Database = bootstrapConfig.IdentityDatabase
 		}
 		if entry, ok := catalog[name]; ok {
 			login.NotMemberOf = entry.NotMemberOf
-		}
-		if configured {
-			password, err := file.Read()
-			if err != nil {
-				return options, errBootstrapPasswordUnreadable(name)
-			}
-			login.Password = []byte(password)
 		}
 		options.Logins = append(options.Logins, login)
 	}

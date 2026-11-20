@@ -186,6 +186,73 @@ session's.
 | `MESHTRANSIT_BOOTSTRAP_CONNECT_TIMEOUT` | `5s` | 100ms–30s | |
 | `MESHTRANSIT_BOOTSTRAP_STATEMENT_TIMEOUT` | `30s` | 1s–10m | Per statement; locks wait half of it |
 
+### Kubernetes bootstrap
+
+`meshcore install bootstrap kubernetes` is the chart's bootstrap Job: it first
+creates or checks every Secret of the install plan, then runs the database
+bootstrap above with the logins' passwords read from those Secrets (through
+the Kubernetes API, with the pod's service account). It takes the database
+settings above except `MESHTRANSIT_BOOTSTRAP_LOGIN_PASSWORD_FILES`, which it
+refuses, and:
+
+| Variable | Default | Allowed | Meaning |
+|---|---|---|---|
+| `MESHTRANSIT_INSTALL_PLAN_FILE` | required | path | The plan the chart renders (JSON, at most 64 KiB) |
+
+The plan:
+
+```json
+{
+  "profile": "cloud",
+  "release": "meshtransit-core",
+  "fullname": "meshtransit-core",
+  "features": ["identity", "connectionLogs", "kubernetesCA", "entitlement"],
+  "secrets": {"control-noise": {"existingSecret": "my-control-key", "key": "noise.key"}},
+  "allowNewRetainedKeys": []
+}
+```
+
+- Each item lives in its own Secret, `<fullname>-<item>` with the key the pod
+  reads (`password` for logins and Redis users); `secrets` names an
+  installer's Secret and key instead (bring your own), which is only checked.
+- A missing Secret is generated and created, never overwritten. One with an
+  item's default name is used only when the bootstrap made it (labels
+  `app.kubernetes.io/managed-by: meshtransit-bootstrap` and
+  `meshtransit.net/install-item: <item>`), when an earlier chart's operator
+  or redis-acl hook made it for this release (login and Redis passwords; under
+  Argo CD the Application's name must be the release name), or when the plan
+  names it; otherwise the run stops. An installer's value is
+  checked as Core reads it: what Core accepts passes.
+- `control-noise`, `enrollment-digest`, `relay-signing`, `subject-active`,
+  `kube-ca-wrap-key` and `installation-seed` must be kept
+  (`meshtransit.net/backup: required`): clients or relays pin them, the
+  database holds digests or wrapped data made with them (enrollment keys,
+  people's sign-in links, Kubernetes CAs), or an entitlement is signed on
+  them. When one is missing and the Core database holds Core's schema, the
+  run stops with `install_retained_key_missing`: restore it from the backup,
+  or name it in `allowNewRetainedKeys` to make a new one on purpose (the run
+  reports `retained_keys_generated` and logs a warning). Remove it from the
+  list afterwards: while the list names a key that exists, the run stops
+  with `install_retained_allow_stale`.
+- Generated Secrets are immutable: to rotate an item that is not retained,
+  delete its Secret, upgrade, and restart the roles that read it.
+- The public halves go to the ConfigMap `<fullname>-public-keys`:
+  `relay-signing` in `mtsign:` form for `MESHTRANSIT_INTERCHANGE_RELAY_SIGNING_KEYS`,
+  `flowlog-signing` as the bare key (write it as `current=<key>` in
+  `MESHTRANSIT_FLOWLOG_TOKEN_PUBLIC_KEYS`), and `installation` for the
+  entitlement request.
+- Anyone who may create Secrets in the namespace can also make one that looks
+  like the bootstrap's: give that right only to the namespace's
+  administrators.
+- It prints what it created, never a value; a failure log names the item and
+  Secret. Error codes: `invalid_install_plan`, `install_setup_invalid`,
+  `install_secret_missing`, `install_secret_not_ours`,
+  `install_secret_invalid`, `install_retained_key_missing`,
+  `install_retained_allow_stale`,
+  `install_public_keys_not_ours`, `install_conflict`,
+  `install_kubernetes_unavailable`, `install_secrets_failure`,
+  `bootstrap_unknown_login`, then the database bootstrap's.
+
 ## Redis
 
 For `api`, `control`, `worker` and `all`. The ACL the user needs is in

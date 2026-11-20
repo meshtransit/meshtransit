@@ -23,6 +23,7 @@ const (
 	envBootstrapMarker                 = "MESHTRANSIT_BOOTSTRAP_MARKER"
 	envBootstrapLoginPasswordFiles     = "MESHTRANSIT_BOOTSTRAP_LOGIN_PASSWORD_FILES"
 	envBootstrapRotateLogins           = "MESHTRANSIT_BOOTSTRAP_ROTATE_LOGINS"
+	envInstallPlanFile                 = "MESHTRANSIT_INSTALL_PLAN_FILE"
 	maxBootstrapLogins                 = 10
 )
 
@@ -47,8 +48,59 @@ type ServerBootstrapConfig struct {
 	RotateLogins       bool
 }
 
-// LoadServerBootstrap reads and checks the bootstrap's settings.
+// LoadServerBootstrap reads and checks the bootstrap's settings, with the
+// logins' password files.
 func LoadServerBootstrap(lookup LookupFunc) (ServerBootstrapConfig, error) {
+	bootstrapConfig, err := loadServerBootstrapDatabase(lookup)
+	if err != nil {
+		return ServerBootstrapConfig{}, err
+	}
+	logins, err := loadBootstrapLoginPasswordFiles(lookup)
+	if err != nil {
+		return ServerBootstrapConfig{}, err
+	}
+	if _, ok := logins["mesh_migrator"]; !ok {
+		return ServerBootstrapConfig{}, settingError(envBootstrapLoginPasswordFiles)
+	}
+	for _, login := range []string{"identity_migrator", "identity_runtime"} {
+		// Both with an identity database, neither without one.
+		if _, ok := logins[login]; ok != (bootstrapConfig.IdentityDatabase != "") {
+			return ServerBootstrapConfig{}, settingError(envBootstrapLoginPasswordFiles)
+		}
+	}
+	bootstrapConfig.LoginPasswordFiles = logins
+	return bootstrapConfig, nil
+}
+
+// KubernetesBootstrapConfig is what "install bootstrap kubernetes" needs:
+// the database settings, and the chart's plan; the logins' passwords come
+// from the Secrets the plan names.
+type KubernetesBootstrapConfig struct {
+	Database ServerBootstrapConfig
+	PlanFile string
+}
+
+// LoadKubernetesBootstrap reads and checks the Kubernetes bootstrap's
+// settings.
+func LoadKubernetesBootstrap(lookup LookupFunc) (KubernetesBootstrapConfig, error) {
+	if lookup != nil {
+		if _, present := lookup(envBootstrapLoginPasswordFiles); present {
+			// Passwords come from the plan's Secrets only.
+			return KubernetesBootstrapConfig{}, settingError(envBootstrapLoginPasswordFiles)
+		}
+	}
+	database, err := loadServerBootstrapDatabase(lookup)
+	if err != nil {
+		return KubernetesBootstrapConfig{}, err
+	}
+	plan, err := requiredFile(lookup, envInstallPlanFile)
+	if err != nil {
+		return KubernetesBootstrapConfig{}, err
+	}
+	return KubernetesBootstrapConfig{Database: database, PlanFile: plan}, nil
+}
+
+func loadServerBootstrapDatabase(lookup LookupFunc) (ServerBootstrapConfig, error) {
 	if lookup == nil {
 		return ServerBootstrapConfig{}, fmt.Errorf("%w: environment lookup is required", ErrInvalid)
 	}
@@ -100,19 +152,6 @@ func LoadServerBootstrap(lookup LookupFunc) (ServerBootstrapConfig, error) {
 	if err != nil {
 		return ServerBootstrapConfig{}, settingError(envBootstrapStatementTimeout)
 	}
-	logins, err := loadBootstrapLoginPasswordFiles(lookup)
-	if err != nil {
-		return ServerBootstrapConfig{}, err
-	}
-	if _, ok := logins["mesh_migrator"]; !ok {
-		return ServerBootstrapConfig{}, settingError(envBootstrapLoginPasswordFiles)
-	}
-	for _, login := range []string{"identity_migrator", "identity_runtime"} {
-		// Both with an identity database, neither without one.
-		if _, ok := logins[login]; ok != (identity != "") {
-			return ServerBootstrapConfig{}, settingError(envBootstrapLoginPasswordFiles)
-		}
-	}
 	rotate, present := lookup(envBootstrapRotateLogins)
 	if present && rotate != "true" && rotate != "false" {
 		return ServerBootstrapConfig{}, settingError(envBootstrapRotateLogins)
@@ -122,7 +161,7 @@ func LoadServerBootstrap(lookup LookupFunc) (ServerBootstrapConfig, error) {
 		AdminPasswordFile: SecretFile{path: passwordFile}, CAFile: TrustFile{path: caFile},
 		ConnectTimeout: connectTimeout, StatementTimeout: statementTimeout,
 		CoreDatabase: core, IdentityDatabase: identity, Marker: marker,
-		LoginPasswordFiles: logins, RotateLogins: rotate == "true",
+		RotateLogins: rotate == "true",
 	}, nil
 }
 

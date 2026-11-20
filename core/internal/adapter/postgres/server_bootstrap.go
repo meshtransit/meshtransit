@@ -166,6 +166,49 @@ func BootstrapServer(ctx context.Context, options ServerBootstrapOptions) (Serve
 	return run.report, nil
 }
 
+// ServerCoreSchemaExists reports whether database holds Core's schema (a
+// migration ran there), read as the administrator from the catalogs any
+// role may read. The Kubernetes bootstrap asks it before it would generate
+// a retained key: data the old key protected may be there. An empty
+// database made ahead (common on a managed service) does not count. When
+// the administrator may not connect to the database, the answer is yes:
+// a migration took CONNECT from PUBLIC.
+func ServerCoreSchemaExists(ctx context.Context, options ServerBootstrapOptions, database string) (bool, error) {
+	if !postgresIdentifier.MatchString(database) || !postgresIdentifier.MatchString(options.Admin) ||
+		options.Address == "" || options.ConnectTimeout <= 0 || options.StatementTimeout < time.Second {
+		return false, ErrInvalidServerBootstrap
+	}
+	password, err := options.AdminPasswordFile.Read()
+	if err != nil {
+		return false, errors.Join(ErrMigrationOpen, err)
+	}
+	caPEM, err := options.CAFile.Read()
+	if err != nil {
+		return false, errors.Join(ErrMigrationOpen, err)
+	}
+	connection, err := options.connect(ctx, database, options.Admin, []byte(password), caPEM)
+	if err != nil {
+		var server *pgconn.PgError
+		switch {
+		case errors.As(err, &server) && server.Code == "3D000":
+			return false, nil
+		case errors.As(err, &server) && server.Code == "42501":
+			return true, nil
+		default:
+			return false, err
+		}
+	}
+	defer func() { _ = connection.Close(context.WithoutCancel(ctx)) }()
+	var exists bool
+	if err := connection.QueryRow(ctx, `SELECT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_class AS relation
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'mesh_ops' AND relation.relname = 'schema_migration')`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("read Core schema in %s: %w", database, err)
+	}
+	return exists, nil
+}
+
 func (options ServerBootstrapOptions) validate() error {
 	names := []string{options.Admin, options.MaintenanceDatabase, options.CoreDatabase, options.Migrator}
 	for _, login := range options.Logins {
@@ -379,7 +422,7 @@ func (run *serverBootstrapRun) ensureGroups(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := run.ensureRole(ctx, group, state, false, nil); err != nil {
+			if err := run.ensureRole(ctx, group, state, roleNeeds{inherit: true}, nil); err != nil {
 				return err
 			}
 		}
@@ -391,7 +434,18 @@ func (run *serverBootstrapRun) ensureGroups(ctx context.Context) error {
 // given) or makes an existing one's attributes and settings what Core
 // needs. It never mentions SUPERUSER, REPLICATION or BYPASSRLS to change a
 // role: only a superuser may, and a role created here never has them.
-func (run *serverBootstrapRun) ensureRole(ctx context.Context, name string, state roleState, login bool, password []byte) error {
+// roleNeeds is what a role must be beyond the attributes every one has.
+type roleNeeds struct {
+	login bool
+	// inherit: a login that gets its rights through group roles, or a
+	// group. A login with no group may stay NOINHERIT (a hardening choice).
+	inherit bool
+}
+
+func (run *serverBootstrapRun) ensureRole(ctx context.Context, name string, state roleState, needs roleNeeds,
+	password []byte,
+) error {
+	login := needs.login
 	identifier := pgx.Identifier{name}.Sanitize()
 	loginAttribute := "NOLOGIN"
 	if login {
@@ -428,10 +482,14 @@ func (run *serverBootstrapRun) ensureRole(ctx context.Context, name string, stat
 		}
 		run.report.Fixed = append(run.report.Fixed, name+":superuser")
 	}
-	if state.createRole || state.createDB || state.canLogin != login || !state.inherit || state.expires {
+	if state.createRole || state.createDB || state.canLogin != login || needs.inherit && !state.inherit || state.expires {
+		inheritAttribute := ""
+		if needs.inherit {
+			inheritAttribute = " INHERIT"
+		}
 		// An expired VALID UNTIL refuses the right password like a wrong one.
-		if err := run.exec(ctx, "ALTER ROLE "+identifier+" "+loginAttribute+
-			" INHERIT NOCREATEDB NOCREATEROLE VALID UNTIL 'infinity'"); err != nil {
+		if err := run.exec(ctx, "ALTER ROLE "+identifier+" "+loginAttribute+inheritAttribute+
+			" NOCREATEDB NOCREATEROLE VALID UNTIL 'infinity'"); err != nil {
 			return fmt.Errorf("fix role %s: %w", name, err)
 		}
 		run.report.Fixed = append(run.report.Fixed, name+":attributes")
@@ -467,7 +525,8 @@ func (run *serverBootstrapRun) ensureLogins(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := run.ensureRole(ctx, login.Name, state, true, login.Password); err != nil {
+		needs := roleNeeds{login: true, inherit: len(login.MemberOf) != 0}
+		if err := run.ensureRole(ctx, login.Name, state, needs, login.Password); err != nil {
 			return err
 		}
 		if state.exists && login.Password != nil {
