@@ -59,3 +59,13 @@ func identityFingerprintFromSettings(settings map[string]string) (string, error)
 	}
 	return dexbroker.CalculateConfigurationFingerprint(identityServiceOptions(identity))
 }
+
+// calculateIdentityFingerprint fingerprints the identity settings in the
+// environment, as "identity fingerprint" does.
+func calculateIdentityFingerprint(lookup config.LookupFunc) (string, error) {
+	identity, err := config.LoadIdentityFingerprintInput(lookup)
+	if err != nil {
+		return "", err
+	}
+	return dexbroker.CalculateConfigurationFingerprint(identityServiceOptions(identity))
+}

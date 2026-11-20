@@ -564,17 +564,8 @@ func (command setupCommand) migrateIdentity(run string) error {
 	if err != nil {
 		return fmt.Errorf("identity-migrate.env: %w", err)
 	}
-	if err := migrateIdentityStorage(command.ctx, migration, command.logger); err != nil {
-		return fmt.Errorf("identity broker schema: %w", err)
-	}
-	if err := postgresadapter.GrantIdentityRuntime(command.ctx, postgresadapter.MigrationOptions{
-		Address: migration.PostgreSQL.Address, Database: migration.PostgreSQL.Database,
-		User: migration.PostgreSQL.User, PasswordFile: migration.PostgreSQL.PasswordFile,
-		CAFile: migration.PostgreSQL.CAFile, ConnectTimeout: migration.ConnectTimeout,
-		LockTimeout: migration.LockTimeout, StatementTimeout: migration.StatementTimeout,
-		Actor: migration.Actor, CodeRelease: buildinfo.Release(),
-	}, selfhost.IdentityRuntimeRole); err != nil {
-		return fmt.Errorf("identity broker grants: %w", err)
+	if err := migrateIdentityDatabase(command.ctx, migration, command.logger); err != nil {
+		return err
 	}
 	return command.report(map[string]any{"operation": "identity storage", "migrated": true})
 }

@@ -383,6 +383,29 @@ differ from Core's on the same server.
 | `MESHTRANSIT_IDENTITY_SIGNING_KEY_ROTATION` | `6h` | 1h–30d | How often the broker rotates its token signing key |
 | `MESHTRANSIT_IDENTITY_GARBAGE_COLLECTION_INTERVAL` | `5m` | 1m–1h | |
 
+### Identity broker on Kubernetes
+
+Two commands of the identity image serve the chart's hook Jobs:
+
+- `meshcore identity migrate` brings the broker's database to the pinned
+  broker's schema as its owner (`identity_migrator`, through the
+  `MESHTRANSIT_MIGRATION_*` settings), then gives `identity_runtime` the data
+  access it needs. It changes nothing when both are in place.
+- `meshcore identity fingerprint publish` fingerprints the identity
+  settings in its environment (the same as the identity pods') and writes
+  the result to the ConfigMap `MESHTRANSIT_IDENTITY_FINGERPRINT_CONFIGMAP`
+  under the key `MESHTRANSIT_IDENTITY_FINGERPRINT_KEY`; the chart derives the
+  key from the identity image and settings of the render, and the identity
+  pods read `MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT` from it. The
+  ConfigMap keeps the newest five keys (a render that comes back moves to
+  the front), and the Job runs before a rollback too. On Kubernetes the
+  configuration is approved this way, by whoever may change the release;
+  there is no separate approval step. The fingerprint covers the contents
+  of the files and env sources the settings name (the OIDC client secrets
+  among them): change one and, in the same change, upgrade the release with
+  a new `identityFingerprint.secretRevision`, or new identity pods refuse to
+  start. The Job prints and logs only the fingerprint's first characters.
+
 ## Control
 
 For `control` and `all`.

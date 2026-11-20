@@ -23,3 +23,8 @@ func runIdentityFingerprint(
 func identityFingerprintFromSettings(map[string]string) (string, error) {
 	return "", errIdentityBrokerUnavailable
 }
+
+// calculateIdentityFingerprint needs the dexbroker build.
+func calculateIdentityFingerprint(config.LookupFunc) (string, error) {
+	return "", errIdentityBrokerUnavailable
+}
