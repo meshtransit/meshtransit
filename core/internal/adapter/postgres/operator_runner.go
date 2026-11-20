@@ -22,6 +22,8 @@ var (
 	ErrInvalidOperatorOptions = errors.New("invalid postgres operator options")
 
 	errOperatorDryRun = errors.New("operator dry run rolled back")
+	// errOperatorStatusRolledBack ends every status transaction.
+	errOperatorStatusRolledBack = errors.New("operator status rolled back")
 )
 
 // OperatorStepFailedError names the step PostgreSQL refused and its
@@ -131,22 +133,42 @@ func OpenOperatorRunner(ctx context.Context, options OperatorOptions) (*Operator
 	return &OperatorRunner{connection: &pgxMigrationConnection{connection: connection}, options: options}, nil
 }
 
-// Status reports every catalog step in one read-only transaction.
+// Status reports every catalog step in one transaction that always rolls
+// back: read only for an operator that can read the schema; one that
+// cannot (a managed administrator) joins the migrator for it, which needs a
+// transaction that may write, and the rollback takes the join back.
 func (runner *OperatorRunner) Status(ctx context.Context) (OperatorReport, error) {
 	if ctx == nil || runner == nil || runner.connection == nil {
 		return OperatorReport{}, ErrInvalidOperatorOptions
 	}
 	var report OperatorReport
-	err := runner.withTransaction(ctx, true, false, func(transaction migrationTransaction) error {
+	err := runner.withTransaction(ctx, false, false, func(transaction migrationTransaction) error {
+		grants := &operatorGrants{}
+		if err := grants.begin(ctx, transaction); err != nil {
+			return err
+		}
 		queryRow := transactionQueryRow(transaction)
 		version, err := readOperatorSchemaVersion(ctx, queryRow)
 		if err != nil {
 			return err
 		}
 		report, err = readOperatorReport(ctx, queryRow, version)
-		return err
+		if err != nil {
+			return err
+		}
+		report = grants.withoutJoined(report, runner.options.User)
+		return errOperatorStatusRolledBack
 	})
-	return report, err
+	if statusRolledBack(err) {
+		return report, nil
+	}
+	return OperatorReport{}, err
+}
+
+// statusRolledBack reports the status transaction ended as meant: by its
+// own rollback, which succeeded.
+func statusRolledBack(err error) bool {
+	return errors.Is(err, errOperatorStatusRolledBack) && !errors.Is(err, errMigrationRollback)
 }
 
 // Apply runs the planned steps in catalog order in one transaction under the
@@ -167,6 +189,10 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 	result := OperatorApplyResult{DryRun: options.DryRun}
 	err = runner.withTransaction(ctx, false, true, func(transaction migrationTransaction) error {
 		queryRow := transactionQueryRow(transaction)
+		grants := &operatorGrants{}
+		if err := grants.begin(ctx, transaction); err != nil {
+			return err
+		}
 		version, err := readOperatorSchemaVersion(ctx, queryRow)
 		if err != nil {
 			return err
@@ -194,7 +220,10 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 			return err
 		}
 		for _, name := range plan.Run {
-			if err := transaction.Exec(ctx, byName[name].Body()); err != nil {
+			if err := grants.prepare(ctx, transaction, byName[name]); err != nil {
+				return err
+			}
+			if err := runOperatorStep(ctx, transaction, byName[name]); err != nil {
 				failed := &OperatorStepFailedError{Step: name, Err: err}
 				if pgError := (*pgconn.PgError)(nil); errors.As(err, &pgError) {
 					failed.SQLState = pgError.Code
@@ -206,6 +235,11 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 			} else {
 				result.Applied = append(result.Applied, name)
 			}
+		}
+		// Before the after report: a schema CREATE left on an owner role
+		// would fail its requirement, and nothing may outlive the apply.
+		if err := grants.releaseSchemas(ctx, transaction); err != nil {
+			return err
 		}
 		if len(options.LoginPasswords) != 0 {
 			logins, err := ensureOperatorLogins(ctx, transaction, options.LoginPasswords, options.RotateLoginPasswords)
@@ -227,8 +261,12 @@ func (runner *OperatorRunner) Apply(ctx context.Context, options OperatorApplyOp
 		if err := verifyOperatorApply(before, after, plan.Run); err != nil {
 			return err
 		}
+		// Before releaseMemberships, which forgets what was joined.
+		result.Report = grants.withoutJoined(after, runner.options.User)
+		if err := grants.releaseMemberships(ctx, transaction); err != nil {
+			return err
+		}
 		result.Waiting = slices.Clone(plan.Waiting)
-		result.Report = after
 		if options.DryRun {
 			return errOperatorDryRun
 		}
@@ -336,4 +374,17 @@ func (runner *MigrationRunner) Verify(ctx context.Context) (MigrationVerificatio
 		return nil
 	})
 	return verification, err
+}
+
+// runOperatorStep runs an ownership step's rebuilt body, and a role step
+// through ensureOperatorOwnerRole (only what differs, never naming
+// SUPERUSER to an operator that is not one).
+func runOperatorStep(ctx context.Context, transaction migrationTransaction, step migrations.OperatorStep) error {
+	if step.Kind == migrations.OperatorStepRole {
+		if len(step.Effects) != 1 || step.Effects[0].Kind != migrations.OperatorEffectRole {
+			return fmt.Errorf("%w: role step %s", ErrOperatorCatalog, step.Name)
+		}
+		return ensureOperatorOwnerRole(ctx, transaction, step.Effects[0].Role)
+	}
+	return transaction.Exec(ctx, step.Body())
 }

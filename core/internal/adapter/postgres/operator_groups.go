@@ -169,3 +169,33 @@ func ensureOperatorRoleMemberships(
 	}
 	return results, nil
 }
+
+// ensureOperatorOwnerRole runs a role step (a NOLOGIN owner role) without
+// its canonical block: that block resets an existing role with ALTER ROLE
+// ... NOSUPERUSER ..., which PostgreSQL refuses to an operator that is not
+// a superuser even when nothing differs (a managed service's administrator,
+// V1-11 §12). The role is created when missing; otherwise only what drifted
+// is undone, as for the group roles. The step's requirement check is the
+// same either way.
+func ensureOperatorOwnerRole(ctx context.Context, transaction migrationTransaction, name string) error {
+	if !loginName.MatchString(name) {
+		return fmt.Errorf("%w: owner role name %q", ErrOperatorCatalog, name)
+	}
+	identifier := pgx.Identifier{name}.Sanitize()
+	var drift groupDrift
+	err := transaction.QueryRow(ctx, operatorGroupStateSQL, name).Scan(&drift.login, &drift.superuser,
+		&drift.createDB, &drift.createRole, &drift.replication, &drift.bypassRLS, &drift.connectionLimit,
+		&drift.settings, &drift.databases)
+	statements := drift.statements(identifier)
+	if errors.Is(err, pgx.ErrNoRows) {
+		statements = []string{"CREATE ROLE " + identifier + " " + operatorGroupCreateAttributes}
+	} else if err != nil {
+		return fmt.Errorf("read owner role %s: %w", name, err)
+	}
+	for _, statement := range statements {
+		if err := transaction.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("keep owner role %s: %w", name, err)
+		}
+	}
+	return nil
+}

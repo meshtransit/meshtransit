@@ -261,6 +261,10 @@ func (runner *MigrationRunner) withTransaction(
 
 // runMigrationTransaction runs operation in one transaction on a one-shot
 // connection, rolls back on any error and commits otherwise.
+// errMigrationRollback wraps a failed rollback, so a caller that ends a
+// transaction on purpose with an error can tell the rollback failed too.
+var errMigrationRollback = errors.New("rollback migration transaction")
+
 func runMigrationTransaction(
 	ctx context.Context,
 	connection migrationConnection,
@@ -285,7 +289,7 @@ func runMigrationTransaction(
 		)
 		defer cancel()
 		if err := transaction.Rollback(rollbackContext); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			returnErr = errors.Join(returnErr, fmt.Errorf("rollback migration transaction: %w", err))
+			returnErr = errors.Join(returnErr, fmt.Errorf("%w: %w", errMigrationRollback, err))
 		}
 	}()
 
