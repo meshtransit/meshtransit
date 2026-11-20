@@ -70,7 +70,7 @@ func newFakeMigrationConnection(state migrationDatabaseState) *fakeMigrationConn
 	return &fakeMigrationConnection{
 		state: state,
 		preflight: migrationPreflight{
-			serverVersion:       160000,
+			serverVersion:       180000,
 			extensionVersion:    "1.7",
 			currentUser:         "mesh_migrator",
 			databaseOwner:       true,

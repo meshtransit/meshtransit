@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	minimumPostgreSQLVersion  = 160000
+	// minimumPostgreSQLVersion: schema 115 calls pg_catalog.uuidv7(), which
+	// PostgreSQL 18 added (TD-CORE-155).
+	minimumPostgreSQLVersion  = 180000
 	maxMigrationMetadataBytes = 128
 )
 

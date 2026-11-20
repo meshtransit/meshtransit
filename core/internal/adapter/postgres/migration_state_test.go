@@ -49,7 +49,7 @@ func TestValidateMigrationPreflight(t *testing.T) {
 	t.Parallel()
 
 	valid := migrationPreflight{
-		serverVersion:       160000,
+		serverVersion:       180000,
 		extensionVersion:    "1.7",
 		currentUser:         "mesh_migrator",
 		databaseOwner:       true,
@@ -61,7 +61,7 @@ func TestValidateMigrationPreflight(t *testing.T) {
 		preflight migrationPreflight
 	}{
 		{name: "supported", preflight: valid},
-		{name: "old postgres", preflight: withServerVersion(valid, 150000)},
+		{name: "old postgres", preflight: withServerVersion(valid, 170000)},
 		{name: "missing extension", preflight: withExtensionVersion(valid, "")},
 		{name: "unknown extension", preflight: withExtensionVersion(valid, "2.0")},
 		{name: "unexpected role", preflight: withCurrentUser(valid, "postgres")},
