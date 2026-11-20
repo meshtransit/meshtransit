@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/net/netutil"
+
+	"meshtransit.net/core/internal/platform/certreload"
 )
 
 const maximumLoginConnections = 4096
@@ -36,6 +38,10 @@ type LoginServerOptions struct {
 	Address        string
 	CertificatePEM []byte
 	PrivateKeyPEM  []byte
+	// ReloadPEM, when set, reads the certificate files again while the
+	// server runs (checked as at construction), so a renewed certificate
+	// needs no restart.
+	ReloadPEM      PEMReader
 	Dispatcher     *LoginDispatcher
 	MaxConnections int
 	// Logger, when set, records requests refused before admission by their
@@ -49,6 +55,7 @@ type LoginServerOptions struct {
 type LoginServer struct {
 	server       *http.Server
 	tlsConfig    *tls.Config
+	certificates *certreload.Source // nil without ReloadPEM
 	dispatcher   *LoginDispatcher
 	logger       *slog.Logger
 	address      string
@@ -104,10 +111,24 @@ func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 		dispatcher: options.Dispatcher, logger: options.Logger, address: options.Address,
 		connections: options.MaxConnections,
 		tlsConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, NextProtos: []string{"http/1.1"},
+			MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
 			// Browser auth has no TLS-resumption requirement or shared ticket-key owner.
 			SessionTicketsDisabled: true,
 		},
+	}
+	if options.ReloadPEM != nil {
+		hostname, err := loginServerHostname(options)
+		if err != nil {
+			return nil, ErrInvalidLoginServer
+		}
+		source, err := serverCertificateSource("login", hostname, certificate, options.ReloadPEM, options.Logger)
+		if err != nil {
+			return nil, ErrInvalidLoginServer
+		}
+		// Certificates stays empty: Go asks GetCertificate only then or on SNI.
+		owner.certificates, owner.tlsConfig.GetCertificate = source, source.GetCertificate
+	} else {
+		owner.tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
 	protocols := &http.Protocols{}
 	protocols.SetHTTP1(true)
@@ -142,7 +163,7 @@ func (owner *LoginServer) Start(ctx context.Context) error {
 	if err := startCtx.Err(); err != nil {
 		return err
 	}
-	if !validLoginCertificateTime(owner.tlsConfig.Certificates[0], time.Now()) {
+	if !validLoginCertificateTime(listenerCertificate(owner.tlsConfig, owner.certificates), time.Now()) {
 		return ErrInvalidLoginServer
 	}
 	listenConfig := &net.ListenConfig{}

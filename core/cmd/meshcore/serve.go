@@ -964,7 +964,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		additionalMetrics = append(additionalMetrics, mtcpMetrics.Collectors()...)
-		controlListener, composeErr := composeControlListener(*processConfig.Control, relayAuthorityHandler, mtcpServer)
+		controlListener, composeErr := composeControlListener(*processConfig.Control, relayAuthorityHandler, mtcpServer, logger)
 		if composeErr != nil {
 			logger.ErrorContext(
 				ctx,

@@ -93,7 +93,7 @@ func composeIdentityBroker(
 	if err != nil {
 		return identityBrokerComposition{}, errors.Join(errInvalidIdentityBrokerComposition, err)
 	}
-	listener, err := composeIdentityListener(identity, service)
+	listener, err := composeIdentityListener(identity, service, logger)
 	if err != nil {
 		return identityBrokerComposition{}, errors.Join(errInvalidIdentityBrokerComposition, err)
 	}
@@ -114,6 +114,7 @@ func composeIdentityBroker(
 func composeIdentityListener(
 	identity config.IdentityConfig,
 	service *dexbroker.Service,
+	logger *slog.Logger,
 ) (*httpapi.IdentityServer, error) {
 	certificatePEM, err := identity.Listener.TLSCertificateFile.Read()
 	if err != nil {
@@ -136,6 +137,20 @@ func composeIdentityListener(
 		RequestTimeout:        identity.Listener.RequestTimeout,
 		MaxConnections:        identity.Listener.MaxConnections,
 		MaxConcurrentRequests: identity.Listener.MaxConcurrentRequests,
+		// cert-manager renews the files in place; serve the new one.
+		ReloadPEM: func() ([]byte, []byte, error) {
+			certificatePEM, err := identity.Listener.TLSCertificateFile.Read()
+			if err != nil {
+				return nil, nil, err
+			}
+			privateKeyPEM, err := identity.Listener.TLSPrivateKeyFile.Read()
+			if err != nil {
+				clear(certificatePEM)
+				return nil, nil, err
+			}
+			return certificatePEM, privateKeyPEM, nil
+		},
+		Logger: logger,
 	})
 	if err != nil {
 		return nil, errInvalidIdentityBrokerComposition

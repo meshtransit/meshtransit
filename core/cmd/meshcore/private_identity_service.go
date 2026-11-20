@@ -11,6 +11,7 @@ type privateIdentityLoginServiceOptions struct {
 	Address        string
 	CertificatePEM []byte
 	PrivateKeyPEM  []byte
+	ReloadPEM      httpapi.PEMReader
 	MaxConnections int
 	Logger         *slog.Logger
 }
@@ -27,6 +28,7 @@ func composePrivateIdentityLoginService(
 	}
 	service, err := httpapi.NewLoginServer(httpapi.LoginServerOptions{
 		Address: options.Address, CertificatePEM: options.CertificatePEM, PrivateKeyPEM: options.PrivateKeyPEM,
+		ReloadPEM:  options.ReloadPEM,
 		Dispatcher: factory.identity.dispatcher, MaxConnections: options.MaxConnections, Logger: options.Logger,
 	})
 	if err != nil {

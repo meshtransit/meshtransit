@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -29,6 +30,7 @@ func composeControlListener(
 	controlConfig config.ControlConfig,
 	relayAuthority http.Handler,
 	mtcp mtcpRoutes,
+	logger *slog.Logger,
 ) (*controllistener.Listener, error) {
 	if mtcp == nil {
 		return nil, errInvalidControlComposition
@@ -49,6 +51,9 @@ func composeControlListener(
 		MaxConnections:   controlConfig.MaxSessions,
 		HandshakeTimeout: controlConfig.HandshakeTimeout,
 		IdleTimeout:      controlConfig.ReadIdleTimeout,
+		// cert-manager renews the files in place; serve the new one.
+		Reload: func() (tls.Certificate, error) { return loadControlCertificate(controlConfig) },
+		Logger: logger,
 	})
 	if err != nil {
 		return nil, errors.Join(errInvalidControlComposition, err)

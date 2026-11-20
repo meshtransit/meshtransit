@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"meshtransit.net/core/internal/platform/certreload"
 )
 
 var (
@@ -39,6 +42,11 @@ type Options struct {
 	MaxConnections   int
 	HandshakeTimeout time.Duration
 	IdleTimeout      time.Duration
+	// Reload, when set, reads Certificate's files again while the listener
+	// runs, so a renewed certificate needs no restart (certreload).
+	Reload func() (tls.Certificate, error)
+	// Logger records reloads; nil discards.
+	Logger *slog.Logger
 }
 
 // Listener owns the public TLS listener and its single serving
@@ -73,6 +81,20 @@ func New(options Options) (*Listener, error) {
 		return nil, ErrInvalid
 	}
 
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
+	if options.Reload != nil {
+		source, err := certreload.New(certreload.Options{
+			Name: "control", Initial: options.Certificate, Load: options.Reload, Logger: options.Logger,
+		})
+		if err != nil {
+			return nil, ErrInvalid
+		}
+		// Certificates stays empty: Go asks GetCertificate only then or on SNI.
+		tlsConfig.GetCertificate = source.GetCertificate
+	} else {
+		tlsConfig.Certificates = []tls.Certificate{options.Certificate}
+	}
+
 	listenConfig := &net.ListenConfig{}
 	return &Listener{
 		server: &http.Server{
@@ -84,13 +106,9 @@ func New(options Options) (*Listener, error) {
 			MaxHeaderBytes:    maxHeaderBytes,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		},
-		routes:    options.Routes,
-		telemetry: options.Telemetry,
-		tlsConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{options.Certificate},
-			NextProtos:   []string{"http/1.1"},
-		},
+		routes:      options.Routes,
+		telemetry:   options.Telemetry,
+		tlsConfig:   tlsConfig,
 		address:     options.Address,
 		connections: options.MaxConnections,
 		listen:      listenConfig.Listen,

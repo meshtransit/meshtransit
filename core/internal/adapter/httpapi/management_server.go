@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"golang.org/x/net/netutil"
+
+	"meshtransit.net/core/internal/platform/certreload"
 )
 
 const (
@@ -39,6 +42,11 @@ type ManagementServerOptions struct {
 	Certificate    tls.Certificate
 	Handler        http.Handler
 	MaxConnections int
+	// Reload, when set, reads Certificate's files again while the server
+	// runs, so a renewed certificate needs no restart (certreload).
+	Reload func() (tls.Certificate, error)
+	// Logger records reloads; nil discards.
+	Logger *slog.Logger
 }
 
 // ManagementServer owns the public management TLS listener and serving goroutine.
@@ -64,6 +72,19 @@ func NewManagementServer(options ManagementServerOptions) (*ManagementServer, er
 		options.MaxConnections <= 0 || options.MaxConnections > maximumManagementConnections {
 		return nil, ErrInvalidManagementServer
 	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
+	if options.Reload != nil {
+		source, err := certreload.New(certreload.Options{
+			Name: "management", Initial: options.Certificate, Load: options.Reload, Logger: options.Logger,
+		})
+		if err != nil {
+			return nil, ErrInvalidManagementServer
+		}
+		// Certificates stays empty: Go asks GetCertificate only then or on SNI.
+		tlsConfig.GetCertificate = source.GetCertificate
+	} else {
+		tlsConfig.Certificates = []tls.Certificate{options.Certificate}
+	}
 	listenConfig := &net.ListenConfig{}
 	return &ManagementServer{
 		server: &http.Server{
@@ -75,11 +96,7 @@ func NewManagementServer(options ManagementServerOptions) (*ManagementServer, er
 			MaxHeaderBytes:    managementMaxHeaderBytes,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		},
-		tlsConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{options.Certificate},
-			NextProtos:   []string{"http/1.1"},
-		},
+		tlsConfig:   tlsConfig,
 		address:     options.Address,
 		connections: options.MaxConnections,
 		listen:      listenConfig.Listen,

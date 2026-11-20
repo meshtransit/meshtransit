@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"golang.org/x/net/netutil"
+
+	"meshtransit.net/core/internal/platform/certreload"
 )
 
 const (
@@ -59,6 +61,12 @@ type IdentityServerOptions struct {
 	RequestTimeout        time.Duration
 	MaxConnections        int
 	MaxConcurrentRequests int
+	// ReloadPEM, when set, reads the certificate files again while the
+	// server runs (checked as at construction), so a renewed certificate
+	// needs no restart.
+	ReloadPEM PEMReader
+	// Logger records reloads; nil discards.
+	Logger *slog.Logger
 }
 
 type identityRoute struct {
@@ -73,6 +81,7 @@ type identityRoute struct {
 type IdentityServer struct {
 	server       *http.Server
 	tlsConfig    *tls.Config
+	certificates *certreload.Source // nil without ReloadPEM
 	handler      http.Handler
 	routes       map[string]identityRoute
 	issuerHost   string
@@ -132,9 +141,19 @@ func NewIdentityServer(options IdentityServerOptions) (*IdentityServer, error) {
 		concurrency: make(chan struct{}, options.MaxConcurrentRequests),
 		telemetry:   newIdentityTelemetry(options.MaxConnections, options.MaxConcurrentRequests),
 		tlsConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate},
-			NextProtos: []string{"http/1.1"}, SessionTicketsDisabled: true,
+			MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}, SessionTicketsDisabled: true,
 		},
+	}
+	if options.ReloadPEM != nil {
+		source, err := serverCertificateSource("identity", issuer.Hostname(), certificate, options.ReloadPEM,
+			options.Logger)
+		if err != nil {
+			return nil, ErrInvalidIdentityServer
+		}
+		// Certificates stays empty: Go asks GetCertificate only then or on SNI.
+		owner.certificates, owner.tlsConfig.GetCertificate = source, source.GetCertificate
+	} else {
+		owner.tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
 	protocols := &http.Protocols{}
 	protocols.SetHTTP1(true)
@@ -241,7 +260,7 @@ func (owner *IdentityServer) Start(ctx context.Context) error {
 	if err := startCtx.Err(); err != nil {
 		return err
 	}
-	if !validLoginCertificateTime(owner.tlsConfig.Certificates[0], time.Now()) {
+	if !validLoginCertificateTime(listenerCertificate(owner.tlsConfig, owner.certificates), time.Now()) {
 		return ErrInvalidIdentityServer
 	}
 	listener, err := (&net.ListenConfig{}).Listen(startCtx, "tcp", owner.address)

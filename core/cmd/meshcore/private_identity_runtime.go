@@ -90,6 +90,7 @@ func composePrivateIdentityRuntime(
 	service, err := composePrivateIdentityLoginService(factory, privateIdentityLoginServiceOptions{
 		Address: profile.Address(), CertificatePEM: material.CertificatePEM,
 		PrivateKeyPEM: material.PrivateKeyPEM, MaxConnections: 64, Logger: dependencies.Logger,
+		ReloadPEM: privateLoginCertificateReader(profile),
 	})
 	if err != nil || candidate.CheckCurrent(ctx) != nil || ctx.Err() != nil {
 		factory.Close()
@@ -195,3 +196,17 @@ func classifyPrivateIdentityDiscoveryError(err error) error {
 }
 
 var _ app.DependencyChecker = (*privateIdentityFactory)(nil)
+
+// privateLoginCertificateReader reads the profile's certificate and key
+// again, as construction did, for the login server's reloads; the client
+// secret read with them is cleared at once.
+func privateLoginCertificateReader(profile *config.PrivateLoginConfig) httpapi.PEMReader {
+	return func() ([]byte, []byte, error) {
+		material, err := profile.LoadMaterial(context.Background())
+		if err != nil {
+			return nil, nil, err
+		}
+		defer material.Clear()
+		return bytes.Clone(material.CertificatePEM), bytes.Clone(material.PrivateKeyPEM), nil
+	}
+}

@@ -13,19 +13,24 @@ import (
 )
 
 func loginServerCertificate(options LoginServerOptions) (tls.Certificate, error) {
-	callback, err := url.Parse(options.Dispatcher.browser.reader.route.RedirectURI())
-	if err != nil || callback.Hostname() == "" {
-		return tls.Certificate{}, ErrInvalidLoginServer
+	hostname, err := loginServerHostname(options)
+	if err != nil {
+		return tls.Certificate{}, err
 	}
-	certificate, err := serverCertificate(
-		options.CertificatePEM,
-		options.PrivateKeyPEM,
-		callback.Hostname(),
-	)
+	certificate, err := serverCertificate(options.CertificatePEM, options.PrivateKeyPEM, hostname)
 	if err != nil {
 		return tls.Certificate{}, ErrInvalidLoginServer
 	}
 	return certificate, nil
+}
+
+// loginServerHostname is the callback host the certificate must name.
+func loginServerHostname(options LoginServerOptions) (string, error) {
+	callback, err := url.Parse(options.Dispatcher.browser.reader.route.RedirectURI())
+	if err != nil || callback.Hostname() == "" {
+		return "", ErrInvalidLoginServer
+	}
+	return callback.Hostname(), nil
 }
 
 func serverCertificate(certificatePEM, privateKeyPEM []byte, hostname string) (tls.Certificate, error) {

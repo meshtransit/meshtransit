@@ -482,6 +482,9 @@ func composeManagementAPIWithKeys(
 	server, err := httpapi.NewManagementServer(httpapi.ManagementServerOptions{
 		Address: apiConfig.Address, Certificate: certificate, Handler: handler,
 		MaxConnections: apiConfig.MaxConnections,
+		// cert-manager renews the files in place; serve the new one.
+		Reload: func() (tls.Certificate, error) { return loadManagementTLSCertificate(apiConfig) },
+		Logger: logger,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)

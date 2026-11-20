@@ -26,14 +26,14 @@ func TestComposeControlListenerLoadsTLS(t *testing.T) {
 	t.Parallel()
 
 	controlConfig, _ := controlConfigFixture(t)
-	listener, err := composeControlListener(controlConfig, nil, &routeRecorder{})
+	listener, err := composeControlListener(controlConfig, nil, &routeRecorder{}, nil)
 	if err != nil {
 		t.Fatalf("composeControlListener() error = %v", err)
 	}
 	if listener == nil || listener.MetricsCollector() == nil {
 		t.Fatal("composeControlListener() returned no listener or no telemetry")
 	}
-	if _, err := composeControlListener(controlConfig, nil, nil); !errors.Is(err, errInvalidControlComposition) {
+	if _, err := composeControlListener(controlConfig, nil, nil, nil); !errors.Is(err, errInvalidControlComposition) {
 		t.Fatalf("without MTCP: error = %v, want composition error", err)
 	}
 }
