@@ -37,6 +37,10 @@ func (ContractExpiryWorkerConfig) GoString() string {
 func (ContractExpiryWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadContractExpiryWorkerConfig(lookup LookupFunc, role app.Role) (*ContractExpiryWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envContractExpiryWorkerDeployment, settingTrue(lookup, envContractExpiryWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envContractExpiryWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envContractExpiryWorkerEnabled)

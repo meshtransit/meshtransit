@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+
+	"meshtransit.net/core/internal/domain/deployment"
 )
 
 const maximumPlanBytes = 64 << 10
@@ -36,6 +38,9 @@ type Plan struct {
 	// generate for a database that exists: a deliberate reset of each.
 	// Remove an item once its key is made; a run reports what it made.
 	AllowNewRetainedKeys []string `json:"allowNewRetainedKeys"`
+	// DeploymentPublicID is the installation's Deployment ID when the
+	// installer sets one; empty takes the database's, or a new one.
+	DeploymentPublicID string `json:"deploymentPublicID"`
 }
 
 // Override names the installer's Secret and key for an item.
@@ -72,6 +77,11 @@ func ParsePlan(data []byte) (Plan, error) {
 	}
 	if !fullname.MatchString(plan.Release) || len(plan.Release) > 53 {
 		return Plan{}, fmt.Errorf("%w: release", ErrPlan)
+	}
+	if plan.DeploymentPublicID != "" {
+		if _, err := deployment.ParseID(plan.DeploymentPublicID); err != nil {
+			return Plan{}, fmt.Errorf("%w: deploymentPublicID", ErrPlan)
+		}
 	}
 	if _, err := plan.Resolve(); err != nil {
 		return Plan{}, err
@@ -116,6 +126,10 @@ func (plan Plan) Resolve() ([]Resolved, error) {
 	}
 	return resolved, nil
 }
+
+// InstallConfigMap is the ConfigMap the installation's Deployment ID is
+// recorded in, immutable, for the pods.
+func InstallConfigMap(fullnameValue string) string { return fullnameValue + "-install" }
 
 // PublicKeysConfigMap is the ConfigMap the public halves are written to.
 func PublicKeysConfigMap(fullnameValue string) string { return fullnameValue + "-public-keys" }

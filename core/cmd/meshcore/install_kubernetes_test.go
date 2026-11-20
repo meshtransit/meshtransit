@@ -83,6 +83,7 @@ type installKubernetesFixture struct {
 	store          *fakeSecretStore
 	plan           string
 	databaseExists bool
+	installations  []string
 	bootstrapped   *postgresadapter.ServerBootstrapOptions
 	environment    map[string]string
 }
@@ -96,8 +97,9 @@ func newInstallKubernetesFixture(t *testing.T) *installKubernetesFixture {
 		}
 	}
 	return &installKubernetesFixture{
-		store: newFakeSecretStore(),
-		plan:  `{"profile":"cloud","release":"rel","fullname":"mt","features":["kubernetesCA","entitlement","connectionLogs"]}`,
+		store:         newFakeSecretStore(),
+		plan:          `{"profile":"cloud","release":"rel","fullname":"mt","features":["kubernetesCA","entitlement","connectionLogs"]}`,
+		installations: []string{"01995d00-0000-7000-8000-000000000001"},
 		environment: map[string]string{
 			"MESHTRANSIT_BOOTSTRAP_POSTGRES_ADDRESS":       "db.example.test:5432",
 			"MESHTRANSIT_BOOTSTRAP_POSTGRES_USER":          "doadmin",
@@ -125,6 +127,9 @@ func (fixture *installKubernetesFixture) run(t *testing.T) (int, string, string)
 		},
 		databaseExists: func(context.Context, postgresadapter.ServerBootstrapOptions, string) (bool, error) {
 			return fixture.databaseExists, nil
+		},
+		installationIDs: func(context.Context, postgresadapter.ServerBootstrapOptions) ([]string, error) {
+			return fixture.installations, nil
 		},
 		secretStore: func() (installSecretStore, error) { return fixture.store, nil },
 		readPlan:    func(string) ([]byte, error) { return []byte(fixture.plan), nil },
@@ -357,4 +362,76 @@ func TestInstallKubernetesUpdatesPublicKeysAndReportsRetained(t *testing.T) {
 	if code != 1 || !strings.Contains(errorOutput, "install_retained_allow_stale") {
 		t.Fatalf("stale allowance: %d %s", code, errorOutput)
 	}
+}
+
+// The Deployment ID: the database's, the values' and the recorded one must
+// agree and one must exist; it is recorded once, immutable.
+func TestEnsureInstallationID(t *testing.T) {
+	t.Parallel()
+	const databaseID, valuesID = "01995d00-0000-7000-8000-000000000001", "01995d00-0000-7000-8000-000000000002"
+	for _, test := range []struct {
+		name     string
+		values   string
+		database []string
+		recorded string
+		race     string // an ID another run records between the read and the create
+		want     string
+		err      error
+	}{
+		{name: "from the database", database: []string{databaseID}, want: databaseID},
+		{name: "from the values", values: valuesID, want: valuesID},
+		{name: "values agree with the database", values: databaseID, database: []string{databaseID}, want: databaseID},
+		{name: "values differ from the database", values: valuesID, database: []string{databaseID}, err: errInstallDeploymentID},
+		{name: "recorded kept", recorded: valuesID, want: valuesID},
+		{name: "recorded differs from the database", recorded: valuesID, database: []string{databaseID}, err: errInstallDeploymentID},
+		{name: "two deployments", database: []string{databaseID, valuesID}, err: errInstallDeploymentID},
+		{name: "nothing names it", err: errInstallDeploymentIDRequired},
+		{name: "recorded but empty", recorded: "-", err: errInstallNotOurs},
+		{name: "race, same ID", values: valuesID, race: valuesID, want: valuesID},
+		{name: "race, other ID", values: valuesID, race: databaseID, err: errInstallDeploymentID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeSecretStore()
+			ours := map[string]string{installManagedByLabel: installManagedBy}
+			if test.recorded != "" {
+				store.configMaps["mt-install"] = kubeapi.ConfigMap{Metadata: kubeapi.Metadata{Name: "mt-install", Labels: ours},
+					Data: map[string]string{installDeploymentIDKey: strings.Trim(test.recorded, "-")}}
+			}
+			var kube installSecretStore = store
+			if test.race != "" {
+				kube = &racingInstallStore{fakeSecretStore: store, id: test.race}
+			}
+			got, _, err := ensureInstallationID(context.Background(), kube,
+				installsecrets.Plan{Fullname: "mt", DeploymentPublicID: test.values}, test.database)
+			if !errors.Is(err, test.err) || (test.err == nil && got != test.want) {
+				t.Fatalf("%q, %v", got, err)
+			}
+			if test.err == nil && store.configMaps["mt-install"].Data[installDeploymentIDKey] != test.want {
+				t.Fatalf("recorded %+v", store.configMaps["mt-install"])
+			}
+		})
+	}
+	t.Run("foreign ConfigMap", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeSecretStore()
+		store.configMaps["mt-install"] = kubeapi.ConfigMap{Metadata: kubeapi.Metadata{Name: "mt-install"},
+			Data: map[string]string{installDeploymentIDKey: databaseID}}
+		if _, _, err := ensureInstallationID(context.Background(), store, installsecrets.Plan{Fullname: "mt"},
+			[]string{databaseID}); !errors.Is(err, errInstallNotOurs) {
+			t.Fatalf("foreign: %v", err)
+		}
+	})
+}
+
+// racingInstallStore loses the create to a run that recorded id.
+type racingInstallStore struct {
+	*fakeSecretStore
+	id string
+}
+
+func (store *racingInstallStore) CreateConfigMapIfAbsent(_ context.Context, configMap kubeapi.ConfigMap) (bool, error) {
+	store.configMaps[configMap.Metadata.Name] = kubeapi.ConfigMap{Metadata: configMap.Metadata,
+		Data: map[string]string{installDeploymentIDKey: store.id}}
+	return false, nil
 }

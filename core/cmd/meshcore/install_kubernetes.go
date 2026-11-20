@@ -151,17 +151,33 @@ func runInstallKubernetes(ctx context.Context, lookup config.LookupFunc, output 
 	if err != nil {
 		return fail(serverBootstrapErrorCode(err), err)
 	}
-	return writeInstallReport(output, struct {
-		Operation string `json:"operation"`
-		installSecretsReport
-		Postgres postgresadapter.ServerBootstrapReport `json:"postgres"`
-	}{Operation: "install bootstrap kubernetes", installSecretsReport: report, Postgres: databaseReport})
+	ids, err := dependencies.installationIDs(ctx, options)
+	if err != nil {
+		return fail(serverBootstrapErrorCode(err), err)
+	}
+	deploymentID, recorded, err := ensureInstallationID(ctx, store, plan, ids)
+	if err != nil {
+		return fail(installSecretsErrorCode(err), err)
+	}
+	return writeInstallReport(output, installKubernetesReport{
+		Operation: "install bootstrap kubernetes", installSecretsReport: report, Postgres: databaseReport,
+		DeploymentPublicID: deploymentID, DeploymentIDRecorded: recorded,
+	})
+}
+
+// installKubernetesReport is what "install bootstrap kubernetes" prints.
+type installKubernetesReport struct {
+	Operation string `json:"operation"`
+	installSecretsReport
+	Postgres             postgresadapter.ServerBootstrapReport `json:"postgres"`
+	DeploymentPublicID   string                                `json:"deployment_public_id"`
+	DeploymentIDRecorded bool                                  `json:"deployment_id_recorded,omitempty"`
 }
 
 func loadInstallPlan(dependencies installDependencies, bootstrapConfig config.KubernetesBootstrapConfig,
 ) (installsecrets.Plan, error) {
 	if dependencies.readPlan == nil || dependencies.secretStore == nil || dependencies.databaseExists == nil ||
-		dependencies.random == nil {
+		dependencies.random == nil || dependencies.installationIDs == nil {
 		return installsecrets.Plan{}, errInstallSetup
 	}
 	data, err := dependencies.readPlan(bootstrapConfig.PlanFile)
@@ -441,6 +457,9 @@ func installSecretsErrorCode(err error) string {
 		{errInstallRetainedKeyMissing, "install_retained_key_missing"},
 		{errInstallRetainedAllowStale, "install_retained_allow_stale"},
 		{errInstallPublicKeysNotOurs, "install_public_keys_not_ours"},
+		{errInstallDeploymentID, "install_deployment_id_differs"},
+		{errInstallDeploymentIDRequired, "install_deployment_id_required"},
+		{errInstallNotOurs, "install_configmap_not_ours"},
 		{kubeapi.ErrConflict, "install_conflict"},
 		{postgresadapter.ErrMigrationOpen, "bootstrap_open_failure"},
 	} {

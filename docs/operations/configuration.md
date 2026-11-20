@@ -79,6 +79,7 @@ Generating keys:
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | 1s–5m | Deadline for a graceful stop |
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | 100ms–30s, below the interval | Deadline of one dependency check |
 | `MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL` | `10s` | 1s–5m | How often readiness checks dependencies |
+| `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID` | none | UUIDv7 | The installation's Deployment ID, taken by every configured feature that needs it and does not set its own (the workers, browser registration, entitlement, connection-log tickets); a feature's own `…DEPLOYMENT…ID`, the relay's ticket ID and the login profile's `deployment_id` must equal it. It turns no feature on; the relay's ticket ID (`MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID`), which turns tickets on, is never taken from it |
 | `MESHTRANSIT_DNS_SUFFIX` | `mesh.internal` | DNS name of at least two labels, at most 155 bytes; labels of `a-z`, `0-9` and `-`, the last not all digits; not `local`, `localhost`, `arpa`, `invalid`, `test`, `onion`, `example`, `example.com/net/org` or under them; not itself a public suffix (`co.uk`, `github.io`); lowercased. A registered domain must be one you own: every node answers the whole suffix itself | Suffix of Device names (`<label>.<Workspace code>.<Network code>.<suffix>`) and share names (`….shared.<suffix>`) in maps and API responses. Set the same value on every role. Changing it renames every Device and share at the next map; see [DNS](../concepts/dns.md) |
 
 The API, control, identity and Console login listeners may not share a port
@@ -208,7 +209,8 @@ The plan:
   "fullname": "meshtransit-core",
   "features": ["identity", "connectionLogs", "kubernetesCA", "entitlement"],
   "secrets": {"control-noise": {"existingSecret": "my-control-key", "key": "noise.key"}},
-  "allowNewRetainedKeys": []
+  "allowNewRetainedKeys": [],
+  "deploymentPublicID": ""
 }
 ```
 
@@ -234,6 +236,15 @@ The plan:
   reports `retained_keys_generated` and logs a warning). Remove it from the
   list afterwards: while the list names a key that exists, the run stops
   with `install_retained_allow_stale`.
+- The installation's Deployment ID is the Core database's (after the first
+  migration), `deploymentPublicID` and the one already recorded: any two that
+  differ stop the run (`install_deployment_id_differs`), and on a new
+  installation, with none of them, the run stops until you set
+  `deploymentPublicID` (`install_deployment_id_required`; it is also the
+  login profile's `deployment_id`, which creates the deployment). It is recorded once in the immutable
+  ConfigMap `<fullname>-install` (key `deployment-public-id`), which the pods
+  read as `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID`; back it up with the retained
+  keys.
 - Generated Secrets are immutable: to rotate an item that is not retained,
   delete its Secret, upgrade, and restart the roles that read it.
 - The public halves go to the ConfigMap `<fullname>-public-keys`:
@@ -249,7 +260,9 @@ The plan:
   `install_secret_missing`, `install_secret_not_ours`,
   `install_secret_invalid`, `install_retained_key_missing`,
   `install_retained_allow_stale`,
-  `install_public_keys_not_ours`, `install_conflict`,
+  `install_public_keys_not_ours`, `install_deployment_id_differs`,
+  `install_deployment_id_required`,
+  `install_configmap_not_ours`, `install_conflict`,
   `install_kubernetes_unavailable`, `install_secrets_failure`,
   `bootstrap_unknown_login`, then the database bootstrap's.
 

@@ -30,16 +30,19 @@ var installLogins = []string{
 type installDependencies struct {
 	bootstrap      func(context.Context, postgresadapter.ServerBootstrapOptions) (postgresadapter.ServerBootstrapReport, error)
 	databaseExists func(context.Context, postgresadapter.ServerBootstrapOptions, string) (bool, error)
-	secretStore    func() (installSecretStore, error)
-	readPlan       func(path string) ([]byte, error)
-	pods           func() (rolloutLister, error)
-	random         io.Reader
+	// installationIDs reads the Deployment IDs the Core database holds.
+	installationIDs func(context.Context, postgresadapter.ServerBootstrapOptions) ([]string, error)
+	secretStore     func() (installSecretStore, error)
+	readPlan        func(path string) ([]byte, error)
+	pods            func() (rolloutLister, error)
+	random          io.Reader
 }
 
 func productionInstallDependencies() installDependencies {
 	return installDependencies{
-		bootstrap:      postgresadapter.BootstrapServer,
-		databaseExists: postgresadapter.ServerCoreSchemaExists,
+		bootstrap:       postgresadapter.BootstrapServer,
+		databaseExists:  postgresadapter.ServerCoreSchemaExists,
+		installationIDs: postgresadapter.ReadInstallationIDs,
 		secretStore: func() (installSecretStore, error) {
 			kubeConfig, err := kubeapi.InCluster()
 			if err != nil {

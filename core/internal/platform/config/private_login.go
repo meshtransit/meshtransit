@@ -172,6 +172,11 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if err != nil {
 		return nil, ErrInvalid
 	}
+	// The route's Deployment ID creates the deployment (bootstrap) and
+	// signs every login: it must be the installation's.
+	if process.DeploymentPublicID != nil && *process.DeploymentPublicID != params.DeploymentID {
+		return nil, ErrInvalid
+	}
 	params.ProviderID, err = oidcauth.ParseProviderID(provider)
 	if err != nil {
 		return nil, ErrInvalid

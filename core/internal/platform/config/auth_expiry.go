@@ -37,6 +37,10 @@ func (AuthExpiryConfig) GoString() string { return "config.AuthExpiryConfig([RED
 func (AuthExpiryConfig) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
 
 func loadAuthExpiryConfig(lookup LookupFunc, role app.Role, shutdown time.Duration) (*AuthExpiryConfig, error) {
+	lookup, err := withDeploymentID(lookup, envAuthExpiryDeploymentID, settingTrue(lookup, envAuthExpiryEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envAuthExpiryEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envAuthExpiryEnabled)

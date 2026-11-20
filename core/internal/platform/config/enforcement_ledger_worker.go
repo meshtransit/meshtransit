@@ -35,6 +35,10 @@ func (EnforcementLedgerWorkerConfig) GoString() string {
 func (EnforcementLedgerWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadEnforcementLedgerWorkerConfig(lookup LookupFunc, role app.Role) (*EnforcementLedgerWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envEnforcementLedgerWorkerDeployment, settingTrue(lookup, envEnforcementLedgerWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envEnforcementLedgerWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envEnforcementLedgerWorkerEnabled)

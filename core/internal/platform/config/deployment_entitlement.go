@@ -78,6 +78,11 @@ func (entitlementConfig DeploymentEntitlementConfig) Load(ctx context.Context) (
 // loadDeploymentEntitlementConfig is all-or-nothing. Entitlement authority is
 // served with the Console capability surface, so only api and all accept it.
 func loadDeploymentEntitlementConfig(lookup LookupFunc, role app.Role) (*DeploymentEntitlementConfig, error) {
+	lookup, err := withDeploymentID(lookup, envEntitlementDeploymentID,
+		anySettingPresent(lookup, envEntitlementFile, envEntitlementInstallationKey))
+	if err != nil {
+		return nil, err
+	}
 	keys := []string{envEntitlementDeploymentID, envEntitlementFile, envEntitlementInstallationKey}
 	present := 0
 	for _, key := range keys {

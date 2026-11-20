@@ -27,6 +27,12 @@ type BrowserRegistrationConfig struct {
 }
 
 func loadBrowserRegistrationConfig(lookup LookupFunc) (*BrowserRegistrationConfig, error) {
+	lookup, err := withDeploymentID(lookup, envBrowserRegistrationDeploymentID, anySettingPresent(lookup,
+		envBrowserRegistrationOrigin, envBrowserRegistrationRecoveryEpoch, envBrowserRegistrationKeyID,
+		envBrowserRegistrationKeyFile))
+	if err != nil {
+		return nil, err
+	}
 	settings := []string{
 		envBrowserRegistrationOrigin, envBrowserRegistrationDeploymentID,
 		envBrowserRegistrationRecoveryEpoch, envBrowserRegistrationKeyID,

@@ -38,6 +38,10 @@ func (NetworkSummaryWorkerConfig) GoString() string {
 func (NetworkSummaryWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadNetworkSummaryWorkerConfig(lookup LookupFunc, role app.Role) (*NetworkSummaryWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envNetworkSummaryWorkerDeployment, settingTrue(lookup, envNetworkSummaryWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envNetworkSummaryWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envNetworkSummaryWorkerEnabled)

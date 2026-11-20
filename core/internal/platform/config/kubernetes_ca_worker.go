@@ -51,6 +51,10 @@ func (KubernetesCAWorkerConfig) GoString() string {
 func (KubernetesCAWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadKubernetesCAWorkerConfig(lookup LookupFunc, role app.Role) (*KubernetesCAWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envKubernetesCAWorkerDeployment, settingTrue(lookup, envKubernetesCAWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envKubernetesCAWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envKubernetesCAWorkerEnabled)

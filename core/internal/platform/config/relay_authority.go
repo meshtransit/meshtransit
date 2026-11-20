@@ -149,6 +149,9 @@ func loadRelayAuthorityConfig(lookup LookupFunc, role app.Role) (*RelayAuthority
 		return nil, settingError(envRelayTrustedProxies)
 	}
 	cfg.TrustedProxyPrefixes = proxies
+	if err := requireSameDeploymentID(lookup, envRelayDeploymentID); err != nil {
+		return nil, err
+	}
 	if value, present := lookup(envRelayDeploymentID); present {
 		id, err := deployment.ParseID(value)
 		if err != nil || cfg.MapFile == "" {

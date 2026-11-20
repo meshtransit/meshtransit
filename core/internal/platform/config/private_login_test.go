@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"meshtransit.net/core/internal/domain/deployment"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -420,5 +421,27 @@ func TestPrivateLoginConfigVersion4HasNoWorkspace(t *testing.T) {
 	legacy["workspace_id"] = "not-a-workspace"
 	if profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, legacy), process); profile != nil || !errors.Is(err, ErrInvalid) {
 		t.Fatal("version 2 accepted a malformed ignored workspace_id")
+	}
+}
+
+// The login profile's Deployment ID must be the installation's.
+func TestPrivateLoginDeploymentIDMatchesInstallation(t *testing.T) {
+	t.Parallel()
+	process, document := privateLoginTestDocument(t)
+	same, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.DeploymentPublicID = &same
+	if _, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process); err != nil {
+		t.Fatalf("same ID refused: %v", err)
+	}
+	other, err := deployment.ParseID("01890f00-0000-7000-8000-000000000002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.DeploymentPublicID = &other
+	if _, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process); err == nil {
+		t.Fatal("a profile of another installation was accepted")
 	}
 }

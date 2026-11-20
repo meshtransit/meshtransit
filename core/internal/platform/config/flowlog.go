@@ -136,6 +136,11 @@ func (c FlowTicketConfig) SigningKeys(ctx context.Context) (key.SigningPrivate, 
 // loadFlowTicketConfig is all-or-nothing (the next key aside) and only for
 // roles that serve MTCP.
 func loadFlowTicketConfig(lookup LookupFunc, role app.Role) (*FlowTicketConfig, error) {
+	lookup, err := withDeploymentID(lookup, envFlowTicketDeploymentID, anySettingPresent(lookup,
+		envFlowTicketSigningKeyFile, envFlowTicketReceiverKey, envFlowTicketNextSigningKey))
+	if err != nil {
+		return nil, err
+	}
 	keyFile, hasKey := lookup(envFlowTicketSigningKeyFile)
 	deploymentText, hasDeployment := lookup(envFlowTicketDeploymentID)
 	receiverText, hasReceiver := lookup(envFlowTicketReceiverKey)

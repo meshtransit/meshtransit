@@ -38,6 +38,10 @@ func (AccessLedgerWorkerConfig) GoString() string {
 func (AccessLedgerWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadAccessLedgerWorkerConfig(lookup LookupFunc, role app.Role) (*AccessLedgerWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envAccessLedgerWorkerDeployment, settingTrue(lookup, envAccessLedgerWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envAccessLedgerWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envAccessLedgerWorkerEnabled)

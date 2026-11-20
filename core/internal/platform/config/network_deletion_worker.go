@@ -37,6 +37,10 @@ func (NetworkDeletionWorkerConfig) GoString() string {
 func (NetworkDeletionWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadNetworkDeletionWorkerConfig(lookup LookupFunc, role app.Role) (*NetworkDeletionWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envNetworkDeletionWorkerDeployment, settingTrue(lookup, envNetworkDeletionWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envNetworkDeletionWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envNetworkDeletionWorkerEnabled)

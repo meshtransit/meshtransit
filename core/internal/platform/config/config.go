@@ -11,6 +11,7 @@ import (
 
 	"meshtransit.net/core/internal/domain/kubecluster"
 
+	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/dnsname"
 	"meshtransit.net/core/internal/platform/app"
 )
@@ -54,9 +55,13 @@ type Config struct {
 	HealthAddress string
 	// ProfileAddress, when set, serves Go runtime profiles (pprof) on a
 	// loopback address only; empty disables them.
-	ProfileAddress  string
-	ShutdownTimeout time.Duration
-	LogLevel        slog.Level
+	ProfileAddress string
+	// DeploymentPublicID is MESHTRANSIT_DEPLOYMENT_PUBLIC_ID, the
+	// installation's Deployment ID, when set: every Deployment ID the process
+	// is configured with must equal it.
+	DeploymentPublicID *deployment.ID
+	ShutdownTimeout    time.Duration
+	LogLevel           slog.Level
 	// DNSSuffix is the suffix Device and share names are built under.
 	DNSSuffix dnsname.Suffix
 	// SubnetRoutes lets Access Rules name Sites and maps carry routes.
@@ -174,6 +179,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	logLevel, err := parseLogLevel(valueOrDefault(lookup, envLogLevel, "info"))
 	if err != nil {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envLogLevel)
+	}
+	installationID, err := loadInstallationID(lookup)
+	if err != nil {
+		return Config{}, err
 	}
 	authExpiryConfig, err := loadAuthExpiryConfig(lookup, role, shutdownTimeout)
 	if err != nil {
@@ -437,6 +446,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return Config{
+		DeploymentPublicID:          installationID,
 		Role:                        role,
 		HealthAddress:               healthAddress,
 		ProfileAddress:              profileAddress,

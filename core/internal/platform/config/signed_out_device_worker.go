@@ -34,6 +34,10 @@ func (SignedOutDeviceWorkerConfig) GoString() string {
 func (SignedOutDeviceWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadSignedOutDeviceWorkerConfig(lookup LookupFunc, role app.Role) (*SignedOutDeviceWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envSignedOutDeviceWorkerDeployment, settingTrue(lookup, envSignedOutDeviceWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envSignedOutDeviceWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envSignedOutDeviceWorkerEnabled)

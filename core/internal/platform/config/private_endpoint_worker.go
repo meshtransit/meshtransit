@@ -57,6 +57,10 @@ func loadPrivateEndpointWorkerConfig(
 	lookup LookupFunc,
 	role app.Role,
 ) (*PrivateEndpointWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envPrivateEndpointDeploymentID, settingTrue(lookup, envPrivateEndpointWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envPrivateEndpointWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envPrivateEndpointWorkerEnabled)

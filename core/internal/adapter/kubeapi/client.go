@@ -124,8 +124,9 @@ type Secret struct {
 
 // ConfigMap is a ConfigMap with string data.
 type ConfigMap struct {
-	Metadata Metadata          `json:"metadata"`
-	Data     map[string]string `json:"data,omitempty"`
+	Metadata  Metadata          `json:"metadata"`
+	Immutable *bool             `json:"immutable,omitempty"`
+	Data      map[string]string `json:"data,omitempty"`
 }
 
 // Container is the part of a container a rollout check reads.

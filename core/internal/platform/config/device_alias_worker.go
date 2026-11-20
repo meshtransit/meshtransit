@@ -42,6 +42,10 @@ func (DeviceAliasWorkerConfig) GoString() string { return "config.DeviceAliasWor
 func (DeviceAliasWorkerConfig) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func loadDeviceAliasWorkerConfig(lookup LookupFunc, role app.Role) (*DeviceAliasWorkerConfig, error) {
+	lookup, err := withDeploymentID(lookup, envDeviceAliasWorkerDeployment, settingTrue(lookup, envDeviceAliasWorkerEnabled))
+	if err != nil {
+		return nil, err
+	}
 	enabled := valueOrDefault(lookup, envDeviceAliasWorkerEnabled, "false")
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envDeviceAliasWorkerEnabled)
