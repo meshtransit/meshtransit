@@ -31,13 +31,13 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: role-grants test-linux-client e2e-subnet-router help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race test-js integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: role-grants test-linux-client e2e-subnet-router help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-client-cross lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race test-js integration-deps integration-migrations integration-platform-container integration-managed-postgres qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
 	@echo "Targets: build build-core build-client test test-race lint lint-client quality"
 	@echo "         mobile-android mobile-ios"
-	@echo "         check-boundaries integration-platform-container package-deb container-build"
+	@echo "         check-boundaries integration-platform-container integration-managed-postgres package-deb container-build"
 
 build: build-core build-client build-relay
 
@@ -166,6 +166,11 @@ integration-migrations:
 
 integration-platform-container:
 	bash core/scripts/ci/run-platform-integration.sh
+
+# The database install chain as a managed service's administrator (not a
+# superuser) and as a superuser (V1-11 step 2).
+integration-managed-postgres:
+	bash core/scripts/ci/run-managed-postgres.sh
 
 qualification-dex:
 	@test -n "$(DEX_QUALIFICATION_BINARY)" || { \

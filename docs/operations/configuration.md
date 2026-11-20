@@ -129,8 +129,8 @@ they never fall back to the runtime credentials.
 
 Read only by `meshcore migrate operator status|apply`; they never fall back
 to the migrator's or the runtime's settings. The user is the database
-operator, a superuser (or, on PostgreSQL 16 and later, a `CREATEROLE` role
-with the limits in the deployment guide), never a MeshTransit role
+operator, a superuser or a managed service's administrator (`CREATEROLE`
+and `CREATEDB`, see the deployment guide), never a MeshTransit role
 ([deployment](deployment.md#migrations-and-operator-steps)).
 
 | Variable | Default | Allowed | Meaning |
@@ -143,6 +143,48 @@ with the limits in the deployment guide), never a MeshTransit role
 | `MESHTRANSIT_OPERATOR_CONNECT_TIMEOUT` | `5s` | 100ms–30s | |
 | `MESHTRANSIT_OPERATOR_LOCK_TIMEOUT` | `5s` | 100ms–30s, below the statement timeout | |
 | `MESHTRANSIT_OPERATOR_STATEMENT_TIMEOUT` | `30s` | 1s–10m | Applies to each statement of a step |
+
+### Database bootstrap
+
+Read only by `meshcore install bootstrap postgres`, run as the database
+administrator before the first operator step and the first migration, and
+again on every upgrade (it changes only what differs). It creates the logins
+(each with a SCRAM verifier of its password file; the server never sees the
+password), marks them `COMMENT ON ROLE … IS '<marker>'`, creates the group
+roles, the memberships and the databases, creates `btree_gist` as the
+migrator and gives the administrator `CONNECT` on the Core database. A login
+that exists and signs in with its file is left alone; one that does not is
+changed only when it carries this installation's marker, or with
+`MESHTRANSIT_BOOTSTRAP_ROTATE_LOGINS=true`. Needs PostgreSQL 18.
+
+The password check signs in as the login to its own database (Core's, or
+the identity database for `identity_*`), so per-database `pg_hba.conf` lines
+apply as they do for the pods; a refusal before the password is checked
+(SQLSTATE 28000) stops the run with `bootstrap_sign_in_refused` rather than
+guess. An expired `VALID UNTIL` is cleared. One bootstrap runs at a time
+(an advisory lock; a second fails with `bootstrap_busy`). A login name the
+bootstrap does not keep fails with `bootstrap_unknown_login`. When the
+administrator may set `log_statement`, `log_min_error_statement` and
+`log_min_duration_statement` (a superuser does), it turns them off for its
+session, so no password verifier reaches the server log; otherwise the
+provider's log policy applies. Connect it directly, not through a pooler in
+transaction mode: the lock, the log settings and the timeouts are the
+session's.
+
+| Variable | Default | Allowed | Meaning |
+|---|---|---|---|
+| `MESHTRANSIT_BOOTSTRAP_POSTGRES_ADDRESS` | required | address | Database endpoint |
+| `MESHTRANSIT_BOOTSTRAP_POSTGRES_USER` | required | name | Administrator (superuser, or `CREATEROLE` and `CREATEDB`) |
+| `MESHTRANSIT_BOOTSTRAP_POSTGRES_PASSWORD_FILE` | required | path | Its password |
+| `MESHTRANSIT_BOOTSTRAP_POSTGRES_CA_FILE` | required | path | CA bundle |
+| `MESHTRANSIT_BOOTSTRAP_POSTGRES_MAINTENANCE_DATABASE` | `postgres` | name | Where the administrator connects |
+| `MESHTRANSIT_BOOTSTRAP_CORE_DATABASE` | `meshtransit` | name | Core's database, owned by `mesh_migrator` |
+| `MESHTRANSIT_BOOTSTRAP_IDENTITY_DATABASE` | none | name | The identity broker's database, owned by `identity_migrator` |
+| `MESHTRANSIT_BOOTSTRAP_MARKER` | required | `meshtransit:<id>` | This installation's marker |
+| `MESHTRANSIT_BOOTSTRAP_LOGIN_PASSWORD_FILES` | required | `login=path,…` | `mesh_migrator` required; `mesh_runtime`, `mesh_control`, `mesh_worker`, `mesh_all`, and both identity logins with an identity database |
+| `MESHTRANSIT_BOOTSTRAP_ROTATE_LOGINS` | `false` | `true`/`false` | Change a password that differs even on a login without the marker |
+| `MESHTRANSIT_BOOTSTRAP_CONNECT_TIMEOUT` | `5s` | 100ms–30s | |
+| `MESHTRANSIT_BOOTSTRAP_STATEMENT_TIMEOUT` | `30s` | 1s–10m | Per statement; locks wait half of it |
 
 ## Redis
 

@@ -40,7 +40,7 @@ not apply under `no-new-privileges` or Kubernetes
 
 ## PostgreSQL
 
-PostgreSQL 16 or later, a primary (Core refuses a read-only connection), with
+PostgreSQL 18 or later (Core uses `uuidv7()`), a primary (Core refuses a read-only connection), with
 TLS and SCRAM-SHA-256 authentication. One database holds Core; the identity
 broker, if used, has its own database.
 
@@ -169,7 +169,9 @@ It prints JSON: the steps it ran (`applied`), those it ran again
 (`replayed`), those it left with the reason (`awaiting_migration`,
 `after_rollout`, `after_earlier_step`, `beyond_through`) and those still
 pending. `meshcore migrate operator status` lists every step and what is
-missing, without changing anything; it needs the operator's settings too,
+missing, without changing anything (it runs in a transaction that always
+rolls back, so it needs the primary, and it waits for an apply in progress
+when the operator joins `mesh_migrator` to read the schema); it needs the operator's settings too,
 while `meshcore migrate verify` gives the same report with the migrator's. A step holds when PostgreSQL shows what
 its file sets: the role and its attributes, the owner of each function, and
 which roles hold `EXECUTE` on it (a revoked role must not reach it through
@@ -177,16 +179,26 @@ PUBLIC or a membership either); nothing else records that a step ran, so
 steps applied by hand count as well. `meshcore migrate verify` also reports
 any role membership a MeshTransit role takes part in, since none is allowed.
 
-**A superuser is the simplest operator.** On PostgreSQL 16 and later a
-`CREATEROLE` role also works for reading and for role steps: PostgreSQL gives
-it an `ADMIN`-only grant (no `INHERIT`, no `SET`) on each role it creates,
-which the command does not count as a membership. It needs `CONNECT` on the
-database, `USAGE` on schema `mesh_ops` and `SELECT` on
-`mesh_ops.schema_compatibility`. To hand a function over in an ownership
-step, PostgreSQL also requires it to act as the function's current owner
-(the migrator, with `INHERIT`) and as the new owner role (with `SET`); those
-are exactly the memberships the command refuses, so pending ownership steps
-need a superuser, and the step fails with nothing applied otherwise.
+**A superuser is the simplest operator; a managed service's administrator
+also works.** An operator with `CREATEROLE` and `CREATEDB` (such as
+`doadmin`, `rds_superuser` or `cloudsqlsuperuser`) runs every step when the
+MeshTransit roles are its own (it created them, so PostgreSQL gives it an
+`ADMIN`-only grant on each, which the command does not count as a
+membership):
+
+- `meshcore install bootstrap postgres` ([configuration](configuration.md#database-bootstrap)) creates the logins, the group
+  roles and the databases, and gives the operator `CONNECT` on the Core
+  database (the migrations take it from `PUBLIC`);
+- inside its own transaction the command joins the migrator and each owner
+  role (`INHERIT`, `SET`) and gives the owner roles `CREATE` on the schemas,
+  which PostgreSQL requires to hand a function over unless the operator is a
+  superuser; it takes all of it back before it commits;
+- it removes the memberships `createrole_self_grant` adds for the roles it
+  creates, and never names `SUPERUSER`, `REPLICATION` or `BYPASSRLS` to a role
+  that does not have them (PostgreSQL refuses that to a non-superuser).
+
+`core/scripts/ci/run-managed-postgres.sh` checks the whole chain this way on
+PostgreSQL 18, for `createrole_self_grant` empty and `set,inherit`.
 
 Without the command, run the files with `psql -X -v ON_ERROR_STOP=1 -f` as a
 database superuser, in file order, at the same points (a `…_role.sql` file
