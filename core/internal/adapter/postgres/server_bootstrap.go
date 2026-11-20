@@ -16,15 +16,15 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-// The database bootstrap (V1-11 step 2, docs/v1-11-bootstrap-design.md §4):
-// the chart's bootstrap Job runs it as the database's administrator before
+// The database bootstrap (V1-11 step 2; docs/operations/configuration.md
+// "Database bootstrap"): the chart's bootstrap Job runs it as the database's administrator before
 // any migration, on an empty server or an existing one, self-run or managed.
 // Every step reads first and changes only what differs, so a steady-state
 // run writes nothing.
 //
 // A managed service's administrator is not a superuser: it has CREATEROLE
 // and CREATEDB and holds ADMIN on the roles it created (PostgreSQL ≥ 16).
-// The spike (§12) showed what that needs: never mention SUPERUSER,
+// A test on such a server showed what that needs: never mention SUPERUSER,
 // REPLICATION or BYPASSRLS in ALTER ROLE; SET on a role to create a database
 // it owns; the rows createrole_self_grant adds removed with GRANTED BY.
 
@@ -261,7 +261,7 @@ func (run *serverBootstrapRun) lock(ctx context.Context) error {
 // session (statements, failing, slow and sampled statements) when the
 // administrator may set those settings: a superuser, or one granted SET on
 // them. A managed administrator usually may not; the provider's log policy
-// then applies (docs/release-1-risk-acceptance.md L1).
+// then applies.
 func (run *serverBootstrapRun) silence(ctx context.Context) error {
 	var allowed bool
 	if err := run.admin.QueryRow(ctx, `SELECT pg_catalog.has_parameter_privilege('log_statement', 'SET')

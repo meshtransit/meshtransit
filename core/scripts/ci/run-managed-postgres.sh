@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Core's database install chain on a PostgreSQL whose administrator is not a
-# superuser, as on a managed service (V1-11 step 2, docs v1-11-bootstrap-design
-# §12): CREATEROLE CREATEDB plus provider-style default roles, for each
+# superuser, as on a managed service (V1-11 step 2): CREATEROLE CREATEDB plus
+# provider-style default roles, for each
 # createrole_self_grant a provider may set.
 #
 #   bash core/scripts/ci/run-managed-postgres.sh            # '' and 'set,inherit'
