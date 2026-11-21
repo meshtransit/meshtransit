@@ -105,9 +105,18 @@ func ReadLoginIdentity(ctx context.Context, options ServerBootstrapOptions, quer
 		return LoginIdentityRecord{}, false, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(context.WithoutCancel(ctx)) }()
+	// Before the first migration the table is absent: a statement naming it
+	// fails at parse time, even in a branch that would not run, so its
+	// presence is asked first.
+	var present bool
+	if err := transaction.QueryRow(ctx, `SELECT pg_catalog.to_regclass('mesh.deployment') IS NOT NULL`).Scan(&present); err != nil {
+		return LoginIdentityRecord{}, false, fmt.Errorf("read the deployment table: %w", err)
+	}
+	if !present {
+		return LoginIdentityRecord{}, false, nil
+	}
 	var deployments int
-	if err := transaction.QueryRow(ctx, `SELECT CASE WHEN pg_catalog.to_regclass('mesh.deployment') IS NULL THEN 0
-    ELSE (SELECT count(*) FROM mesh.deployment WHERE deleted_at IS NULL) END`).Scan(&deployments); err != nil {
+	if err := transaction.QueryRow(ctx, `SELECT count(*) FROM mesh.deployment WHERE deleted_at IS NULL`).Scan(&deployments); err != nil {
 		return LoginIdentityRecord{}, false, fmt.Errorf("read deployments: %w", err)
 	}
 	if deployments == 0 {

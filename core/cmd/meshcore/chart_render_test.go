@@ -65,7 +65,12 @@ type chartPlan struct {
 	places   map[string]bool
 }
 
-const chartMountRoot = "/run/meshtransit/"
+const (
+	chartMountRoot           = "/run/meshtransit/"
+	chartServiceAccountMount = "/var/run/secrets/kubernetes.io/serviceaccount/"
+	// chartDirectorySetting is the one setting that names a directory.
+	chartDirectorySetting = "SSL_CERT_DIR"
+)
 
 // chartCommands must each be in every render: the roles and every Job of a
 // clean install.
@@ -213,7 +218,8 @@ func checkChartWorkload(t *testing.T, check chartCheck) {
 	written := map[string]bool{}
 	for _, file := range check.workload.Files {
 		checkChartSecretSource(t, check, file)
-		if file.Key == "*" {
+		// The service account token's mount is Kubernetes's, not Core's.
+		if file.Key == "*" || strings.HasPrefix(file.Path, chartServiceAccountMount) {
 			continue
 		}
 		path := chartLocalPath(t, file.Path, root)
@@ -261,7 +267,13 @@ func checkChartPaths(t *testing.T, check chartCheck, command string, env map[str
 			paths = append(paths, strings.Replace(env[key], root, chartMountRoot, 1))
 		}
 	} else {
-		for _, value := range check.workload.Env {
+		for key, value := range check.workload.Env {
+			if key == chartDirectorySetting {
+				if !chartMountedDirectory(written, strings.Replace(value, chartMountRoot, root, 1)) {
+					t.Errorf("%s names %s, which holds no mounted file", key, value)
+				}
+				continue
+			}
 			paths = append(paths, chartPathPattern.FindAllString(value, -1)...)
 		}
 		for _, file := range check.workload.Files {
@@ -273,6 +285,17 @@ func checkChartPaths(t *testing.T, check chartCheck, command string, env map[str
 			t.Errorf("%s is named but not mounted", path)
 		}
 	}
+}
+
+// chartMountedDirectory reports whether path is a directory holding a
+// mounted file (SSL_CERT_DIR names one).
+func chartMountedDirectory(written map[string]bool, path string) bool {
+	for file := range written {
+		if strings.HasPrefix(file, strings.TrimSuffix(path, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // loadChartWorkload loads what the command loads at start.
