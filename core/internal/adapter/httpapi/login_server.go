@@ -105,7 +105,7 @@ func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 	}
 	certificate, err := loginServerCertificate(options)
 	if err != nil {
-		return nil, ErrInvalidLoginServer
+		return nil, err
 	}
 	owner := &LoginServer{
 		dispatcher: options.Dispatcher, logger: options.Logger, address: options.Address,

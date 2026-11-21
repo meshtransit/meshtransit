@@ -32,7 +32,7 @@ func composePrivateIdentityLoginService(
 		Dispatcher: factory.identity.dispatcher, MaxConnections: options.MaxConnections, Logger: options.Logger,
 	})
 	if err != nil {
-		return nil, errInvalidPrivateIdentityComposition
+		return nil, withCause(errInvalidPrivateIdentityComposition, err)
 	}
 	return service, nil
 }

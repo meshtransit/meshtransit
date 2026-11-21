@@ -192,8 +192,9 @@ const (
 	maxListPages = 20
 )
 
-// ErrDenied reports a request the API server refused for the token (401 or
-// 403): waiting will not help.
+// ErrDenied reports a request the API server refused (401 or 403) on any
+// operation: RBAC for the token, but also a quota, an admission webhook or a
+// namespace being deleted. Waiting will not help.
 var ErrDenied = errors.New("kubeapi: denied")
 
 // ListPods lists the namespace's pods that match labelSelector.
@@ -223,9 +224,6 @@ func listAll[T any](ctx context.Context, c *Client, target, kind, labelSelector 
 		code, payload, err := c.do(ctx, http.MethodGet, target+"?"+query.Encode(), nil)
 		if err != nil {
 			return nil, err
-		}
-		if code == http.StatusUnauthorized || code == http.StatusForbidden {
-			return nil, errors.Join(ErrDenied, statusError("list "+kind, code, payload))
 		}
 		if code != http.StatusOK {
 			return nil, statusError("list "+kind, code, payload)
@@ -405,7 +403,11 @@ func statusError(operation string, code int, payload []byte) error {
 	if len(message) > 200 {
 		message = message[:200]
 	}
-	return fmt.Errorf("kubeapi: %s: HTTP %d %s: %s", operation, code, status.Reason, message)
+	failure := fmt.Errorf("kubeapi: %s: HTTP %d %s: %s", operation, code, status.Reason, message)
+	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+		return errors.Join(ErrDenied, failure)
+	}
+	return failure
 }
 
 func validName(name string) bool {

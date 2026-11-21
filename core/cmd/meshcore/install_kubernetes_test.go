@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -300,10 +301,29 @@ func TestInstallKubernetesUsesWhatExists(t *testing.T) {
 	}
 }
 
-func TestInstallSecretsErrorCode(t *testing.T) {
+func TestInstallErrorCode(t *testing.T) {
 	t.Parallel()
-	if got := installSecretsErrorCode(errors.New("other")); got != "install_secrets_failure" {
-		t.Fatalf("code = %s", got)
+	for _, test := range []struct {
+		name     string
+		err      error
+		fallback string
+		want     string
+	}{
+		{name: "unknown takes the step's code", err: errors.New("other"), fallback: "install_login_ids_failure",
+			want: "install_login_ids_failure"},
+		{name: "denied by the API server", err: errors.Join(kubeapi.ErrDenied, errors.New("HTTP 403")),
+			fallback: "install_secrets_failure", want: "install_kubernetes_denied"},
+		{name: "timed out", err: fmt.Errorf("read: %w", context.DeadlineExceeded), fallback: "install_secrets_failure",
+			want: "install_timeout"},
+		{name: "known cause wins", err: fmt.Errorf("x: %w", errInstallLoginIDs), fallback: "install_login_ids_failure",
+			want: "install_login_ids_differ"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := installErrorCode(test.err, test.fallback); got != test.want {
+				t.Fatalf("code = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 

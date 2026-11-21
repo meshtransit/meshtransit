@@ -43,7 +43,8 @@ func composePrivateIdentityRuntime(
 	defer cancel()
 	candidate, err := profile.LoadConstruction(ctx)
 	if err != nil {
-		return nil, nil, errInvalidPrivateIdentityComposition
+		// The profile's files: TLS certificate and key, client secret, keys.
+		return nil, nil, withCause(errInvalidPrivateIdentityComposition, errStartupProfileRejected, err)
 	}
 	defer candidate.Clear()
 	keys, err := composePrivateIdentityKeyMaterial(ctx, candidate.Keys)
@@ -92,9 +93,13 @@ func composePrivateIdentityRuntime(
 		PrivateKeyPEM: material.PrivateKeyPEM, MaxConnections: 64, Logger: dependencies.Logger,
 		ReloadPEM: privateLoginCertificateReader(profile),
 	})
-	if err != nil || candidate.CheckCurrent(ctx) != nil || ctx.Err() != nil {
+	if err != nil {
 		factory.Close()
-		return nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, withCause(errInvalidPrivateIdentityComposition, err)
+	}
+	if candidate.CheckCurrent(ctx) != nil || ctx.Err() != nil {
+		factory.Close()
+		return nil, nil, withCause(errInvalidPrivateIdentityComposition, errStartupFilesChanged, ctx.Err())
 	}
 	return factory, service, nil
 }

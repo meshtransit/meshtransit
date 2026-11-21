@@ -106,7 +106,7 @@ func TestServerCertificateLoaderChecksLikeConstruction(t *testing.T) {
 	if _, err := serverCertificateLoader("id.example.test", pemReader(good, goodKey))(); err != nil {
 		t.Fatalf("matching host: %v", err)
 	}
-	if _, err := serverCertificateLoader("id.example.test", pemReader(other, otherKey))(); !errors.Is(err, ErrInvalidLoginServer) {
+	if _, err := serverCertificateLoader("id.example.test", pemReader(other, otherKey))(); !errors.Is(err, ErrServerCertificateName) {
 		t.Fatalf("other host: %v", err)
 	}
 	failed := errors.New("half-written Secret")

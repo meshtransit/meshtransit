@@ -213,7 +213,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger,
 		)
 		if composeErr != nil {
-			logger.ErrorContext(ctx, "startup failed", "error_code", "identity_broker_composition_failure")
+			logger.ErrorContext(ctx, "startup failed", "error_code", "identity_broker_composition_failure",
+				"reason", startupFailureReason(composeErr))
 			return 1
 		}
 		checkers = append(checkers, identityBroker.checkers...)
@@ -466,7 +467,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			browserRuntime...,
 		)
 		if composeErr != nil {
-			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_composition_failure")
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_composition_failure",
+				"reason", startupFailureReason(composeErr))
 			return 1
 		}
 		closeFactory := func(context.Context) error { factory.Close(); return nil }

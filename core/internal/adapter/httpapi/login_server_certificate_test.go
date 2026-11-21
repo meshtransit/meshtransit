@@ -19,23 +19,28 @@ func TestLoginServerCertificateRejectsForeignIdentityAndUsage(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
+		want   error
 		change func(*x509.Certificate)
 	}{
-		{name: "foreign host", change: func(c *x509.Certificate) { c.DNSNames = []string{"foreign.example.test"} }},
-		{name: "wildcard", change: func(c *x509.Certificate) { c.DNSNames = []string{"*.example.test"} }},
-		{name: "shared identity", change: func(c *x509.Certificate) { c.DNSNames = append(c.DNSNames, "id.example.test") }},
-		{name: "ip identity", change: func(c *x509.Certificate) { c.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")} }},
-		{name: "email identity", change: func(c *x509.Certificate) { c.EmailAddresses = []string{"synthetic@example.test"} }},
-		{name: "uri identity", change: func(c *x509.Certificate) { c.URIs = []*url.URL{{Scheme: "https", Host: "console.example.test"}} }},
-		{name: "ca certificate", change: func(c *x509.Certificate) { c.IsCA = true; c.KeyUsage |= x509.KeyUsageCertSign }},
-		{name: "client usage", change: func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth} }},
+		{name: "foreign host", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.DNSNames = []string{"foreign.example.test"} }},
+		{name: "wildcard", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.DNSNames = []string{"*.example.test"} }},
+		{name: "shared identity", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.DNSNames = append(c.DNSNames, "id.example.test") }},
+		{name: "ip identity", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")} }},
+		{name: "email identity", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.EmailAddresses = []string{"synthetic@example.test"} }},
+		{name: "uri identity", want: ErrServerCertificateName, change: func(c *x509.Certificate) { c.URIs = []*url.URL{{Scheme: "https", Host: "console.example.test"}} }},
+		{name: "ca certificate", want: ErrServerCertificateUsage, change: func(c *x509.Certificate) { c.IsCA = true; c.KeyUsage |= x509.KeyUsageCertSign }},
+		{name: "client usage", want: ErrServerCertificateUsage, change: func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth} }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			options, fixture, callback := loginServerTestOptions(t)
 			options.CertificatePEM, options.PrivateKeyPEM, _ = loginServerTestCertificate(t, test.change)
-			if server, err := NewLoginServer(options); server != nil || !errors.Is(err, ErrInvalidLoginServer) {
+			server, err := NewLoginServer(options)
+			if server != nil || !errors.Is(err, ErrInvalidLoginServer) {
 				t.Fatal("foreign certificate scope released a server")
+			}
+			if !errors.Is(err, test.want) {
+				t.Fatalf("the refusal does not say why: %v", err)
 			}
 			if len(fixture.calls) != 0 || callback.calls != 0 {
 				t.Fatal("certificate validation performed request effects")

@@ -80,7 +80,11 @@ func composeIdentityBroker(
 		logger,
 	)
 	if err != nil {
-		return identityBrokerComposition{}, errors.Join(errInvalidIdentityBrokerComposition, err)
+		reason := errStartupIdentityDatabase
+		if errors.Is(err, dexbroker.ErrInvalidPostgreSQLResource) {
+			reason = errStartupIdentityDatabaseSettings
+		}
+		return identityBrokerComposition{}, withCause(errInvalidIdentityBrokerComposition, reason, err)
 	}
 	if err := resources.Add("identity-postgresql", resource.Shutdown); err != nil {
 		return identityBrokerComposition{}, errors.Join(
@@ -118,12 +122,12 @@ func composeIdentityListener(
 ) (*httpapi.IdentityServer, error) {
 	certificatePEM, err := identity.Listener.TLSCertificateFile.Read()
 	if err != nil {
-		return nil, errInvalidIdentityBrokerComposition
+		return nil, withCause(errInvalidIdentityBrokerComposition, errStartupFilesUnreadable)
 	}
 	defer clear(certificatePEM)
 	privateKeyPEM, err := identity.Listener.TLSPrivateKeyFile.Read()
 	if err != nil {
-		return nil, errInvalidIdentityBrokerComposition
+		return nil, withCause(errInvalidIdentityBrokerComposition, errStartupFilesUnreadable)
 	}
 	defer clear(privateKeyPEM)
 	connectorIDs := make([]string, 0, len(identity.OIDCConnectors))
@@ -153,7 +157,7 @@ func composeIdentityListener(
 		Logger: logger,
 	})
 	if err != nil {
-		return nil, errInvalidIdentityBrokerComposition
+		return nil, withCause(errInvalidIdentityBrokerComposition, err)
 	}
 	return listener, nil
 }

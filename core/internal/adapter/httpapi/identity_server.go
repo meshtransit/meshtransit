@@ -132,7 +132,7 @@ func NewIdentityServer(options IdentityServerOptions) (*IdentityServer, error) {
 		issuer.Hostname(),
 	)
 	if err != nil {
-		return nil, ErrInvalidIdentityServer
+		return nil, errors.Join(ErrInvalidIdentityServer, err)
 	}
 	owner := &IdentityServer{
 		handler: options.Handler, routes: routes, issuerHost: issuer.Host,

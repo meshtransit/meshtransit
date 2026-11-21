@@ -131,7 +131,7 @@ func runInstallKubernetes(ctx context.Context, lookup config.LookupFunc, output 
 	values, report, err := run.ensure(ctx, resolved)
 	defer clearPasswords(values)
 	if err != nil {
-		return fail(installSecretsErrorCode(err), err)
+		return fail(installErrorCode(err, "install_secrets_failure"), err)
 	}
 	if len(report.RetainedGenerated) != 0 {
 		logger.WarnContext(ctx, "install bootstrap generated retained keys for an existing database",
@@ -157,11 +157,11 @@ func runInstallKubernetes(ctx context.Context, lookup config.LookupFunc, output 
 	}
 	deploymentID, recorded, err := ensureInstallationID(ctx, store, plan, ids, dependencies.newID)
 	if err != nil {
-		return fail(installSecretsErrorCode(err), err)
+		return fail(installErrorCode(err, "install_deployment_id_failure"), err)
 	}
 	login, err := ensureInstallLogin(ctx, store, plan, deploymentID, options, dependencies)
 	if err != nil {
-		return fail(installSecretsErrorCode(err), err)
+		return fail(installErrorCode(err, "install_login_ids_failure"), err)
 	}
 	return writeInstallReport(output, installKubernetesReport{
 		Operation: "install bootstrap kubernetes", installSecretsReport: report, Postgres: databaseReport,
@@ -471,7 +471,10 @@ func (run *installSecretsRun) updatePublicKeys(ctx context.Context, name string,
 	}
 }
 
-func installSecretsErrorCode(err error) string {
+// installErrorCode classifies a failure of one install step: a known
+// cause, else the step's own code (fallback), so a log names where it
+// stopped although the error text is redacted.
+func installErrorCode(err error, fallback string) string {
 	for _, known := range []struct {
 		err  error
 		code string
@@ -489,10 +492,14 @@ func installSecretsErrorCode(err error) string {
 		{errInstallNotOurs, "install_configmap_not_ours"},
 		{kubeapi.ErrConflict, "install_conflict"},
 		{postgresadapter.ErrMigrationOpen, "bootstrap_open_failure"},
+		// Refused: RBAC, a quota, an admission webhook (the Job's log on
+		// the API server side names which).
+		{kubeapi.ErrDenied, "install_kubernetes_denied"},
+		{context.DeadlineExceeded, "install_timeout"},
 	} {
 		if errors.Is(err, known.err) {
 			return known.code
 		}
 	}
-	return "install_secrets_failure"
+	return fallback
 }
