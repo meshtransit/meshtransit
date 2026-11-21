@@ -131,6 +131,11 @@ func (fixture *installKubernetesFixture) run(t *testing.T) (int, string, string)
 		installationIDs: func(context.Context, postgresadapter.ServerBootstrapOptions) ([]string, error) {
 			return fixture.installations, nil
 		},
+		loginIdentity: func(context.Context, postgresadapter.ServerBootstrapOptions, postgresadapter.LoginIdentityQuery) (
+			postgresadapter.LoginIdentityRecord, bool, error) {
+			return postgresadapter.LoginIdentityRecord{}, false, nil
+		},
+		newID:       func() (string, error) { return "01995d00-0000-7000-8000-0000000000aa", nil },
 		secretStore: func() (installSecretStore, error) { return fixture.store, nil },
 		readPlan:    func(string) ([]byte, error) { return []byte(fixture.plan), nil },
 		random:      rand.Reader,
@@ -403,7 +408,7 @@ func TestEnsureInstallationID(t *testing.T) {
 				kube = &racingInstallStore{fakeSecretStore: store, id: test.race}
 			}
 			got, _, err := ensureInstallationID(context.Background(), kube,
-				installsecrets.Plan{Fullname: "mt", DeploymentPublicID: test.values}, test.database)
+				installsecrets.Plan{Fullname: "mt", DeploymentPublicID: test.values}, test.database, nil)
 			if !errors.Is(err, test.err) || (test.err == nil && got != test.want) {
 				t.Fatalf("%q, %v", got, err)
 			}
@@ -418,7 +423,7 @@ func TestEnsureInstallationID(t *testing.T) {
 		store.configMaps["mt-install"] = kubeapi.ConfigMap{Metadata: kubeapi.Metadata{Name: "mt-install"},
 			Data: map[string]string{installDeploymentIDKey: databaseID}}
 		if _, _, err := ensureInstallationID(context.Background(), store, installsecrets.Plan{Fullname: "mt"},
-			[]string{databaseID}); !errors.Is(err, errInstallNotOurs) {
+			[]string{databaseID}, nil); !errors.Is(err, errInstallNotOurs) {
 			t.Fatalf("foreign: %v", err)
 		}
 	})
@@ -434,4 +439,21 @@ func (store *racingInstallStore) CreateConfigMapIfAbsent(_ context.Context, conf
 	store.configMaps[configMap.Metadata.Name] = kubeapi.ConfigMap{Metadata: configMap.Metadata,
 		Data: map[string]string{installDeploymentIDKey: store.id}}
 	return false, nil
+}
+
+// A new installation with a version 5 login profile gets a new Deployment
+// ID; without one it must name it.
+func TestEnsureInstallationIDNewWithLogin(t *testing.T) {
+	t.Parallel()
+	newID := func() (string, error) { return "01995d00-0000-7000-8000-0000000000bb", nil }
+	plan := installsecrets.Plan{Fullname: "mt", Login: &installsecrets.LoginPlan{Issuer: "https://id.example.test", OIDCClientID: "c"}}
+	store := newFakeSecretStore()
+	id, recorded, err := ensureInstallationID(context.Background(), store, plan, nil, newID)
+	if err != nil || !recorded || id != "01995d00-0000-7000-8000-0000000000bb" {
+		t.Fatalf("new with login: %q %v %v", id, recorded, err)
+	}
+	if _, _, err := ensureInstallationID(context.Background(), newFakeSecretStore(), installsecrets.Plan{Fullname: "mt"}, nil,
+		newID); !errors.Is(err, errInstallDeploymentIDRequired) {
+		t.Fatalf("new without login: %v", err)
+	}
 }

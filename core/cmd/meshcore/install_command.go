@@ -12,6 +12,7 @@ import (
 
 	"meshtransit.net/core/internal/adapter/kubeapi"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/core/internal/platform/observability"
 	"meshtransit.net/core/migrations"
@@ -32,17 +33,34 @@ type installDependencies struct {
 	databaseExists func(context.Context, postgresadapter.ServerBootstrapOptions, string) (bool, error)
 	// installationIDs reads the Deployment IDs the Core database holds.
 	installationIDs func(context.Context, postgresadapter.ServerBootstrapOptions) ([]string, error)
-	secretStore     func() (installSecretStore, error)
-	readPlan        func(path string) ([]byte, error)
-	pods            func() (rolloutLister, error)
-	random          io.Reader
+	// loginIdentity reads the login route's provider and client.
+	loginIdentity func(context.Context, postgresadapter.ServerBootstrapOptions, postgresadapter.LoginIdentityQuery) (
+		postgresadapter.LoginIdentityRecord, bool, error)
+	newID func() (string, error)
+	// deploymentInstalled reports whether the Core database has a deployment.
+	deploymentInstalled func(context.Context, postgresadapter.MigrationOptions) (bool, error)
+	// bootstrapDeployment runs the deployment bootstrap ("bootstrap apply").
+	bootstrapDeployment func(ctx context.Context, lookup config.LookupFunc, output, errorOutput io.Writer) int
+	secretStore         func() (installSecretStore, error)
+	readPlan            func(path string) ([]byte, error)
+	pods                func() (rolloutLister, error)
+	random              io.Reader
 }
 
 func productionInstallDependencies() installDependencies {
 	return installDependencies{
-		bootstrap:       postgresadapter.BootstrapServer,
-		databaseExists:  postgresadapter.ServerCoreSchemaExists,
-		installationIDs: postgresadapter.ReadInstallationIDs,
+		bootstrap:           postgresadapter.BootstrapServer,
+		databaseExists:      postgresadapter.ServerCoreSchemaExists,
+		installationIDs:     postgresadapter.ReadInstallationIDs,
+		loginIdentity:       postgresadapter.ReadLoginIdentity,
+		deploymentInstalled: postgresadapter.DeploymentInstalled,
+		bootstrapDeployment: func(ctx context.Context, lookup config.LookupFunc, output, errorOutput io.Writer) int {
+			return runBootstrap(ctx, "apply", lookup, output, errorOutput)
+		},
+		newID: func() (string, error) {
+			id, err := publicid.New()
+			return id.String(), err
+		},
 		secretStore: func() (installSecretStore, error) {
 			kubeConfig, err := kubeapi.InCluster()
 			if err != nil {
@@ -88,6 +106,10 @@ func runInstall(ctx context.Context, args []string, lookup config.LookupFunc, ou
 	case "bootstrap kubernetes":
 		if dependencies.bootstrap != nil {
 			return runInstallKubernetes(ctx, lookup, output, logger, dependencies)
+		}
+	case "bootstrap deployment":
+		if dependencies.deploymentInstalled != nil {
+			return runInstallBootstrapDeployment(ctx, lookup, output, errorOutput, logger, dependencies)
 		}
 	}
 	return writeInstallUsage(errorOutput)

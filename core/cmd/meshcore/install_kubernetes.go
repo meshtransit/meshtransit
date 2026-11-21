@@ -155,13 +155,36 @@ func runInstallKubernetes(ctx context.Context, lookup config.LookupFunc, output 
 	if err != nil {
 		return fail(serverBootstrapErrorCode(err), err)
 	}
-	deploymentID, recorded, err := ensureInstallationID(ctx, store, plan, ids)
+	deploymentID, recorded, err := ensureInstallationID(ctx, store, plan, ids, dependencies.newID)
+	if err != nil {
+		return fail(installSecretsErrorCode(err), err)
+	}
+	login, err := ensureInstallLogin(ctx, store, plan, deploymentID, options, dependencies)
 	if err != nil {
 		return fail(installSecretsErrorCode(err), err)
 	}
 	return writeInstallReport(output, installKubernetesReport{
 		Operation: "install bootstrap kubernetes", installSecretsReport: report, Postgres: databaseReport,
-		DeploymentPublicID: deploymentID, DeploymentIDRecorded: recorded,
+		DeploymentPublicID: deploymentID, DeploymentIDRecorded: recorded, Login: login,
+	})
+}
+
+// ensureInstallLogin reads the database's login route, when the plan asks
+// for the login IDs, and keeps them.
+func ensureInstallLogin(ctx context.Context, store installSecretStore, plan installsecrets.Plan, deploymentID string,
+	options postgresadapter.ServerBootstrapOptions, dependencies installDependencies,
+) (installLoginReport, error) {
+	if plan.Login == nil {
+		return installLoginReport{}, nil
+	}
+	record, found, err := dependencies.loginIdentity(ctx, options, postgresadapter.LoginIdentityQuery{
+		DeploymentID: deploymentID, Issuer: plan.Login.Issuer, OIDCClientID: plan.Login.OIDCClientID,
+	})
+	if err != nil {
+		return installLoginReport{}, err
+	}
+	return ensureLoginIdentity(ctx, store, loginIdentityInput{
+		plan: plan, database: record, inDatabase: found, newID: dependencies.newID,
 	})
 }
 
@@ -172,12 +195,14 @@ type installKubernetesReport struct {
 	Postgres             postgresadapter.ServerBootstrapReport `json:"postgres"`
 	DeploymentPublicID   string                                `json:"deployment_public_id"`
 	DeploymentIDRecorded bool                                  `json:"deployment_id_recorded,omitempty"`
+	Login                installLoginReport                    `json:"login"`
 }
 
 func loadInstallPlan(dependencies installDependencies, bootstrapConfig config.KubernetesBootstrapConfig,
 ) (installsecrets.Plan, error) {
 	if dependencies.readPlan == nil || dependencies.secretStore == nil || dependencies.databaseExists == nil ||
-		dependencies.random == nil || dependencies.installationIDs == nil {
+		dependencies.random == nil || dependencies.installationIDs == nil || dependencies.loginIdentity == nil ||
+		dependencies.newID == nil {
 		return installsecrets.Plan{}, errInstallSetup
 	}
 	data, err := dependencies.readPlan(bootstrapConfig.PlanFile)
@@ -459,6 +484,8 @@ func installSecretsErrorCode(err error) string {
 		{errInstallPublicKeysNotOurs, "install_public_keys_not_ours"},
 		{errInstallDeploymentID, "install_deployment_id_differs"},
 		{errInstallDeploymentIDRequired, "install_deployment_id_required"},
+		{errInstallLoginIDs, "install_login_ids_differ"},
+		{postgresadapter.ErrLoginIdentityConflict, "install_login_provider_conflict"},
 		{errInstallNotOurs, "install_configmap_not_ours"},
 		{kubeapi.ErrConflict, "install_conflict"},
 		{postgresadapter.ErrMigrationOpen, "bootstrap_open_failure"},

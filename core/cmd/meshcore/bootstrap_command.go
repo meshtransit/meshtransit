@@ -49,12 +49,13 @@ func runBootstrap(ctx context.Context, operation string, lookup config.LookupFun
 	if err != nil {
 		return fail("private_login_configuration_failure")
 	}
-	material, err := profile.Keys().Load(ctx)
+	// The bootstrap digests subjects with the active subject key only.
+	material, err := profile.Keys().LoadSubjectActive(ctx)
 	if err != nil {
 		return fail("private_identity_key_failure")
 	}
-	subjectKey, err := bootstrapSubjectKey(material.SubjectActive)
-	material.Clear()
+	subjectKey, err := bootstrapSubjectKey(material)
+	clear(material.Bytes[:])
 	if err != nil {
 		return fail("private_identity_key_failure")
 	}

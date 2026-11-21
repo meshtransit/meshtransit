@@ -63,6 +63,7 @@ func (FlowLogInternalConfig) LogValue() slog.Value { return slog.StringValue(red
 // loadFlowLogInternalConfig is all-or-nothing and only for roles that serve
 // the management API.
 func loadFlowLogInternalConfig(lookup LookupFunc, role app.Role) (*FlowLogInternalConfig, error) {
+	lookup = withFlowLogClientDefault(lookup)
 	names := []string{
 		envFlowLogInternalAddr, envFlowLogInternalCertFile, envFlowLogInternalKeyFile, envFlowLogInternalClientCA,
 		envFlowLogInternalClientID, envFlowLogTokenPublicKeys,
@@ -156,4 +157,24 @@ func parseFlowTokenPublicKeys(text string) ([]FlowTokenPublicKey, bool) {
 		return nil, false
 	}
 	return keys, true
+}
+
+// withFlowLogClientDefault names the receiver spiffe://<Deployment ID>/meshflow
+// when the receiver is configured without its identity and
+// MESHTRANSIT_DEPLOYMENT_PUBLIC_ID is set (V1-11 S2h): the chart then needs
+// no Deployment ID at render. An explicit identity is kept as it is.
+func withFlowLogClientDefault(lookup LookupFunc) LookupFunc {
+	base, hasBase := lookup(envDeploymentPublicID)
+	if _, set := lookup(envFlowLogInternalClientID); set || !hasBase {
+		return lookup
+	}
+	if _, configured := lookup(envFlowLogInternalAddr); !configured {
+		return lookup
+	}
+	return func(key string) (string, bool) {
+		if key == envFlowLogInternalClientID {
+			return "spiffe://" + base + "/meshflow", true
+		}
+		return lookup(key)
+	}
 }

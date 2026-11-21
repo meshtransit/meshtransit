@@ -86,11 +86,14 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		return nil, ErrInvalid
 	}
 	var version int
-	if !privateLoginField(fields, "version", &version) || version < 1 || version > 4 {
+	if !privateLoginField(fields, "version", &version) || version < 1 || version > 5 {
 		return nil, ErrInvalid
 	}
 	// Version 4 drops workspace_id: Core chooses each Account's Workspace at
 	// login. Versions 1-3 still require a valid workspace_id, which is ignored.
+	// Version 5 drops the IDs and generations: they come from the
+	// environment (MESHTRANSIT_DEPLOYMENT_PUBLIC_ID, MESHTRANSIT_LOGIN_*), so
+	// a chart can render the profile before the install records them.
 	expectedFields := 20
 	switch version {
 	case 2:
@@ -99,6 +102,8 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		expectedFields = 24
 	case 4:
 		expectedFields = 23
+	case 5:
+		expectedFields = 18
 	}
 	if len(fields) != expectedFields {
 		return nil, ErrInvalid
@@ -143,7 +148,7 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		Scopes: []string{"openid"}, AllowedAlgorithms: []string{"RS256"},
 		RedirectURI: result.Origin() + "/auth/v1/callback",
 	}
-	var dep, work, provider, client string
+	var work string
 	if version < 4 {
 		if !privateLoginField(fields, "workspace_id", &work) {
 			return nil, ErrInvalid
@@ -156,8 +161,6 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		name        string
 		destination *string
 	}{
-		{name: "deployment_id", destination: &dep},
-		{name: "provider_id", destination: &provider}, {name: "client_id", destination: &client},
 		{name: "issuer", destination: &params.Issuer}, {name: "discovery_uri", destination: &params.DiscoveryURI},
 		{name: "authorization_endpoint", destination: &params.AuthorizationEndpoint},
 		{name: "token_endpoint", destination: &params.TokenEndpoint}, {name: "jwks_uri", destination: &params.JWKSURI},
@@ -168,22 +171,8 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 			return nil, ErrInvalid
 		}
 	}
-	params.DeploymentID, err = deployment.ParseID(dep)
-	if err != nil {
-		return nil, ErrInvalid
-	}
-	// The route's Deployment ID creates the deployment (bootstrap) and
-	// signs every login: it must be the installation's.
-	if process.DeploymentPublicID != nil && *process.DeploymentPublicID != params.DeploymentID {
-		return nil, ErrInvalid
-	}
-	params.ProviderID, err = oidcauth.ParseProviderID(provider)
-	if err != nil {
-		return nil, ErrInvalid
-	}
-	params.ClientID, err = oidcauth.ParseClientID(client)
-	if err != nil {
-		return nil, ErrInvalid
+	if err := privateLoginRouteIdentity(fields, version, process, &params); err != nil {
+		return nil, err
 	}
 	if version >= 3 {
 		if !privateLoginField(fields, "connector_id", &params.ConnectorID) ||
@@ -196,10 +185,6 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		}
 		params.ConnectorID = process.Identity.OIDCConnectors[0].ID
 		params.Scopes = []string{"openid", "federated:id"}
-	}
-	if !privateLoginField(fields, "provider_generation", &params.ProviderGeneration) ||
-		!privateLoginField(fields, "recovery_epoch", &params.RecoveryEpoch) {
-		return nil, ErrInvalid
 	}
 	result.route, err = oidcauth.NewRoute(params)
 	if err != nil {
@@ -472,3 +457,48 @@ func (PrivateLoginConfig) LogValue() slog.Value { return slog.StringValue(redact
 
 // MarshalJSON refuses serialization of the complete private profile.
 func (PrivateLoginConfig) MarshalJSON() ([]byte, error) { return nil, ErrInvalid }
+
+// privateLoginRouteIdentity sets the route's Deployment, provider, client
+// and generations: from the profile up to version 4, from the environment
+// in version 5. Whatever both name must agree: the route's Deployment ID
+// creates the deployment (bootstrap) and signs every login.
+func privateLoginRouteIdentity(fields map[string]json.RawMessage, version int, process Config,
+	params *oidcauth.RouteParams,
+) error {
+	if version >= 5 {
+		if process.DeploymentPublicID == nil || process.LoginIdentity == nil {
+			return ErrInvalid
+		}
+		params.DeploymentID = *process.DeploymentPublicID
+		params.ProviderID, params.ClientID = process.LoginIdentity.ProviderID, process.LoginIdentity.ClientID
+		params.ProviderGeneration = process.LoginIdentity.ProviderGeneration
+		params.RecoveryEpoch = process.LoginIdentity.RecoveryEpoch
+		return nil
+	}
+	var dep, provider, client string
+	if !privateLoginField(fields, "deployment_id", &dep) || !privateLoginField(fields, "provider_id", &provider) ||
+		!privateLoginField(fields, "client_id", &client) ||
+		!privateLoginField(fields, "provider_generation", &params.ProviderGeneration) ||
+		!privateLoginField(fields, "recovery_epoch", &params.RecoveryEpoch) {
+		return ErrInvalid
+	}
+	var err error
+	if params.DeploymentID, err = deployment.ParseID(dep); err != nil {
+		return ErrInvalid
+	}
+	if params.ProviderID, err = oidcauth.ParseProviderID(provider); err != nil {
+		return ErrInvalid
+	}
+	if params.ClientID, err = oidcauth.ParseClientID(client); err != nil {
+		return ErrInvalid
+	}
+	if process.DeploymentPublicID != nil && *process.DeploymentPublicID != params.DeploymentID {
+		return ErrInvalid
+	}
+	if login := process.LoginIdentity; login != nil && (login.ProviderID != params.ProviderID ||
+		login.ClientID != params.ClientID || login.ProviderGeneration != params.ProviderGeneration ||
+		login.RecoveryEpoch != params.RecoveryEpoch) {
+		return ErrInvalid
+	}
+	return nil
+}

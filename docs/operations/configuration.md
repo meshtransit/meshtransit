@@ -79,7 +79,7 @@ Generating keys:
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | 1s–5m | Deadline for a graceful stop |
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | 100ms–30s, below the interval | Deadline of one dependency check |
 | `MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL` | `10s` | 1s–5m | How often readiness checks dependencies |
-| `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID` | none | UUIDv7 | The installation's Deployment ID, taken by every configured feature that needs it and does not set its own (the workers, browser registration, entitlement, connection-log tickets); a feature's own `…DEPLOYMENT…ID`, the relay's ticket ID and the login profile's `deployment_id` must equal it. It turns no feature on; the relay's ticket ID (`MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID`), which turns tickets on, is never taken from it |
+| `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID` | none | UUIDv7 | The installation's Deployment ID, taken by every configured feature that needs it and does not set its own (the workers, browser registration, entitlement, connection-log tickets); a feature's own `…DEPLOYMENT…ID`, the relay's ticket ID and the `deployment_id` of a login profile before version 5 must equal it (version 5 takes it from here). It turns no feature on; the relay's ticket ID (`MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID`), which turns tickets on, is never taken from it. A configured connection-log receiver without `MESHTRANSIT_FLOWLOG_INTERNAL_CLIENT_URI` is `spiffe://<this ID>/meshflow` |
 | `MESHTRANSIT_DNS_SUFFIX` | `mesh.internal` | DNS name of at least two labels, at most 155 bytes; labels of `a-z`, `0-9` and `-`, the last not all digits; not `local`, `localhost`, `arpa`, `invalid`, `test`, `onion`, `example`, `example.com/net/org` or under them; not itself a public suffix (`co.uk`, `github.io`); lowercased. A registered domain must be one you own: every node answers the whole suffix itself | Suffix of Device names (`<label>.<Workspace code>.<Network code>.<suffix>`) and share names (`….shared.<suffix>`) in maps and API responses. Set the same value on every role. Changing it renames every Device and share at the next map; see [DNS](../concepts/dns.md) |
 
 The API, control, identity and Console login listeners may not share a port
@@ -210,7 +210,8 @@ The plan:
   "features": ["identity", "connectionLogs", "kubernetesCA", "entitlement"],
   "secrets": {"control-noise": {"existingSecret": "my-control-key", "key": "noise.key"}},
   "allowNewRetainedKeys": [],
-  "deploymentPublicID": ""
+  "deploymentPublicID": "",
+  "login": {"issuer": "https://id.example.com/oauth2", "oidcClientID": "meshcore-bff"}
 }
 ```
 
@@ -238,13 +239,35 @@ The plan:
   with `install_retained_allow_stale`.
 - The installation's Deployment ID is the Core database's (after the first
   migration), `deploymentPublicID` and the one already recorded: any two that
-  differ stop the run (`install_deployment_id_differs`), and on a new
-  installation, with none of them, the run stops until you set
-  `deploymentPublicID` (`install_deployment_id_required`; it is also the
-  login profile's `deployment_id`, which creates the deployment). It is recorded once in the immutable
+  differ stop the run (`install_deployment_id_differs`). On a new
+  installation, with none of them, a plan with `login` (a version 5 login
+  profile, which carries no ID) gets a new one; without `login` the run stops
+  until you set `deploymentPublicID` (`install_deployment_id_required`: it is
+  then the version 4 profile's `deployment_id`, which creates the
+  deployment). A database that holds only deleted deployments stops the run
+  (`install_login_provider_conflict`). It is recorded once in the immutable
   ConfigMap `<fullname>-install` (key `deployment-public-id`), which the pods
   read as `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID`; back it up with the retained
   keys.
+- With `login`, the run also keeps the login route's IDs for a version 5
+  login profile: the provider (found by `issuer` and `oidcClientID`; none or
+  several for a deployment that exists stop the run,
+  `install_login_provider_conflict`) and its client, from the database when
+  a deployment exists, else the recorded ones, else new ones, in the
+  immutable ConfigMap `<fullname>-login-ids` (`provider-id`, `client-id`;
+  recorded ones that differ from the database's stop the run,
+  `install_login_ids_differ`), and the provider's generation and the
+  recovery epoch, from the database (1 before it), in
+  `<fullname>-login-state` (`provider-generation`, `recovery-epoch`). The
+  pods read them as `MESHTRANSIT_LOGIN_*`; a changed generation or epoch
+  takes effect when the pods restart.
+- `meshcore install bootstrap deployment` is the chart's Job after the
+  migration: when the Core database has no deployment yet, it creates the
+  first one, its login provider and the plan's first admins
+  (`MESHTRANSIT_BOOTSTRAP_PLAN_FILE`, the migration's settings, and the api
+  role's with the login profile; it reads only the `subject_active` key);
+  afterwards it changes nothing, so a first admin removed later does not
+  come back and a changed plan has no effect.
 - Generated Secrets are immutable: to rotate an item that is not retained,
   delete its Secret, upgrade, and restart the roles that read it.
 - The public halves go to the ConfigMap `<fullname>-public-keys`:
@@ -261,7 +284,8 @@ The plan:
   `install_secret_invalid`, `install_retained_key_missing`,
   `install_retained_allow_stale`,
   `install_public_keys_not_ours`, `install_deployment_id_differs`,
-  `install_deployment_id_required`,
+  `install_deployment_id_required`, `install_login_ids_differ`,
+  `install_login_provider_conflict`,
   `install_configmap_not_ours`, `install_conflict`,
   `install_kubernetes_unavailable`, `install_secrets_failure`,
   `bootstrap_unknown_login`, then the database bootstrap's.
@@ -317,7 +341,7 @@ recovery epoch must equal the login profile's (checked when serving, not by
 `config validate`).
 
 The **Console login profile** is a JSON file of at most 16 KiB, with one of
-the private-key modes. Version 4 (current) holds: the listener `address`
+the private-key modes. Version 4 holds: the listener `address`
 (loopback, private or unspecified) and public `origin` (https, a host name
 distinct from the issuer's), `trusted_proxy_prefixes` (1–16 private or
 loopback prefixes), the deployment, provider and client identifiers and
@@ -334,6 +358,19 @@ before version 3 have no scopes field and request `openid federated:id` only,
 so their sign-ins cannot accept invitations. The profile's scopes must also
 equal the client's stored `allowed_scopes` exactly, or every sign-in is
 refused: change both together, never only the profile.
+
+Version 5 is version 4 without the identifiers, generations and epoch, so a
+chart can render it before the install records them: Core takes the
+deployment from `MESHTRANSIT_DEPLOYMENT_PUBLIC_ID` and the rest from the
+settings below, all four or none. With an older profile, these settings, when
+set, must equal the profile's.
+
+| Variable | Default | Allowed | Meaning |
+|---|---|---|---|
+| `MESHTRANSIT_LOGIN_PROVIDER_ID` | none | UUIDv7 | The login route's provider |
+| `MESHTRANSIT_LOGIN_CLIENT_ID` | none | UUIDv7 | The login route's client |
+| `MESHTRANSIT_LOGIN_PROVIDER_GENERATION` | none | ≥ 1 | The provider's current generation |
+| `MESHTRANSIT_LOGIN_RECOVERY_EPOCH` | none | ≥ 1 | The deployment's recovery epoch |
 
 ### Self sign-up, entitlement, mail
 

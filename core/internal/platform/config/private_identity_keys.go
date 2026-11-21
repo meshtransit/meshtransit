@@ -102,6 +102,26 @@ func (files *PrivateIdentityKeyFiles) Load(ctx context.Context) (*PrivateIdentit
 	})
 }
 
+// subjectActiveKey is SubjectActive's place in keys.
+const subjectActiveKey = 6
+
+// LoadSubjectActive reads only the active subject digest key: the
+// deployment bootstrap needs nothing else, so its Job mounts only that file.
+func (files *PrivateIdentityKeyFiles) LoadSubjectActive(ctx context.Context) (ResidentKeyMaterial, error) {
+	if files == nil || ctx == nil || ctx.Err() != nil {
+		return ResidentKeyMaterial{}, ErrInvalid
+	}
+	ctx, cancel := context.WithTimeout(ctx, privateIdentityKeyTimeout)
+	defer cancel()
+	key := files.keys[subjectActiveKey]
+	decoded, snapshot, err := key.File.readPrivateIdentityKeySnapshot(ctx)
+	if err != nil || !snapshot.stillCurrent(ctx) || !validPrivateIdentityKeyID(key.ID) {
+		clear(decoded[:])
+		return ResidentKeyMaterial{}, ErrInvalid
+	}
+	return ResidentKeyMaterial{ID: key.ID, Bytes: decoded}, nil
+}
+
 // The private reader seam permits deterministic local-filesystem rotation/error
 // fixtures. Public Load always uses the scoped production reader above.
 func (files *PrivateIdentityKeyFiles) loadCandidate(

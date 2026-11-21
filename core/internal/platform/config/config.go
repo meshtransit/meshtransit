@@ -60,8 +60,12 @@ type Config struct {
 	// installation's Deployment ID, when set: every Deployment ID the process
 	// is configured with must equal it.
 	DeploymentPublicID *deployment.ID
-	ShutdownTimeout    time.Duration
-	LogLevel           slog.Level
+	// LoginIdentity is the login route's provider, client and generations
+	// from the environment (MESHTRANSIT_LOGIN_*), when set: a version 5
+	// login profile needs it; an older one must agree with it.
+	LoginIdentity   *LoginIdentityConfig
+	ShutdownTimeout time.Duration
+	LogLevel        slog.Level
 	// DNSSuffix is the suffix Device and share names are built under.
 	DNSSuffix dnsname.Suffix
 	// SubnetRoutes lets Access Rules name Sites and maps carry routes.
@@ -181,6 +185,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envLogLevel)
 	}
 	installationID, err := loadInstallationID(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	loginIdentity, err := loadLoginIdentity(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -410,6 +418,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// Browser registration's epoch is the deployment's, as the login's is.
+	if browserRegistration != nil && loginIdentity != nil &&
+		browserRegistration.RecoveryEpoch != loginIdentity.RecoveryEpoch {
+		return Config{}, settingError(envBrowserRegistrationRecoveryEpoch)
+	}
 	mailConfig, err := loadMailConfig(lookup)
 	if err != nil {
 		return Config{}, err
@@ -447,6 +460,7 @@ func Load(lookup LookupFunc) (Config, error) {
 
 	return Config{
 		DeploymentPublicID:          installationID,
+		LoginIdentity:               loginIdentity,
 		Role:                        role,
 		HealthAddress:               healthAddress,
 		ProfileAddress:              profileAddress,

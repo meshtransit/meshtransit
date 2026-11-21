@@ -105,3 +105,22 @@ func TestDeploymentIDTurnsNothingOn(t *testing.T) {
 		t.Fatalf("the entitlement ID should be filled and the installation key missing: %v", err)
 	}
 }
+
+// The connection-log receiver's identity defaults to the installation's
+// trust domain when the receiver is configured; an explicit one is kept.
+func TestFlowLogClientDefault(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{envDeploymentPublicID: testDeploymentID, envFlowLogInternalAddr: ":9444"}
+	got, ok := withFlowLogClientDefault(mapLookup(values))(envFlowLogInternalClientID)
+	if !ok || got != "spiffe://"+testDeploymentID+"/meshflow" {
+		t.Fatalf("default = %q %v", got, ok)
+	}
+	values[envFlowLogInternalClientID] = "spiffe://other.example/meshflow"
+	if got, _ := withFlowLogClientDefault(mapLookup(values))(envFlowLogInternalClientID); got != "spiffe://other.example/meshflow" {
+		t.Fatalf("explicit = %q", got)
+	}
+	if _, ok := withFlowLogClientDefault(mapLookup(map[string]string{envDeploymentPublicID: testDeploymentID}))(
+		envFlowLogInternalClientID); ok {
+		t.Fatal("the receiver was turned on by the installation ID alone")
+	}
+}

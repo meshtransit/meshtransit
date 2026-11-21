@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 
@@ -39,8 +40,27 @@ type Plan struct {
 	// Remove an item once its key is made; a run reports what it made.
 	AllowNewRetainedKeys []string `json:"allowNewRetainedKeys"`
 	// DeploymentPublicID is the installation's Deployment ID when the
-	// installer sets one; empty takes the database's, or a new one.
+	// installer sets one; empty takes the database's or the recorded one.
 	DeploymentPublicID string `json:"deploymentPublicID"`
+	// Login, when set, makes the bootstrap keep the login route's IDs for a
+	// version 5 login profile: it finds them in the database by these
+	// names, or makes new ones for a new installation.
+	Login *LoginPlan `json:"login,omitempty"`
+}
+
+// LoginPlan names the login route the database knows its provider by.
+type LoginPlan struct {
+	Issuer       string `json:"issuer"`
+	OIDCClientID string `json:"oidcClientID"`
+}
+
+var oidcClientID = regexp.MustCompile(`^[\x21-\x7e]{1,256}$`)
+
+func (login LoginPlan) valid() bool {
+	issuer, err := url.Parse(login.Issuer)
+	return err == nil && issuer.Scheme == "https" && issuer.Host != "" && issuer.User == nil &&
+		issuer.RawQuery == "" && issuer.Fragment == "" && len(login.Issuer) <= 2048 &&
+		oidcClientID.MatchString(login.OIDCClientID)
 }
 
 // Override names the installer's Secret and key for an item.
@@ -82,6 +102,9 @@ func ParsePlan(data []byte) (Plan, error) {
 		if _, err := deployment.ParseID(plan.DeploymentPublicID); err != nil {
 			return Plan{}, fmt.Errorf("%w: deploymentPublicID", ErrPlan)
 		}
+	}
+	if plan.Login != nil && !plan.Login.valid() {
+		return Plan{}, fmt.Errorf("%w: login", ErrPlan)
 	}
 	if _, err := plan.Resolve(); err != nil {
 		return Plan{}, err
@@ -130,6 +153,14 @@ func (plan Plan) Resolve() ([]Resolved, error) {
 // InstallConfigMap is the ConfigMap the installation's Deployment ID is
 // recorded in, immutable, for the pods.
 func InstallConfigMap(fullnameValue string) string { return fullnameValue + "-install" }
+
+// LoginIDsConfigMap holds the login route's provider and client IDs,
+// immutable.
+func LoginIDsConfigMap(fullnameValue string) string { return fullnameValue + "-login-ids" }
+
+// LoginStateConfigMap holds the login provider's generation and the
+// recovery epoch, which follow the database.
+func LoginStateConfigMap(fullnameValue string) string { return fullnameValue + "-login-state" }
 
 // PublicKeysConfigMap is the ConfigMap the public halves are written to.
 func PublicKeysConfigMap(fullnameValue string) string { return fullnameValue + "-public-keys" }

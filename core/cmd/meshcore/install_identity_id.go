@@ -26,9 +26,11 @@ var (
 
 // ensureInstallationID decides the installation's Deployment ID and records
 // it in the immutable install ConfigMap: the database's, the values' and the
-// recorded one must agree; at least one must exist. It reports the ID and
-// whether it recorded it now.
+// recorded one must agree; with none, a new one is made only for a version 5
+// login profile (plan.Login). It reports the ID and whether it recorded it
+// now.
 func ensureInstallationID(ctx context.Context, store installSecretStore, plan installsecrets.Plan, database []string,
+	newID func() (string, error),
 ) (string, bool, error) {
 	if len(database) > 1 {
 		return "", false, fmt.Errorf("%w: the database holds %d deployments", errInstallDeploymentID, len(database))
@@ -49,7 +51,17 @@ func ensureInstallationID(ctx context.Context, store installSecretStore, plan in
 		candidates = append(candidates, recorded)
 	}
 	if len(candidates) == 0 {
-		return "", false, errInstallDeploymentIDRequired
+		// With a version 5 login profile (plan.Login) nothing else carries
+		// the ID, so a new installation may make one; a version 4 profile
+		// names its own, which must be set here.
+		if plan.Login == nil || newID == nil {
+			return "", false, errInstallDeploymentIDRequired
+		}
+		generated, err := newID()
+		if err != nil {
+			return "", false, fmt.Errorf("generate a Deployment ID: %w", err)
+		}
+		candidates = append(candidates, generated)
 	}
 	for _, candidate := range candidates {
 		if candidate != candidates[0] {

@@ -445,3 +445,112 @@ func TestPrivateLoginDeploymentIDMatchesInstallation(t *testing.T) {
 		t.Fatal("a profile of another installation was accepted")
 	}
 }
+
+// privateLoginV5 turns the version 2 fixture into a version 5 profile (no
+// IDs, a connector and scopes) and gives the process the IDs.
+func privateLoginV5(t *testing.T) (Config, map[string]any) {
+	t.Helper()
+	process, document := privateLoginTestDocument(t)
+	for _, field := range []string{"deployment_id", "workspace_id", "provider_id", "client_id",
+		"provider_generation", "recovery_epoch"} {
+		delete(document, field)
+	}
+	document["version"] = 5
+	document["connector_id"] = "google-v1"
+	document["scopes"] = []string{"openid", "email", "federated:id"}
+	installation, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := loadLoginIdentity(mapLookup(map[string]string{
+		envLoginProviderID: "01890f00-0000-7000-8000-000000000003", envLoginClientID: "01890f00-0000-7000-8000-000000000004",
+		envLoginProviderGeneration: "2", envLoginRecoveryEpoch: "3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.DeploymentPublicID, process.LoginIdentity = &installation, identity
+	return process, document
+}
+
+func TestPrivateLoginVersion5TakesIDsFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	process, document := privateLoginV5(t)
+	profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process)
+	if err != nil {
+		t.Fatalf("version 5: %v", err)
+	}
+	route := profile.Route()
+	if route.DeploymentID().String() != "01890f00-0000-7000-8000-000000000001" || route.ProviderGeneration() != 2 ||
+		route.RecoveryEpoch() != 3 {
+		t.Fatalf("route identity: %v %d %d", route.DeploymentID(), route.ProviderGeneration(), route.RecoveryEpoch())
+	}
+	for name, change := range map[string]func(*Config, map[string]any){
+		"no installation ID": func(process *Config, _ map[string]any) { process.DeploymentPublicID = nil },
+		"no login identity":  func(process *Config, _ map[string]any) { process.LoginIdentity = nil },
+		"an ID in the file": func(_ *Config, document map[string]any) {
+			document["deployment_id"] = "01890f00-0000-7000-8000-000000000001"
+		},
+	} {
+		process, document := privateLoginV5(t)
+		change(&process, document)
+		if _, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// An older profile must agree with the environment's login identity.
+func TestPrivateLoginOlderVersionAgreesWithLoginIdentity(t *testing.T) {
+	t.Parallel()
+	process, document := privateLoginTestDocument(t)
+	same, err := loadLoginIdentity(mapLookup(map[string]string{
+		envLoginProviderID: "01890f00-0000-7000-8000-000000000003", envLoginClientID: "01890f00-0000-7000-8000-000000000004",
+		envLoginProviderGeneration: "1", envLoginRecoveryEpoch: "1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.LoginIdentity = same
+	if _, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process); err != nil {
+		t.Fatalf("agreeing identity: %v", err)
+	}
+	differs := *same
+	differs.RecoveryEpoch = 2
+	process.LoginIdentity = &differs
+	if _, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process); err == nil {
+		t.Fatal("a profile disagreeing with the login identity was accepted")
+	}
+}
+
+func TestLoadLoginIdentity(t *testing.T) {
+	t.Parallel()
+	valid := map[string]string{envLoginProviderID: "01890f00-0000-7000-8000-000000000003",
+		envLoginClientID: "01890f00-0000-7000-8000-000000000004", envLoginProviderGeneration: "1",
+		envLoginRecoveryEpoch: "1"}
+	if identity, err := loadLoginIdentity(mapLookup(map[string]string{})); err != nil || identity != nil {
+		t.Fatalf("none: %v %v", identity, err)
+	}
+	for _, test := range []struct{ name, key, value string }{
+		{"partial", envLoginClientID, ""},
+		{"bad provider", envLoginProviderID, "x"},
+		{"zero generation", envLoginProviderGeneration, "0"},
+		{"bad epoch", envLoginRecoveryEpoch, "one"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			values := map[string]string{}
+			for key, value := range valid {
+				values[key] = value
+			}
+			if test.value == "" {
+				delete(values, test.key)
+			} else {
+				values[test.key] = test.value
+			}
+			if _, err := loadLoginIdentity(mapLookup(values)); err == nil || !strings.Contains(err.Error(), test.key) {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+}

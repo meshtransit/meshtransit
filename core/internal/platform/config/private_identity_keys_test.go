@@ -344,3 +344,30 @@ func privateIdentityKeyOptionsFixture(t *testing.T) PrivateIdentityKeyOptions {
 	}
 	return options
 }
+
+// The deployment bootstrap reads the active subject key alone: the other
+// files may be absent.
+func TestPrivateIdentityKeyFilesLoadSubjectActiveOnly(t *testing.T) {
+	t.Parallel()
+	options := privateIdentityKeyOptionsFixture(t)
+	files, err := NewPrivateIdentityKeyFiles(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(options.Initiation.File.path); err != nil {
+		t.Fatal(err)
+	}
+	material, err := files.LoadSubjectActive(t.Context())
+	if err != nil {
+		t.Fatalf("subject key: %v", err)
+	}
+	if material.ID != options.SubjectActive.ID || material.Bytes == ([32]byte{}) {
+		t.Fatalf("material = %s", material.ID)
+	}
+	if err := os.Remove(options.SubjectActive.File.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := files.LoadSubjectActive(t.Context()); err == nil {
+		t.Fatal("a missing subject key was accepted")
+	}
+}

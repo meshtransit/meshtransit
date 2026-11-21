@@ -167,6 +167,10 @@ func TestParsePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ParsePlan([]byte(`{"profile":"cloud","release":"r","fullname":"a",
+		"login":{"issuer":"https://id.example.test/oauth2","oidcClientID":"meshcore-bff"}}`)); err != nil {
+		t.Fatalf("login plan: %v", err)
+	}
 	resolved, err := plan.Resolve()
 	if err != nil {
 		t.Fatal(err)
@@ -184,18 +188,20 @@ func TestParsePlan(t *testing.T) {
 		}
 	}
 	for name, text := range map[string]string{ //nolint:gosec // G101 false positive: plan JSON, no secret.
-		"unknown field":     `{"profile":"cloud","release":"r","fullname":"a","extra":1}`,
-		"bad fullname":      `{"profile":"cloud","fullname":"A_b"}`,
-		"unknown item":      `{"profile":"cloud","release":"r","fullname":"a","secrets":{"nope":{"existingSecret":"s","key":"k"}}}`,
-		"feature off":       `{"profile":"cloud","release":"r","fullname":"a","secrets":{"kube-ca-wrap-key":{"existingSecret":"s","key":"k"}}}`,
-		"bad secret name":   `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"S","key":"k"}}}`,
-		"bad key":           `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"s","key":"a/b"}}}`,
-		"trailing":          `{"profile":"cloud","release":"r","fullname":"a"} {}`,
-		"shared place":      `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"s","key":"k"},"initiation":{"existingSecret":"s","key":"k"}}}`,
-		"unknown profile":   `{"profile":"compose","release":"r","fullname":"a"}`,
-		"no release":        `{"profile":"cloud","fullname":"a"}`,
-		"allow unretained":  `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["capture"]}`,
-		"allow feature off": `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["kube-ca-wrap-key"]}`,
+		"unknown field":      `{"profile":"cloud","release":"r","fullname":"a","extra":1}`,
+		"bad fullname":       `{"profile":"cloud","fullname":"A_b"}`,
+		"unknown item":       `{"profile":"cloud","release":"r","fullname":"a","secrets":{"nope":{"existingSecret":"s","key":"k"}}}`,
+		"feature off":        `{"profile":"cloud","release":"r","fullname":"a","secrets":{"kube-ca-wrap-key":{"existingSecret":"s","key":"k"}}}`,
+		"bad secret name":    `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"S","key":"k"}}}`,
+		"bad key":            `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"s","key":"a/b"}}}`,
+		"trailing":           `{"profile":"cloud","release":"r","fullname":"a"} {}`,
+		"shared place":       `{"profile":"cloud","release":"r","fullname":"a","secrets":{"capture":{"existingSecret":"s","key":"k"},"initiation":{"existingSecret":"s","key":"k"}}}`,
+		"unknown profile":    `{"profile":"compose","release":"r","fullname":"a"}`,
+		"login http issuer":  `{"profile":"cloud","release":"r","fullname":"a","login":{"issuer":"http://id.example.test","oidcClientID":"c"}}`,
+		"login client space": `{"profile":"cloud","release":"r","fullname":"a","login":{"issuer":"https://id.example.test","oidcClientID":"a b"}}`,
+		"no release":         `{"profile":"cloud","fullname":"a"}`,
+		"allow unretained":   `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["capture"]}`,
+		"allow feature off":  `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["kube-ca-wrap-key"]}`,
 	} {
 		if _, err := ParsePlan([]byte(text)); !errors.Is(err, ErrPlan) {
 			t.Errorf("%s: ParsePlan() = %v", name, err)
