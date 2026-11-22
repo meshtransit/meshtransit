@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/core/migrations"
@@ -126,7 +125,7 @@ func OpenOperatorRunner(ctx context.Context, options OperatorOptions) (*Operator
 		return nil, errors.Join(ErrMigrationOpen, ErrInvalidOperatorOptions)
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-operator"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigrationOpen, err)
 	}

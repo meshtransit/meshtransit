@@ -29,7 +29,7 @@ func DeploymentInstalled(ctx context.Context, options MigrationOptions) (install
 		return false, err
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-setup"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return false, errors.Join(ErrBootstrapUnavailable, err)
 	}

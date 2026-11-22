@@ -35,7 +35,7 @@ func GrantIdentityRuntime(ctx context.Context, options MigrationOptions, runtime
 		return err
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-setup"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return errors.Join(ErrIdentityStorageGrants, err)
 	}

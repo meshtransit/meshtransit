@@ -79,7 +79,7 @@ func ChangeAccountRecovery(ctx context.Context, options MigrationOptions, princi
 		return AccountRecoveryReport{}, err
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-account-recovery"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return AccountRecoveryReport{}, errors.Join(ErrAccountRecoveryUnavailable, err)
 	}

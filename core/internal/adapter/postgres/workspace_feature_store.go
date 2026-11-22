@@ -219,7 +219,7 @@ func runWorkspaceFeature(ctx context.Context, options MigrationOptions, workspac
 		return WorkspaceFeatureReport{}, err
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-workspace-feature"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return WorkspaceFeatureReport{}, errors.Join(ErrWorkspaceFeatureUnavailable, err)
 	}

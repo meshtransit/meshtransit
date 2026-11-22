@@ -62,7 +62,7 @@ func ApplyBootstrap(ctx context.Context, options MigrationOptions, plan bootstra
 		return BootstrapReport{}, err
 	}
 	connectionConfig.RuntimeParams["application_name"] = "meshcore-bootstrap"
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return BootstrapReport{}, errors.Join(ErrBootstrapUnavailable, err)
 	}

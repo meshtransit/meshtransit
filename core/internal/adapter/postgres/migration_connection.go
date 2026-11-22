@@ -27,7 +27,7 @@ func OpenMigrationRunner(ctx context.Context, options MigrationOptions) (*Migrat
 	if err != nil {
 		return nil, errors.Join(ErrMigrationOpen, err)
 	}
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigrationOpen, err)
 	}

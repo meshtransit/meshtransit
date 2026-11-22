@@ -256,7 +256,7 @@ func (options ServerBootstrapOptions) connect(ctx context.Context, database, use
 	connectionConfig.RuntimeParams["statement_timeout"] = postgresTimeoutValue(options.StatementTimeout)
 	connectionConfig.RuntimeParams["lock_timeout"] = postgresTimeoutValue(options.StatementTimeout / 2)
 	connectionConfig.RuntimeParams["idle_in_transaction_session_timeout"] = postgresTimeoutValue(options.StatementTimeout)
-	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	connection, err := connectDirect(ctx, connectionConfig)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigrationOpen, err)
 	}
