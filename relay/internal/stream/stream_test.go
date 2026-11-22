@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -381,5 +382,154 @@ func TestStreamDoesNotNegotiateHTTP2(t *testing.T) {
 	c, ok := nc.(*tls.Conn)
 	if !ok || c.ConnectionState().NegotiatedProtocol != stream.ALPNHTTP {
 		t.Fatalf("negotiated %q", c.ConnectionState().NegotiatedProtocol)
+	}
+}
+
+// tryWS opens a WebSocket with the given headers and reports the status of
+// a refused upgrade (0 when it opened).
+func tryWS(t *testing.T, f *fixture, header http.Header) (*websocket.Conn, int) {
+	t.Helper()
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS13, NextProtos: []string{stream.ALPNHTTP},
+		InsecureSkipVerify: true, //nolint:gosec // test
+	}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, resp, err := websocket.Dial(ctx, "wss://"+f.ln.Addr().String()+stream.WebSocketPath, &websocket.DialOptions{
+		HTTPClient: httpClient, Subprotocols: []string{stream.WebSocketSubpro}, HTTPHeader: header,
+	})
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		if resp == nil {
+			t.Fatalf("dial: %v", err)
+		}
+		return nil, resp.StatusCode
+	}
+	t.Cleanup(func() { _ = c.CloseNow() })
+	return c, 0
+}
+
+func TestStreamCountsClientsBehindATrustedProxy(t *testing.T) {
+	t.Parallel()
+	f := start(t, func(c *stream.Config) {
+		c.MaxConnsPerIP = 1
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	})
+	forwarded := func(chain string) http.Header { return http.Header{"X-Forwarded-For": {chain}} }
+	// Two clients behind the proxy, one address each: both admitted, even
+	// though every connection comes from 127.0.0.1.
+	if _, status := tryWS(t, f, forwarded("203.0.113.5")); status != 0 {
+		t.Fatalf("first client status = %d", status)
+	}
+	if _, status := tryWS(t, f, forwarded("203.0.113.6")); status != 0 {
+		t.Fatalf("second client status = %d", status)
+	}
+	// The limit applies to the client the proxy named (the last entry, the
+	// one the proxy added; earlier entries are the client's own claim).
+	if _, status := tryWS(t, f, forwarded("198.51.100.9, 203.0.113.5")); status != http.StatusServiceUnavailable {
+		t.Fatalf("second connection of one client status = %d", status)
+	}
+	if _, status := tryWS(t, f, nil); status != http.StatusBadRequest {
+		t.Fatalf("missing X-Forwarded-For status = %d", status)
+	}
+	if _, status := tryWS(t, f, forwarded("not-an-address")); status != http.StatusBadRequest {
+		t.Fatalf("bad X-Forwarded-For status = %d", status)
+	}
+	// Raw MTRP cannot come through a proxy: refused from its address.
+	d := tls.Dialer{Config: &tls.Config{
+		NextProtos: []string{stream.ALPNRaw}, MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, //nolint:gosec // test
+	}}
+	nc, err := d.DialContext(t.Context(), "tcp", f.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = nc.Close() }()
+	_ = nc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := nc.Read(make([]byte, 1)); err == nil {
+		t.Fatal("raw MTRP from the trusted proxy stayed open")
+	}
+}
+
+func TestStreamIgnoresForwardedForFromOthers(t *testing.T) {
+	t.Parallel()
+	f := start(t, func(c *stream.Config) { c.MaxConnsPerIP = 1 })
+	if _, status := tryWS(t, f, http.Header{"X-Forwarded-For": {"203.0.113.5"}}); status != 0 {
+		t.Fatalf("first status = %d", status)
+	}
+	// Not a trusted proxy: the header is ignored and 127.0.0.1 is the client.
+	c, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", f.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	tc := tls.Client(c, &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true}) //nolint:gosec // test
+	_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := tc.HandshakeContext(t.Context()); err == nil {
+		t.Fatal("a second connection from 127.0.0.1 was admitted")
+	}
+}
+
+func TestStreamReleasesAProxiedClientSlot(t *testing.T) {
+	t.Parallel()
+	f := start(t, func(c *stream.Config) {
+		c.MaxConnsPerIP = 1
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	})
+	header := http.Header{"X-Forwarded-For": {"203.0.113.5"}}
+	for attempt := range 3 {
+		c, status := tryWS(t, f, header)
+		if status != 0 {
+			t.Fatalf("attempt %d: status %d (a closed connection kept its slot)", attempt, status)
+		}
+		_ = c.Close(websocket.StatusNormalClosure, "")
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			probe, probeStatus := tryWS(t, f, header)
+			if probeStatus == 0 {
+				_ = probe.Close(websocket.StatusNormalClosure, "")
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("attempt %d: the slot was never released", attempt)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestStreamGroupsForwardedIPv6By64(t *testing.T) {
+	t.Parallel()
+	f := start(t, func(c *stream.Config) {
+		c.MaxConnsPerIP = 1
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	})
+	if _, status := tryWS(t, f, http.Header{"X-Forwarded-For": {"2001:db8:1:2::5"}}); status != 0 {
+		t.Fatalf("first status = %d", status)
+	}
+	if _, status := tryWS(t, f, http.Header{"X-Forwarded-For": {"2001:db8:1:2::6"}}); status != http.StatusServiceUnavailable {
+		t.Fatalf("same /64 status = %d", status)
+	}
+	if _, status := tryWS(t, f, http.Header{"X-Forwarded-For": {"2001:db8:1:3::6"}}); status != 0 {
+		t.Fatalf("other /64 status = %d", status)
+	}
+}
+
+func TestStreamProxyOnlyRefusesOthers(t *testing.T) {
+	t.Parallel()
+	f := start(t, func(c *stream.Config) {
+		c.ProxyOnly = true
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}
+	})
+	c, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", f.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	tc := tls.Client(c, &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true}) //nolint:gosec // test
+	_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := tc.HandshakeContext(t.Context()); err == nil {
+		t.Fatal("a peer that is not the proxy was served")
 	}
 }

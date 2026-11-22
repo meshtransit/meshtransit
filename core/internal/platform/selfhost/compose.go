@@ -34,7 +34,11 @@ const (
 	coreAddress    = "172.30.0.13"
 	postgresIP     = "172.30.0.14"
 	redisIP        = "172.30.0.15"
-	relayAddress   = "172.30.0.16"
+	// bridgeGateway is the host's address on the private network. The relay
+	// runs on the host's network (its UDP ports, IPv6, and clients' real
+	// addresses for STUN) and listens here for what the proxy forwards.
+	bridgeGateway = "172.30.0.1"
+	bridgeName    = "br-meshtransit"
 )
 
 // serviceMounts are the files each Core container may read: exactly the
@@ -127,6 +131,9 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 	operator := OperatorDir + ":" + OperatorDir + ":ro"
 	network := func(address string, aliases ...string) map[string]any {
 		attachment := map[string]any{"ipv4_address": address}
+		if address == proxyAddress {
+			attachment["ipv6_address"] = proxyAddressV6
+		}
 		if len(aliases) > 0 {
 			attachment["aliases"] = aliases
 		}
@@ -220,18 +227,18 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 			},
 			"network_mode": "none",
 		},
+		// The relay runs on the host's network: its UDP and STUN ports are
+		// the host's, on IPv4 and IPv6, with the clients' real addresses
+		// (STUN must see them). The proxy reaches its TLS and probe
+		// listeners on bridgeGateway; extra_hosts still sends Core's public
+		// name to the proxy, which the host reaches on the bridge.
 		"relay": map[string]any{
 			"image": config.Images.Relay, "user": imageUserID, "restart": "unless-stopped",
 			"command": []string{"serve"}, "env_file": []string{run("relay.env")},
-			"volumes": readOnly(secret("relay.key")),
-			"ports": []string{
-				strconv.Itoa(relayUDPPort) + ":" + strconv.Itoa(relayUDPPort) + "/udp",
-				strconv.Itoa(relaySTUNPort) + ":" + strconv.Itoa(relaySTUNPort) + "/udp",
-				strconv.Itoa(relaySTUNAltPort) + ":" + strconv.Itoa(relaySTUNAltPort) + "/udp",
-			},
-			"depends_on":  map[string]any{"caddy": map[string]string{"condition": "service_started"}},
-			"networks":    network(relayAddress),
-			"extra_hosts": publicNames,
+			"volumes":      readOnly(secret("relay.key"), secret("relay-tls.crt"), secret("relay-tls.key")),
+			"network_mode": "host",
+			"depends_on":   map[string]any{"caddy": map[string]string{"condition": "service_started"}},
+			"extra_hosts":  publicNames,
 		},
 	}
 	// No container keeps a capability it does not need or gains one later.
@@ -257,7 +264,14 @@ func composeYAML(config Config, layout Layout, mounts serviceMounts, connections
 		"name":     "meshtransit",
 		"services": services,
 		"networks": map[string]any{"meshtransit": map[string]any{
-			"ipam": map[string]any{"config": []map[string]string{{"subnet": privateSubnet, "ip_range": ipRange}}},
+			// A fixed bridge name lets the host firewall allow the proxy to
+			// the relay (runbook self-host-setup.md).
+			"driver_opts": map[string]string{"com.docker.network.bridge.name": bridgeName},
+			"enable_ipv6": true,
+			"ipam": map[string]any{"config": []map[string]string{
+				{"subnet": privateSubnet, "ip_range": ipRange, "gateway": bridgeGateway},
+				{"subnet": privateSubnetV6, "ip_range": ipRangeV6, "gateway": bridgeGatewayV6},
+			}},
 		}},
 		"volumes": map[string]any{"caddy-data": map[string]any{}, "caddy-config": map[string]any{}},
 	})
@@ -286,11 +300,21 @@ func caddyfile(config Config, layout Layout) []byte {
 	builder.WriteString(config.Domain + " {\n")
 	builder.WriteString("\t@control path /mtcp/v1* /relay/v1*\n\thandle @control {\n\t\t" +
 		upstream("control."+internalDomain+":8443", "control."+internalDomain) + "\n\t}\n")
+	// The relay's TCP fallback: WebSocket at /mtrp/v1 (raw MTRP cannot
+	// pass a TLS-terminating proxy). The relay takes the client's address
+	// from the X-Forwarded-For this proxy sets.
+	builder.WriteString("\t@relay path " + relayWebSocketPath + "\n\thandle @relay {\n\t\t" +
+		upstream(relayTLSAddress, "relay."+internalDomain) + "\n\t}\n")
 	builder.WriteString("\t@register path /register/v1*\n\thandle @register {\n\t\t" +
 		upstream("login."+internalDomain+":9443", config.Domain) + "\n\t}\n")
 	builder.WriteString("\thandle {\n\t\t" + upstream("console."+internalDomain+":8443", "console."+internalDomain) +
 		"\n\t}\n}\n\n")
 	builder.WriteString(config.IdentityHost() + " {\n\t" +
-		strings.ReplaceAll(upstream("meshcore:9444", config.IdentityHost()), "\n\t\t", "\n\t") + "\n}\n")
+		strings.ReplaceAll(upstream("meshcore:9444", config.IdentityHost()), "\n\t\t", "\n\t") + "\n}\n\n")
+	// Clients behind an exit node probe for a captive portal with plain
+	// HTTP to the relay's IP address; every other plain HTTP request by
+	// address is refused. Named hosts keep the HTTPS redirect and ACME.
+	builder.WriteString("http:// {\n\thandle " + relayProbePath + " {\n\t\treverse_proxy http://" + relayProbeAddress +
+		"\n\t}\n\thandle {\n\t\trespond 404\n\t}\n}\n")
 	return []byte(builder.String())
 }

@@ -66,10 +66,21 @@ func TestParseServeConfig(t *testing.T) {
 		{"--key-file", "k", "--trusted-signing-keys", signing, "--public-ip", "::1"},
 		{"--key-file", "k", "--trusted-signing-keys", signing, "--udp-readers", "0"},
 		{"--key-file", "k", "--trusted-signing-keys", signing, "extra"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-trusted-proxies", "0.0.0.0/0"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-trusted-proxies", "172.30.0.5/24"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-trusted-proxies", "::ffff:10.0.0.0/104"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-trusted-proxies", "0.0.0.0/1"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-trusted-proxies", "2000::/3"},
+		{"--key-file", "k", "--trusted-signing-keys", signing, "--tls-proxy-only"},
 	} {
 		if _, err := parseServeConfig(args, noEnv, &bytes.Buffer{}); err == nil {
 			t.Errorf("accepted %v", args)
 		}
+	}
+	proxied, err := parseServeConfig([]string{"--key-file", "k", "--trusted-signing-keys", signing,
+		"--tls-trusted-proxies", "172.30.0.1/32, fd30::1/128"}, noEnv, &bytes.Buffer{})
+	if err != nil || len(proxied.tlsProxies) != 2 || proxied.tlsProxies[0].String() != "172.30.0.1/32" {
+		t.Fatalf("trusted proxies = %v, %v", proxied.tlsProxies, err)
 	}
 	var errOut bytes.Buffer
 	if code := run(context.Background(), []string{"nope"}, noEnv, &bytes.Buffer{}, &errOut); code != 2 {

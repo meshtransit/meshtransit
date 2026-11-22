@@ -42,6 +42,9 @@ var tlsLeaves = []tlsLeaf{
 	{name: "login", names: func(config Config) []string { return []string{config.Domain} }},
 	{name: "console", names: fixedNames("console." + internalDomain)},
 	{name: "identity", names: func(config Config) []string { return []string{config.IdentityHost()} }},
+	// The relay's TLS listener behind the proxy (V1-22's WebSocket fallback;
+	// relay.key is the relay's own identity key, hence "relay-tls").
+	{name: "relay-tls", names: fixedNames("relay." + internalDomain)},
 }
 
 const (

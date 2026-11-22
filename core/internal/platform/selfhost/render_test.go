@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +116,7 @@ func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 	}
 	core := parseEnv(t, rendered.Files["core.env"])
 	for _, name := range []string{"MESHTRANSIT_API_TRUSTED_PROXY_CIDRS", "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"} {
-		if core[name] != "172.30.0.10/32" {
+		if core[name] != "172.30.0.10/32,fd30:6d74:7261::10/128" {
 			t.Errorf("%s = %q, want only the proxy", name, core[name])
 		}
 	}
@@ -125,7 +126,7 @@ func TestRenderTrustsOnlyTheProxyAndKeepsTheSuperuserOut(t *testing.T) {
 	// The proxy (browser registration) and the Console reach the login
 	// listener, nothing else.
 	if err := json.Unmarshal(rendered.Files["private-login.json"], &profile); err != nil ||
-		len(profile.Prefixes) != 2 || profile.Prefixes[0] != "172.30.0.10/32" || profile.Prefixes[1] != "172.30.0.11/32" {
+		!slices.Equal(profile.Prefixes, []string{"172.30.0.10/32", "fd30:6d74:7261::10/128", "172.30.0.11/32"}) {
 		t.Fatalf("login profile proxies = %v, %v", profile.Prefixes, err)
 	}
 	for name := range parseEnv(t, rendered.Files["bootstrap.env"]) {

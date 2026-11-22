@@ -39,6 +39,8 @@ type serveConfig struct {
 	acmeEmail     string
 	tlsMaxConns   int
 	tlsMaxPerIP   int
+	tlsProxies    []netip.Prefix
+	tlsProxyOnly  bool
 	networkMbit   int
 	coreURL       string
 	private       bool
@@ -49,7 +51,7 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs := flag.NewFlagSet("meshrelay serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var cfg serveConfig
-	var signing, publicIP, publicIPv6 string
+	var signing, publicIP, publicIPv6, proxies string
 	fs.StringVar(&cfg.keyFile, "key-file", "", "relay private key file written by `meshrelay genkey` (mode 0600)")
 	fs.StringVar(&signing, "trusted-signing-keys", "", "comma-separated Core signing keys (mtsign:...); with --core-url they only bootstrap trust")
 	fs.StringVar(&cfg.coreURL, "core-url", "", "Core control URL (https://...) to poll for signing keys, revocations and drain")
@@ -73,6 +75,11 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs.StringVar(&cfg.acmeEmail, "acme-email", "", "contact address for the ACME account (optional)")
 	fs.IntVar(&cfg.tlsMaxConns, "tls-max-conns", 10_000, "maximum TLS/WebSocket connections")
 	fs.IntVar(&cfg.tlsMaxPerIP, "tls-max-conns-per-ip", 64, "maximum TLS/WebSocket connections per source address (IPv6: per /64)")
+	fs.StringVar(&proxies, "tls-trusted-proxies", "",
+		"comma-separated CIDRs of reverse proxies in front of the TLS port; a WebSocket from them takes the client "+
+			"address from the last X-Forwarded-For entry (the proxy's own address, never a gateway or a wide range)")
+	fs.BoolVar(&cfg.tlsProxyOnly, "tls-proxy-only", false,
+		"accept TLS connections only from --tls-trusted-proxies (a listener only the proxy reaches)")
 	fs.StringVar(&cfg.probeAddr, "probe-http", "",
 		"plain HTTP listen address for the captive portal probe GET /generate_204, for example 0.0.0.0:80 (empty disables)")
 	fs.IntVar(&cfg.networkMbit, "network-bandwidth-mbit", 500,
@@ -115,6 +122,14 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 			return serveConfig{}, fmt.Errorf("--public-ipv6 %q is not a public IPv6 address", publicIPv6)
 		}
 		cfg.publicIPv6 = ip
+	}
+	trusted, err := parseTrustedProxies(proxies)
+	if err != nil {
+		return serveConfig{}, err
+	}
+	cfg.tlsProxies = trusted
+	if cfg.tlsProxyOnly && len(trusted) == 0 {
+		return serveConfig{}, errors.New("--tls-proxy-only needs --tls-trusted-proxies")
 	}
 	if cfg.private && cfg.coreURL == "" {
 		return serveConfig{}, errors.New("--private-interchange needs --core-url")
@@ -233,4 +248,33 @@ func parseLevel(s string) (int, error) {
 	default:
 		return 0, fmt.Errorf("unknown log level %q", s)
 	}
+}
+
+// maxTrustedProxies bounds --tls-trusted-proxies.
+const maxTrustedProxies = 16
+
+// parseTrustedProxies reads masked CIDRs; a range covering everything
+// would let any client pick its own address.
+func parseTrustedProxies(text string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, part := range strings.Split(text, ",") {
+		if part = strings.TrimSpace(part); part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		// A proxy is one address or a small range: at least /16 (IPv4) or
+		// /48 (IPv6), so a mistyped mask cannot trust half the Internet.
+		minimum := 16
+		if err == nil && prefix.Addr().Is6() {
+			minimum = 48
+		}
+		if err != nil || prefix.Masked() != prefix || prefix.Bits() < minimum || prefix.Addr().Is4In6() {
+			return nil, fmt.Errorf("--tls-trusted-proxies: %q is not a masked CIDR of at least /16 (IPv6 /48)", part)
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	if len(prefixes) > maxTrustedProxies {
+		return nil, fmt.Errorf("--tls-trusted-proxies: at most %d ranges", maxTrustedProxies)
+	}
+	return prefixes, nil
 }

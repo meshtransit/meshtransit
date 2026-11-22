@@ -64,7 +64,7 @@ func PendingRestart(secretsDir string) ([]string, error) {
 
 // restartOrder is every service that reads a TLS file, in the order they
 // restart: the datastores before their clients.
-var restartOrder = []string{"postgres", "redis", "meshcore", "console", "caddy"}
+var restartOrder = []string{"postgres", "redis", "meshcore", "console", "relay", "caddy"}
 
 // trustReaders are the services that read ca.crt.
 var trustReaders = []string{"redis", "meshcore", "console", "caddy"}
@@ -72,7 +72,7 @@ var trustReaders = []string{"redis", "meshcore", "console", "caddy"}
 // leafService is the service that serves each leaf.
 var leafService = map[string]string{
 	"postgres": "postgres", "redis": "redis", "api": "meshcore", "control": "meshcore",
-	"login": "meshcore", "identity": "meshcore", "console": "console",
+	"login": "meshcore", "identity": "meshcore", "console": "console", "relay-tls": "relay",
 }
 
 // CA roll steps a run can take.

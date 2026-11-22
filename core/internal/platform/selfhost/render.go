@@ -39,9 +39,16 @@ type Layout struct {
 // proxy: the bridge gateway and every other container are not, so nothing
 // but the proxy can claim a client address.
 const (
-	privateSubnet    = "172.30.0.0/24" // the compose network (S2)
-	proxyAddress     = "172.30.0.10"
-	trustedProxy     = proxyAddress + "/32"
+	privateSubnet = "172.30.0.0/24" // the compose network (S2)
+	proxyAddress  = "172.30.0.10"
+	// The network has IPv6 too, so Docker forwards IPv6 clients with their
+	// own address (an IPv4-only network has docker-proxy reconnect them from
+	// the gateway, and every IPv6 client would share one address).
+	privateSubnetV6  = "fd30:6d74:7261::/64"
+	ipRangeV6        = "fd30:6d74:7261:0:8000::/65"
+	bridgeGatewayV6  = "fd30:6d74:7261::1"
+	proxyAddressV6   = "fd30:6d74:7261::10"
+	trustedProxy     = proxyAddress + "/32," + proxyAddressV6 + "/128"
 	healthAddress    = "0.0.0.0:8081"
 	controlAddress   = "0.0.0.0:8443"
 	apiAddress       = "0.0.0.0:8444"
@@ -55,6 +62,13 @@ const (
 	relayUDPPort     = 3479
 	relaySTUNPort    = 3478
 	relaySTUNAltPort = 3480
+	// The relay's TLS fallback is the proxy's 443 (relayWebSocketPath); the
+	// proxy forwards it, and the captive portal probe, to these.
+	relayPublicTLSPort = 443
+	relayTLSAddress    = bridgeGateway + ":8479"
+	relayProbeAddress  = bridgeGateway + ":8480"
+	relayWebSocketPath = "/mtrp/v1"
+	relayProbePath     = "/generate_204"
 )
 
 // Rendered is every file render produces, by name under Layout.RunDir.
@@ -371,7 +385,7 @@ func relayMapJSON(config Config, keys PublicKeys) ([]byte, error) {
 	}
 	relay := node{
 		Name: "own1", HostName: config.Domain, IPv4: config.Relay.PublicIPv4.String(), Key: keys.Relay,
-		UDPPort: relayUDPPort, STUNPort: relaySTUNPort, STUNAltPort: relaySTUNAltPort,
+		UDPPort: relayUDPPort, TLSPort: relayPublicTLSPort, STUNPort: relaySTUNPort, STUNAltPort: relaySTUNAltPort,
 		Weight: 100,
 	}
 	if config.Relay.PublicIPv6.IsValid() {
@@ -386,18 +400,26 @@ func relayMapJSON(config Config, keys PublicKeys) ([]byte, error) {
 
 // relaySettings run the relay on this server ("meshrelay serve", every flag
 // as MESHRELAY_<FLAG>). It trusts Core's relay signing key and polls Core
-// through the public name. It serves UDP and STUN only: the public proxy
-// owns TCP 443 and keeps its certificate keys to itself, so the TLS
-// fallback waits for a later slice (TD-CORE-135).
+// through the public name. UDP and STUN listen on every address of the host,
+// IPv4 and IPv6. The public proxy owns TCP 443 and its certificate keys, so
+// the TLS fallback is WebSocket through it, to a listener on the bridge
+// gateway with an internal certificate; the probe comes the same way.
 func relaySettings(config Config, keys PublicKeys, layout Layout) map[string]string {
+	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
 	settings := map[string]string{
-		"MESHRELAY_KEY_FILE":             filepath.Join(layout.SecretsDir, "relay.key"),
+		"MESHRELAY_KEY_FILE":             secret("relay.key"),
 		"MESHRELAY_TRUSTED_SIGNING_KEYS": keys.Signing,
 		"MESHRELAY_CORE_URL":             consoleOrigin(config),
 		"MESHRELAY_PUBLIC_IP":            config.Relay.PublicIPv4.String(),
-		"MESHRELAY_UDP":                  "0.0.0.0:" + strconv.Itoa(relayUDPPort),
-		"MESHRELAY_STUN":                 "0.0.0.0:" + strconv.Itoa(relaySTUNPort),
-		"MESHRELAY_STUN_ALT":             "0.0.0.0:" + strconv.Itoa(relaySTUNAltPort),
+		"MESHRELAY_UDP":                  "[::]:" + strconv.Itoa(relayUDPPort),
+		"MESHRELAY_STUN":                 "[::]:" + strconv.Itoa(relaySTUNPort),
+		"MESHRELAY_STUN_ALT":             "[::]:" + strconv.Itoa(relaySTUNAltPort),
+		"MESHRELAY_TLS":                  relayTLSAddress,
+		"MESHRELAY_TLS_CERT":             secret("relay-tls.crt"),
+		"MESHRELAY_TLS_KEY":              secret("relay-tls.key"),
+		"MESHRELAY_TLS_TRUSTED_PROXIES":  trustedProxy,
+		"MESHRELAY_TLS_PROXY_ONLY":       "true",
+		"MESHRELAY_PROBE_HTTP":           relayProbeAddress,
 	}
 	if config.Relay.PublicIPv6.IsValid() {
 		settings["MESHRELAY_PUBLIC_IPV6"] = config.Relay.PublicIPv6.String()
@@ -424,7 +446,7 @@ func loginProfileJSON(config Config, state State, layout Layout) ([]byte, error)
 	profile := map[string]any{
 		"version": 4, "address": loginAddress, "origin": consoleOrigin(config),
 		// The proxy sends browser registration here, the Console the rest.
-		"trusted_proxy_prefixes": []string{trustedProxy, consoleAddress + "/32"},
+		"trusted_proxy_prefixes": append(strings.Split(trustedProxy, ","), consoleAddress+"/32"),
 		"deployment_id":          state.DeploymentID, "provider_id": state.ProviderID, "client_id": state.ClientID,
 		"provider_generation": state.ProviderGeneration, "recovery_epoch": state.RecoveryEpoch,
 		"issuer": base, "discovery_uri": base + "/.well-known/openid-configuration",

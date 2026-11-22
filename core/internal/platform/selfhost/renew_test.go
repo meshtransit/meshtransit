@@ -138,10 +138,10 @@ func TestRenewTLSRenewsDueLeavesAndNamesTheirServices(t *testing.T) {
 	if !slices.Equal(report.Renewed, leafNames()) {
 		t.Fatalf("renewed %v, want every leaf", report.Renewed)
 	}
-	if want := []string{"postgres", "redis", "meshcore", "console"}; !slices.Equal(report.Restart, want) {
+	if want := []string{"postgres", "redis", "meshcore", "console", "relay"}; !slices.Equal(report.Restart, want) {
 		t.Fatalf("restart %v, want %v (a leaf changes no reader of ca.crt alone)", report.Restart, want)
 	}
-	if got := string(readFile(t, restartDir(dir), RestartFile)); got != "postgres redis meshcore console" {
+	if got := string(readFile(t, restartDir(dir), RestartFile)); got != "postgres redis meshcore console relay" {
 		t.Fatalf("restart file = %q", got)
 	}
 	if string(readFile(t, dir, "postgres.key")) == string(oldKey) {
@@ -156,7 +156,7 @@ func TestRenewTLSRenewsDueLeavesAndNamesTheirServices(t *testing.T) {
 	// The next run renews nothing and keeps the restart the host has not
 	// done yet.
 	again := renewAt(t, dir, now.Add(time.Hour))
-	if len(again.Renewed) != 0 || len(again.Restart) != 4 {
+	if len(again.Renewed) != 0 || len(again.Restart) != 5 {
 		t.Fatalf("second run = %+v", again)
 	}
 	if _, err := GenerateSecrets(testConfig(t), dir, GenerateOptions{Now: now}); err != nil {
@@ -190,7 +190,7 @@ func TestSetupRenewsADueLeafAndNamesItsService(t *testing.T) {
 	if !slices.Equal(report.Renewed, leafNames()) || slices.Contains(report.Created, "api.crt") {
 		t.Fatalf("renewed %v, created %v: the due leaves are renewed, not created", report.Renewed, report.Created)
 	}
-	if pending := pendingOf(t, dir); !slices.Equal(pending, []string{"postgres", "redis", "meshcore", "console"}) {
+	if pending := pendingOf(t, dir); !slices.Equal(pending, []string{"postgres", "redis", "meshcore", "console", "relay"}) {
 		t.Fatalf("PendingRestart() = %v", pending)
 	}
 }
@@ -494,7 +494,7 @@ func TestRenderedTimerRestartsOnlyKnownServices(t *testing.T) {
 		"ExecStart=docker compose -f " + testLayout.RunDir + "/compose.yaml --profile maintenance run --rm --no-TTY renew-tls",
 		"ExecStopPost=flock /var/lib/meshtransit/.setup.lock /bin/sh -c '",
 		"f=" + filepath.Join(filepath.Dir(testLayout.SecretsDir), RenewDir, RestartFile),
-		`case "$$s" in postgres|redis|meshcore|console|caddy) ;;`,
+		`case "$$s" in postgres|redis|meshcore|console|relay|caddy) ;;`,
 		`up -d --no-deps --no-recreate --wait "$$s" || exit 1; done; rm -f -- "$$f"`,
 		"TimeoutStartSec=15min", "TimeoutStopSec=15min",
 	} {

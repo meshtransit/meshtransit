@@ -2,6 +2,7 @@ package selfhost
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,6 +30,8 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 			CapAdd      []string          `yaml:"cap_add"`
 			SecurityOpt []string          `yaml:"security_opt"`
 			Labels      map[string]string `yaml:"labels"`
+			NetworkMode string            `yaml:"network_mode"`
+			Networks    map[string]any    `yaml:"networks"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(rendered.Files["compose.yaml"], &compose); err != nil {
@@ -61,11 +64,15 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 	if compose.Services["meshcore"].DependsOn["migrate"].Condition != "service_completed_successfully" {
 		t.Error("Core does not wait for setup migrate")
 	}
-	// Only the proxy and the relay are reachable from outside.
+	// Only the proxy publishes ports; the relay is on the host's network
+	// (its UDP and STUN ports, IPv6, the clients' real addresses).
 	for name, service := range compose.Services {
-		if len(service.Ports) > 0 && name != "caddy" && name != "relay" {
+		if len(service.Ports) > 0 && name != "caddy" {
 			t.Errorf("%s publishes %v", name, service.Ports)
 		}
+	}
+	if relay := compose.Services["relay"]; relay.NetworkMode != "host" || len(relay.Networks) != 0 {
+		t.Errorf("relay network mode %q, networks %v", relay.NetworkMode, relay.Networks)
 	}
 	if !strings.HasPrefix(compose.Services["postgres"].Image, "postgres:") ||
 		!strings.Contains(compose.Services["postgres"].Image, "@sha256:") {
@@ -73,7 +80,9 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 	}
 	caddy := string(rendered.Files["Caddyfile"])
 	for _, want := range []string{"mesh.example.com {", "id.mesh.example.com {", "@control path /mtcp/v1* /relay/v1*",
-		"tls_trust_pool file /var/lib/meshtransit/secrets/ca.crt", "email ops@example.com"} {
+		"tls_trust_pool file /var/lib/meshtransit/secrets/ca.crt", "email ops@example.com",
+		"@relay path /mtrp/v1", "reverse_proxy https://172.30.0.1:8479", "tls_server_name relay.meshtransit.internal",
+		"http:// {\n\thandle /generate_204 {\n\t\treverse_proxy http://172.30.0.1:8480", "respond 404"} {
 		if !strings.Contains(caddy, want) {
 			t.Errorf("Caddyfile lacks %q", want)
 		}
@@ -107,7 +116,9 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 			t.Errorf("%s mounts the superuser's password", name)
 		}
 	}
-	if relay := compose.Services["relay"].Volumes; len(relay) != 1 || !strings.Contains(fmt.Sprint(relay[0]), "/relay.key:") {
+	if relay := fmt.Sprint(compose.Services["relay"].Volumes); len(compose.Services["relay"].Volumes) != 3 ||
+		!strings.Contains(relay, "/relay.key:") || !strings.Contains(relay, "/relay-tls.crt:") ||
+		!strings.Contains(relay, "/relay-tls.key:") {
 		t.Errorf("relay mounts %v", relay)
 	}
 	if strings.Contains(mounted("meshcore"), "postgres-migrator-password") ||
@@ -164,5 +175,39 @@ func TestComposeSizesPostgresForThePools(t *testing.T) {
 	}
 	if got := command(larger); !strings.Contains(got, "max_connections=24") {
 		t.Errorf("a larger runtime pool did not raise max_connections: %s", got)
+	}
+}
+
+func TestRelayRunsBehindTheProxyWithItsFallbacks(t *testing.T) {
+	t.Parallel()
+	config := testConfig(t)
+	settings := relaySettings(config, testKeys, testLayout)
+	for key, want := range map[string]string{
+		"MESHRELAY_UDP": "[::]:3479", "MESHRELAY_STUN": "[::]:3478", "MESHRELAY_STUN_ALT": "[::]:3480",
+		"MESHRELAY_TLS": "172.30.0.1:8479", "MESHRELAY_PROBE_HTTP": "172.30.0.1:8480",
+		"MESHRELAY_TLS_TRUSTED_PROXIES": "172.30.0.10/32,fd30:6d74:7261::10/128",
+		"MESHRELAY_TLS_PROXY_ONLY":      "true",
+		"MESHRELAY_TLS_CERT":            "/var/lib/meshtransit/secrets/relay-tls.crt",
+	} {
+		if settings[key] != want {
+			t.Errorf("%s = %q, want %q", key, settings[key], want)
+		}
+	}
+	contents, err := relayMapJSON(config, testKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), `"tls_port": 443`) {
+		t.Fatalf("relay map has no TLS port: %s", contents)
+	}
+	// The relay's internal TLS name is issued like every other listener.
+	found := false
+	for _, leaf := range tlsLeaves {
+		if leaf.name == "relay-tls" && slices.Equal(leaf.names(config), []string{"relay.meshtransit.internal"}) {
+			found = true
+		}
+	}
+	if !found || leafService["relay-tls"] != "relay" {
+		t.Fatal("the relay's TLS leaf is not issued or not tied to the relay service")
 	}
 }

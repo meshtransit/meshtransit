@@ -94,7 +94,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		}
 		streams, err = stream.Listen(ctx, stream.Config{
 			Addr: cfg.tlsAddr, TLS: tlsConf, Handler: relay, Logger: logger, Metrics: m.Stream,
-			MaxConns: cfg.tlsMaxConns, MaxConnsPerIP: cfg.tlsMaxPerIP,
+			MaxConns: cfg.tlsMaxConns, MaxConnsPerIP: cfg.tlsMaxPerIP, TrustedProxies: cfg.tlsProxies, ProxyOnly: cfg.tlsProxyOnly,
 		})
 		if err != nil {
 			return err

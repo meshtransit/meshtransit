@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,11 +47,20 @@ const (
 
 // Config configures a Listener. Zero values take the defaults.
 type Config struct {
-	Addr             string
-	TLS              *tls.Config // certificates (or GetCertificate); NextProtos are added
-	Handler          Handler
-	MaxConns         int
-	MaxConnsPerIP    int // IPv6 counted per /64
+	Addr          string
+	TLS           *tls.Config // certificates (or GetCertificate); NextProtos are added
+	Handler       Handler
+	MaxConns      int
+	MaxConnsPerIP int // IPv6 counted per /64
+	// TrustedProxies are reverse proxies (the self-host Caddy) whose
+	// connections carry many clients: they count only toward MaxConns, and
+	// a WebSocket from them takes the client address from the last
+	// X-Forwarded-For entry, the one the proxy itself added. Raw MTRP from
+	// them is refused (a proxy cannot carry it).
+	TrustedProxies []netip.Prefix
+	// ProxyOnly refuses every peer but the trusted proxies at accept: a
+	// listener only a proxy should reach (the self-host relay's).
+	ProxyOnly        bool
 	HandshakeTimeout time.Duration
 	IdleTimeout      time.Duration
 	WriteTimeout     time.Duration
@@ -78,6 +88,9 @@ type Listener struct {
 func Listen(ctx context.Context, cfg Config) (*Listener, error) {
 	if cfg.TLS == nil || cfg.Handler == nil {
 		return nil, errors.New("stream: TLS configuration and handler are required")
+	}
+	if cfg.ProxyOnly && len(cfg.TrustedProxies) == 0 {
+		return nil, errors.New("stream: proxy-only needs trusted proxies")
 	}
 	setDefault(&cfg.MaxConns, DefaultMaxConns)
 	setDefault(&cfg.MaxConnsPerIP, DefaultMaxConnsPerIP)
@@ -162,13 +175,19 @@ func (l *Listener) Serve(ctx context.Context) error {
 			continue
 		}
 		backoff = 0
-		release, ok := l.admit(remoteAddr(c.RemoteAddr()))
+		proxied := l.trustedProxy(tcpAddr(c.RemoteAddr()))
+		if l.cfg.ProxyOnly && !proxied {
+			l.cfg.Metrics("refused_not_proxy")
+			_ = c.Close()
+			continue
+		}
+		release, ok := l.admit(remoteAddr(c.RemoteAddr()), !proxied)
 		if !ok {
 			l.cfg.Metrics("refused_limit")
 			_ = c.Close()
 			continue
 		}
-		tracked := &trackedConn{Conn: c, release: release, remote: tcpAddr(c.RemoteAddr())}
+		tracked := &trackedConn{Conn: c, release: release, remote: tcpAddr(c.RemoteAddr()), proxied: proxied}
 		wg.Go(func() { l.serveConn(ctx, tracked) })
 	}
 	_ = l.ln.Close()
@@ -226,6 +245,11 @@ func (l *Listener) serveConn(ctx context.Context, c *trackedConn) {
 	}
 	switch tc.ConnectionState().NegotiatedProtocol {
 	case ALPNRaw:
+		if c.proxied {
+			l.cfg.Metrics("raw_from_proxy")
+			_ = tc.Close()
+			return
+		}
 		l.cfg.Metrics("raw")
 		l.serve(newConn(newRawFramer(tc, l.cfg.IdleTimeout, l.cfg.WriteTimeout), c.remote, l.cfg.Metrics))
 	case alpnACME:
@@ -240,6 +264,17 @@ func (l *Listener) serveConn(ctx context.Context, c *trackedConn) {
 
 // serveWebSocket upgrades /mtrp/v1 and serves MTRP frames on it.
 func (l *Listener) serveWebSocket(w http.ResponseWriter, r *http.Request) {
+	client, release, refused := l.websocketClient(r)
+	if refused != "" {
+		l.cfg.Metrics(refused)
+		status := http.StatusServiceUnavailable
+		if refused != "refused_limit" {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	defer release() // serve returns when the connection ends
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{WebSocketSubpro},
 		// MTRP clients are not browsers and carry no ambient credentials;
@@ -257,30 +292,95 @@ func (l *Listener) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.SetReadLimit(mtrp.MaxStreamFrame)
 	l.cfg.Metrics("websocket")
-	remote, _ := netip.ParseAddrPort(r.RemoteAddr)
-	l.serve(newConn(&wsFramer{c: ws, idle: l.cfg.IdleTimeout, writes: l.cfg.WriteTimeout}, remote.Addr().Unmap(), l.cfg.Metrics))
+	l.serve(newConn(&wsFramer{c: ws, idle: l.cfg.IdleTimeout, writes: l.cfg.WriteTimeout}, client, l.cfg.Metrics))
 }
 
-// admit applies the connection limits; release undoes the admission.
-func (l *Listener) admit(addr netip.Addr) (func(), bool) {
+// websocketClient is the client address of an upgrade request and, for a
+// request through a trusted proxy, the per-address admission it took. A
+// refusal names its metric.
+func (l *Listener) websocketClient(r *http.Request) (netip.Addr, func(), string) {
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}, nil, "websocket_bad_peer"
+	}
+	address := peer.Addr().Unmap()
+	if !l.trustedProxy(address) {
+		return address, func() {}, ""
+	}
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if len(forwarded) == 0 {
+		return netip.Addr{}, nil, "websocket_bad_forwarded"
+	}
+	entries := strings.Split(forwarded[len(forwarded)-1], ",")
+	client, err := netip.ParseAddr(strings.TrimSpace(entries[len(entries)-1]))
+	if err != nil || client.Zone() != "" {
+		return netip.Addr{}, nil, "websocket_bad_forwarded"
+	}
+	client = client.Unmap()
+	release, ok := l.admitPerIP(admissionKey(client))
+	if !ok {
+		return netip.Addr{}, nil, "refused_limit"
+	}
+	return client, release, ""
+}
+
+func (l *Listener) trustedProxy(address netip.Addr) bool {
+	for _, prefix := range l.cfg.TrustedProxies {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+// admit applies the connection limits, the per-address one only when
+// perAddress is set; release undoes the admission.
+func (l *Listener) admit(addr netip.Addr, perAddress bool) (func(), bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.total >= l.cfg.MaxConns || l.perIP[addr] >= l.cfg.MaxConnsPerIP {
+	if l.total >= l.cfg.MaxConns || perAddress && l.perIP[addr] >= l.cfg.MaxConnsPerIP {
 		return nil, false
 	}
 	l.total++
-	l.perIP[addr]++
+	if perAddress {
+		l.perIP[addr]++
+	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			l.total--
-			if l.perIP[addr]--; l.perIP[addr] <= 0 {
-				delete(l.perIP, addr)
+			if perAddress {
+				l.releasePerIPLocked(addr)
 			}
 		})
 	}, true
+}
+
+// admitPerIP applies the per-address limit alone: to the client behind a
+// trusted proxy, whose connection already counted toward the total.
+func (l *Listener) admitPerIP(addr netip.Addr) (func(), bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perIP[addr] >= l.cfg.MaxConnsPerIP {
+		return nil, false
+	}
+	l.perIP[addr]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.releasePerIPLocked(addr)
+		})
+	}, true
+}
+
+func (l *Listener) releasePerIPLocked(addr netip.Addr) {
+	if l.perIP[addr]--; l.perIP[addr] <= 0 {
+		delete(l.perIP, addr)
+	}
 }
 
 func tcpAddr(a net.Addr) netip.Addr {
@@ -290,9 +390,11 @@ func tcpAddr(a net.Addr) netip.Addr {
 	return netip.Addr{}
 }
 
-// remoteAddr is the admission key: the address, IPv6 grouped by /64.
-func remoteAddr(a net.Addr) netip.Addr {
-	ip := tcpAddr(a)
+// remoteAddr is the admission key of a connection's peer.
+func remoteAddr(a net.Addr) netip.Addr { return admissionKey(tcpAddr(a)) }
+
+// admissionKey is an address for the per-address limit, IPv6 grouped by /64.
+func admissionKey(ip netip.Addr) netip.Addr {
 	if ip.Is6() {
 		if p, err := ip.Prefix(64); err == nil {
 			return p.Addr()
@@ -306,6 +408,7 @@ type trackedConn struct {
 	net.Conn
 	release func()
 	remote  netip.Addr
+	proxied bool // from a trusted proxy: no per-address admission yet
 }
 
 func (c *trackedConn) Close() error {
