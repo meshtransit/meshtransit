@@ -88,6 +88,17 @@ func TestParseConfigReadsOIDCLogin(t *testing.T) {
 	if _, set := settings["MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_USERINFO_URL"]; set {
 		t.Fatal("an empty userinfo URL was rendered")
 	}
+	files, err := composeFiles(config, testLayout, serviceMounts{}, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(files["console.env"]), "MESH_CONSOLE_SIGN_IN_PROVIDER=Corp SSO\n") {
+		t.Fatalf("console.env does not name the provider:\n%s", files["console.env"])
+	}
+	google, err := composeFiles(testConfig(t), testLayout, serviceMounts{}, 64)
+	if err != nil || strings.Contains(string(google["console.env"]), "SIGN_IN_PROVIDER") {
+		t.Fatalf("Google console.env names a provider: %v", err)
+	}
 }
 
 func TestParseConfigRefusesBadLogin(t *testing.T) {

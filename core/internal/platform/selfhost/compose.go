@@ -53,7 +53,7 @@ type serviceMounts struct {
 // the proxy's Caddyfile, PostgreSQL's pg_hba.conf and the Console's env.
 func composeFiles(config Config, layout Layout, mounts serviceMounts, connections int) (map[string][]byte, error) {
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
-	console, err := envFile(map[string]string{
+	consoleSettings := map[string]string{
 		"MESH_CONSOLE_LISTEN_HOST":         "0.0.0.0",
 		"MESH_CONSOLE_LISTEN_PORT":         "8443",
 		"MESH_CONSOLE_ORIGIN":              consoleOrigin(config),
@@ -62,7 +62,12 @@ func composeFiles(config Config, layout Layout, mounts serviceMounts, connection
 		"MESH_CONSOLE_TLS_CERT_FILE":       secret("console.crt"),
 		"MESH_CONSOLE_TLS_KEY_FILE":        secret("console.key"),
 		"MESH_CONSOLE_TRUSTED_PROXY_CIDRS": trustedProxy,
-	})
+	}
+	if config.Login.Provider == providerOIDC {
+		// The sign-in button names the provider (V1-22); Google is the default.
+		consoleSettings["MESH_CONSOLE_SIGN_IN_PROVIDER"] = config.Login.displayName()
+	}
+	console, err := envFile(consoleSettings)
 	if err != nil {
 		return nil, fmt.Errorf("console.env: %w", err)
 	}
