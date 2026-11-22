@@ -39,7 +39,7 @@ message() {
     placement-target) echo "pods here may not tolerate the gateway pool's taint or select the gateway pool" ;;
     placement-broad) echo "pods here may not (name a node|tolerate every taint)" ;;
     binding) echo "only the scheduler binds pods to nodes here" ;;
-    namespace) echo "(in the gateway's namespace only|images do not change in place|no ephemeral containers|no exec, attach)" ;;
+    namespace) echo "(in the gateway's namespace only|images do not change in place|no ephemeral containers|no exec, attach|no ServiceAccount token Secrets)" ;;
     token-others) echo "only the gateway mints its groups' tokens" ;;
   esac
 }
@@ -138,6 +138,13 @@ expect allow namespace "a gateway pod from the StatefulSet controller" make_as g
 expect allow namespace "a check pod from the job controller" make_as check system:serviceaccount:kube-system:job-controller
 expect deny namespace "a gateway pod from an admin" make_as gateway ""
 expect deny namespace "exec into the gateway" "${kc[@]}" -n "$ns" exec "$gateway" -- /c4-none
+# V1-12: no long-lived token Secret in the namespace; ordinary Secrets pass.
+token_secret() {
+  printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  annotations:\n    kubernetes.io/service-account.name: %s\ntype: %s\n' \
+    "$1" "$fullname" "$2" | "${kc[@]}" -n "$ns" create --dry-run=server -f -
+}
+expect deny namespace "a ServiceAccount token Secret" token_secret c4-sa-token kubernetes.io/service-account-token
+expect allow namespace "an Opaque Secret" token_secret c4-opaque Opaque
 expect deny namespace "attach to the gateway" within5 "${kc[@]}" -n "$ns" attach "$gateway"
 expect deny namespace "port-forward to the gateway" within5 "${kc[@]}" -n "$ns" port-forward "pod/$gateway" :9090
 ephemeral() {

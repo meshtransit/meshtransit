@@ -153,13 +153,14 @@ type Checker struct {
 // Run checks the install and reports what it found.
 func (checker Checker) Run(ctx context.Context) Report {
 	var report Report
+	// First, so a long report's summary and Event never cut it off.
+	checker.trustDigest(ctx, &report)
 	checker.replicas(ctx, &report)
 	checker.policies(ctx, &report)
 	checker.audiences(&report)
 	checker.namespace(ctx, &report)
 	checker.failedCreates(ctx, &report)
 	checker.rbac(ctx, &report)
-	checker.trustDigest(ctx, &report)
 	return report
 }
 

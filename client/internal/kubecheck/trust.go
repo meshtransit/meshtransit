@@ -28,7 +28,8 @@ func (checker Checker) trustDigest(ctx context.Context, report *Report) {
 	}
 	jwks, err := kubejoin.ParseJWKS(raw)
 	if err != nil {
-		report.add(Warn, "trust_digest_unavailable", "the cluster's keys are not accepted: %s", err.Error())
+		report.add(Warn, "trust_digest_unavailable", "the cluster's keys are not accepted: %s",
+			printable(err.Error()))
 		return
 	}
 	digest, err := kubejoin.ClusterTrustDigest(kubejoin.Trust{Issuer: issuer, JWKS: jwks,
