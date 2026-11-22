@@ -713,6 +713,8 @@ func Catalog() []Migration {
 		newMigration(305, "A new Account's Workspace is named Default", signupWorkspaceDefaultSQL),
 		newMigration(306, "Kubernetes clusters: trust mode, install tokens, signing trust state and digest",
 			kubernetesInstallTokensSQL),
+		newMigration(307, "Kubernetes clusters take install tokens: trust mode, preapproved join keys",
+			kubernetesPreapprovedJoinKeysSQL),
 	}
 }
 
@@ -1410,3 +1412,6 @@ var signupWorkspaceDefaultSQL string
 
 //go:embed 000306_kubernetes_install_tokens.up.sql
 var kubernetesInstallTokensSQL string
+
+//go:embed 000307_kubernetes_preapproved_join_keys.up.sql
+var kubernetesPreapprovedJoinKeysSQL string

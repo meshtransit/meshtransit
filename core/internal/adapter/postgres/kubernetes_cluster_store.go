@@ -154,6 +154,15 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrRetirePending
 		case "MTK42":
 			return kubecluster.ErrRetireRateLimited
+		// Schema 307: install tokens.
+		case "MTK50":
+			return kubecluster.ErrInstallTokensOff
+		case "MTK51":
+			return kubecluster.ErrTrustAnchored
+		case "MTK52":
+			return kubecluster.ErrInstallTokenTrust
+		case "MTK53":
+			return kubecluster.ErrTrustContested
 		case "MTK43":
 			return kubecluster.ErrNotRatcheted
 		case "MTK44":

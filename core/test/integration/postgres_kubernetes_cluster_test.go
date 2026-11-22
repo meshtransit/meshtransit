@@ -498,6 +498,7 @@ WHERE kubernetes_cluster_id = (SELECT id FROM mesh.kubernetes_cluster WHERE publ
 		registrationIdentity(t, first)); !errors.Is(err, kubecluster.ErrNotWaiting) {
 		t.Fatalf("completing a request whose Device is gone: %v", err)
 	}
+	assertKubernetesInstallTokens(ctx, t, admin, service, store, owner, custom, scope, clusterID)
 	deleted, err := service.Delete(ctx, kubecluster.Deletion{Session: owner, Scope: scope, ClusterID: clusterID,
 		CorrelationID: newCorrelationID(t)})
 	if err != nil || deleted.State() != kubecluster.StateDeleted {
