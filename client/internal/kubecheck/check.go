@@ -145,6 +145,9 @@ type Checker struct {
 	// Audiences reads the API server's audiences from the check pod's own
 	// token.
 	Audiences func() ([]string, error)
+	// Signing reads the cluster's ServiceAccount issuer and keys; nil
+	// prints no trust digest.
+	Signing func(ctx context.Context) (issuer string, jwks []byte, err error)
 }
 
 // Run checks the install and reports what it found.
@@ -156,6 +159,7 @@ func (checker Checker) Run(ctx context.Context) Report {
 	checker.namespace(ctx, &report)
 	checker.failedCreates(ctx, &report)
 	checker.rbac(ctx, &report)
+	checker.trustDigest(ctx, &report)
 	return report
 }
 
@@ -396,9 +400,10 @@ func (report Report) Summary() string {
 	var buffer bytes.Buffer
 	failed, warned := 0, 0
 	for _, finding := range report.Findings {
-		if finding.Level == Fail {
+		switch finding.Level {
+		case Fail:
 			failed++
-		} else {
+		case Warn:
 			warned++
 		}
 	}

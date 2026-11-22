@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"meshtransit.net/client/internal/k8sstate"
 )
 
 // The pod's own ServiceAccount files and termination message.
@@ -45,6 +47,13 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdout
 	checker := Checker{
 		Config: config, API: api, Status: FetchStatus,
 		Audiences: func() ([]string, error) { return audiences(tokenFile) },
+		Signing: func(ctx context.Context) (string, []byte, error) {
+			cluster, err := k8sstate.InClusterConfig(config.StatefulSet)
+			if err != nil {
+				return "", nil, err
+			}
+			return k8sstate.ReadSigningKeys(ctx, cluster)
+		},
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
