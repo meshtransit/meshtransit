@@ -142,7 +142,9 @@ func privateIdentityRuntimeOptions(profile *config.PrivateLoginConfig) (privateI
 	return privateIdentityFactoryOptions{
 		Application: privateIdentityOptions{
 			Route: profile.Route(), Origin: profile.Origin(), ReturnPath: "/console",
-			Start: oidcauth.StartOptions{RequestTimeout: 5 * time.Second, PendingLifetime: 2 * time.Minute,
+			// Ten minutes to finish signing in at the provider (TD-API-12):
+			// the most a pending sign-in may live (oidcauth, migration 000027).
+			Start: oidcauth.StartOptions{RequestTimeout: 5 * time.Second, PendingLifetime: 10 * time.Minute,
 				RollbackTimeout: time.Second, ResolveTimeout: time.Second},
 			Callback: oidcauth.CallbackOptions{RequestTimeout: 25 * time.Second, FailureTimeout: time.Second,
 				RollbackTimeout: time.Second, IdleLifetime: time.Hour, AbsoluteLifetime: 24 * time.Hour, MaxConcurrent: 16},

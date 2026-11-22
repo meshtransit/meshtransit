@@ -229,6 +229,21 @@ func e2eSignIn(t *testing.T, connector OIDCConnectorOptions, user, password stri
 	})
 	browser := e2eBrowser(t, runtime)
 
+	// A callback for a sign-in Dex no longer knows gets the MeshTransit page.
+	if page, _, err := e2eFollow(browser, http.MethodGet, e2eBrokerIssuer+"/callback?state=expired&code=x", nil); err == nil ||
+		!strings.Contains(err.Error(), "status 400") {
+		t.Fatalf("expired callback = %q, %v", page, err)
+	}
+	expired, err := browser.Get(e2eBrokerIssuer + "/callback?state=expired&code=x")
+	if err != nil {
+		return nil, err
+	}
+	body, _ := io.ReadAll(expired.Body)
+	_ = expired.Body.Close()
+	if !strings.Contains(string(body), "This sign-in has expired") || !strings.Contains(string(body), "https://app.example.test/") {
+		t.Fatalf("expired callback page = %q", body)
+	}
+
 	authorize := e2eBrokerIssuer + "/auth?" + url.Values{
 		"client_id": {e2eClientID}, "redirect_uri": {e2eRedirectURI}, "response_type": {"code"},
 		"scope": {"openid email profile"}, "state": {"e2e-state"},

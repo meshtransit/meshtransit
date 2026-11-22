@@ -28,6 +28,12 @@ type Monitor interface {
 	Done() <-chan error
 }
 
+// dependencyRefresher is a Monitor that can check every dependency once
+// more on demand, after the services have started.
+type dependencyRefresher interface {
+	Refresh(context.Context) error
+}
+
 // Readiness is the process-owned admission gate.
 type Readiness interface {
 	SetReady(bool)
@@ -132,6 +138,12 @@ func (application *Application) Run(ctx context.Context) error {
 		return errors.Join(startErr, cleanupErr)
 	}
 
+	// Services may start degraded (the identity broker waiting for its
+	// provider): check dependencies again so admission reflects them, not
+	// the check made before the services existed.
+	if refresher, ok := application.monitor.(dependencyRefresher); ok {
+		_ = refresher.Refresh(ctx)
+	}
 	application.readiness.SetReady(true)
 	application.logger.InfoContext(ctx, "runtime ready", "roles", roleNames(application.roles))
 

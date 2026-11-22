@@ -667,3 +667,47 @@ func (service *fakeService) Shutdown(ctx context.Context) error {
 func (service *fakeService) Done() <-chan error {
 	return service.done
 }
+
+// refreshingMonitor records when the application refreshes dependencies.
+type refreshingMonitor struct {
+	*fakeMonitor
+	events chan<- string
+}
+
+func (monitor *refreshingMonitor) Refresh(context.Context) error {
+	monitor.events <- "refresh"
+	return nil
+}
+
+func TestApplicationRefreshesDependenciesBeforeReadiness(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		events := make(chan string, 8)
+		readiness := &fakeReadiness{updates: make(chan bool, 2)}
+		monitor := &refreshingMonitor{fakeMonitor: newFakeMonitor(), events: events}
+		service := newFakeService()
+		service.start = func(context.Context) error {
+			events <- "service"
+			return nil
+		}
+		application := mustApplicationWithResources(t, readiness, monitor, newFakeResourceCloser(), service,
+			100*time.Millisecond)
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		result := make(chan error, 1)
+		go func() { result <- application.Run(ctx) }()
+
+		if ready := <-readiness.updates; !ready {
+			t.Fatal("readiness did not open")
+		}
+		if first, second := <-events, <-events; first != "service" || second != "refresh" {
+			t.Fatalf("events = %q, %q; want the service start, then a refresh", first, second)
+		}
+		cancel()
+		<-readiness.updates
+		if err := <-result; err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	})
+}

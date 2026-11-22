@@ -255,7 +255,7 @@ func TestBrokerSignerOutageFailsClosedAndRecoversWithoutRestart(t *testing.T) {
 	}
 }
 
-func TestBrokerSignerUnavailableAtStartupFailsClosed(t *testing.T) {
+func TestBrokerSignerUnavailableAtStartupFailsClosedThenRecovers(t *testing.T) {
 	logger := componentTestLogger()
 	signerGate := &brokerSignerOutage{Storage: memory.New(logger)}
 	signerGate.unavailable.Store(true)
@@ -270,12 +270,35 @@ func TestBrokerSignerUnavailableAtStartupFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
-	err = service.Start(t.Context())
-	if !errors.Is(err, ErrServiceStart) || strings.Contains(err.Error(), errBrokerSignerOutage.Error()) {
-		t.Fatalf("Start() error = %v, want redacted signer failure", err)
+	service.startDelays = []time.Duration{time.Millisecond}
+	service.backgroundDelays = []time.Duration{time.Millisecond}
+	// The signer is unusable: Start succeeds without a runtime, which fails
+	// closed (not ready, 503) and keeps retrying in the background.
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
 	}
-	if service.Done() != nil || service.Ready() || resource.activeUses != 0 {
-		t.Fatal("unusable startup signer published runtime state or retained storage")
+	if service.Ready() || service.CheckSigner(t.Context()) == nil {
+		t.Fatal("an unusable startup signer was reported ready")
+	}
+	response := httptest.NewRecorder()
+	service.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://issuer.example/dex/keys", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("degraded status = %d", response.Code)
+	}
+	signerGate.unavailable.Store(false)
+	deadline := time.Now().Add(10 * time.Second)
+	for !service.Ready() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !service.Ready() || service.CheckSigner(t.Context()) != nil {
+		t.Fatal("the broker did not start once the signer recovered")
+	}
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	<-service.Done()
+	if resource.activeUses != 0 {
+		t.Fatal("the stopped broker retained its storage borrow")
 	}
 }
 

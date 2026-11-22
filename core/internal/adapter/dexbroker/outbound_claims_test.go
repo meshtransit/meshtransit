@@ -3,6 +3,7 @@
 package dexbroker
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -265,5 +266,40 @@ func TestSharedAddressSpaceNeedsASubRange(t *testing.T) {
 		if validOutboundIP(netip.MustParseAddr(address), []netip.Prefix{sharedAddressSpace, netip.MustParsePrefix("10.0.0.0/8")}) {
 			t.Fatalf("%s was reachable", address)
 		}
+	}
+}
+
+func TestOutboundRequestsEndWithTheirLifetime(t *testing.T) {
+	lifetime, end := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	tripper := &boundedOutboundRoundTripper{
+		base: outboundRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			close(started)
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}),
+		rules: map[string]outboundEndpointRule{
+			outboundRuleKey(http.MethodGet, guardEndpoints().DiscoveryURL): {maxResponseBytes: 1024},
+		},
+		lifetime: lifetime,
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, guardEndpoints().DiscoveryURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := tripper.RoundTrip(request)
+		result <- err
+	}()
+	<-started
+	end()
+	select {
+	case err := <-result:
+		if !errors.Is(err, errOutboundHTTPPolicy) {
+			t.Fatalf("RoundTrip() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a request outlived its lifetime")
 	}
 }

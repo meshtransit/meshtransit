@@ -123,6 +123,16 @@ func (monitor *DependencyMonitor) firstCheck(ctx context.Context) error {
 	}
 }
 
+// Refresh checks every dependency once now and records the result. The
+// application calls it after starting its services, whose own checks may
+// only then mean something.
+func (monitor *DependencyMonitor) Refresh(ctx context.Context) error {
+	if monitor == nil || ctx == nil {
+		return ErrInvalidDependencyMonitor
+	}
+	return monitor.checkAll(ctx)
+}
+
 // Start performs the fail-closed initial check and then starts periodic checks.
 func (monitor *DependencyMonitor) Start(ctx context.Context) error {
 	if ctx == nil {

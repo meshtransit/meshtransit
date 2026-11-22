@@ -133,7 +133,16 @@ type outboundHTTPClients struct {
 	closeOnce  sync.Once
 }
 
-func newOIDCOutboundHTTPClients(configuration componentConfiguration) (*outboundHTTPClients, error) {
+// newOIDCOutboundHTTPClients builds one client per connector. Requests are
+// cancelled when lifetime ends: Dex opens connectors with a background
+// context, so a provider that hangs would otherwise hold up shutdown.
+func newOIDCOutboundHTTPClients(
+	lifetime context.Context,
+	configuration componentConfiguration,
+) (*outboundHTTPClients, error) {
+	if lifetime == nil {
+		return nil, errOutboundHTTPPolicy
+	}
 	owned := &outboundHTTPClients{
 		clients:    make(map[string]*http.Client, len(configuration.connectors)),
 		transports: make([]*http.Transport, 0, len(configuration.connectors)),
@@ -151,6 +160,9 @@ func newOIDCOutboundHTTPClients(configuration componentConfiguration) (*outbound
 			transport.CloseIdleConnections()
 			owned.close()
 			return nil, errOutboundHTTPPolicy
+		}
+		if bounded, ok := client.Transport.(*boundedOutboundRoundTripper); ok {
+			bounded.lifetime = lifetime
 		}
 		owned.clients[connector.id] = client
 		owned.transports = append(owned.transports, transport)
@@ -288,6 +300,8 @@ type boundedOutboundRoundTripper struct {
 	rules map[string]outboundEndpointRule
 	// guard is nil for Google, whose behaviour predates V1-22.
 	guard *outboundClaimGuard
+	// lifetime, when set, cancels requests still running when it ends.
+	lifetime context.Context
 }
 
 func (roundTripper *boundedOutboundRoundTripper) RoundTrip(
@@ -303,7 +317,14 @@ func (roundTripper *boundedOutboundRoundTripper) RoundTrip(
 	if !exists || !validHost || !validBody || (rule.maxRequestBytes == 0 && request.Body != nil) {
 		return nil, errOutboundHTTPPolicy
 	}
-	forward := request.Clone(request.Context())
+	requestCtx := request.Context()
+	if roundTripper.lifetime != nil {
+		bounded, cancel := context.WithCancel(requestCtx)
+		defer cancel()
+		defer context.AfterFunc(roundTripper.lifetime, cancel)()
+		requestCtx = bounded
+	}
+	forward := request.Clone(requestCtx)
 	forward.Header = request.Header.Clone()
 	forward.Header.Del("Accept-Encoding")
 	if roundTripper.guard != nil && request.Body != nil {

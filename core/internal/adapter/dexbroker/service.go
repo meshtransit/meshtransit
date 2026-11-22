@@ -53,6 +53,10 @@ type Service struct {
 	runtime    *Runtime
 	done       chan error
 	newRuntime runtimeFactory
+	// startDelays and backgroundDelays space the start attempts (defaults
+	// startRetryDelays and backgroundRetryDelays; tests shorten them).
+	startDelays      []time.Duration
+	backgroundDelays []time.Duration
 }
 
 type runtimeFactory func(context.Context, componentOptions, componentResources) (*Runtime, error)
@@ -71,6 +75,8 @@ func NewService(
 	options.Clients = slices.Clone(options.Clients)
 	return &Service{
 		options: options, resource: resource, logger: logger, newRuntime: newDexRuntime,
+		startDelays:      slices.Clone(startRetryDelays),
+		backgroundDelays: slices.Clone(backgroundRetryDelays),
 	}, nil
 }
 
@@ -122,7 +128,12 @@ func nilServiceDependency(value any) bool {
 }
 
 // Start borrows prepared storage and constructs the pinned runtime. No listener
-// is opened at this boundary.
+// is opened at this boundary. Invalid or unapproved configuration fails at
+// once. A runtime that cannot start for a transient reason (the upstream
+// provider's discovery unreachable, a database or signer outage) does not
+// fail Start: after a short synchronous budget the service keeps retrying in
+// the background, serving 503 and reporting not ready meanwhile, so a
+// provider outage never stops the rest of a Core process (TD-CORE-161).
 func (service *Service) Start(ctx context.Context) error {
 	if service == nil || ctx == nil || ctx.Err() != nil ||
 		!validServiceOptions(service.options) || nilServiceDependency(service.resource) || service.logger == nil ||
@@ -145,8 +156,9 @@ func (service *Service) Start(ctx context.Context) error {
 		return ErrServiceStart
 	}
 	ownedCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	runtime, err := service.startRuntime(ctx, ownedCtx, componentResources{storage: storage})
-	if err != nil {
+	resources := componentResources{storage: storage}
+	runtime, err := service.startRuntime(ctx, ownedCtx, resources)
+	if err != nil && !errors.Is(err, ErrComponentStart) {
 		cancel()
 		release()
 		return ErrServiceStart
@@ -158,23 +170,84 @@ func (service *Service) Start(ctx context.Context) error {
 	service.runtime = runtime
 	service.done = done
 	service.mu.Unlock()
-	go func() {
-		<-runtime.Done()
-		result := terminalRuntimeResult(runtime)
-		release()
-		cancel()
-		done <- result
-		close(done)
-	}()
+	if runtime == nil {
+		service.logger.WarnContext(ctx, "identity broker not started; retrying in the background")
+		go service.retryInBackground(ownedCtx, resources, release, cancel, done)
+		return nil
+	}
+	go service.join(runtime, release, cancel, done)
 	return nil
 }
 
-// startRetryDelays bounds how long Start waits for a transient failure to
-// clear, such as connector discovery while a fresh node's network and DNS come
-// up. The total stays inside the startup probe window.
-var startRetryDelays = []time.Duration{
-	time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 15 * time.Second,
+// join publishes the runtime's result once it has stopped and released its
+// storage borrow.
+func (service *Service) join(runtime *Runtime, release func(), cancel context.CancelFunc, done chan<- error) {
+	<-runtime.Done()
+	result := terminalRuntimeResult(runtime)
+	release()
+	cancel()
+	done <- result
+	close(done)
 }
+
+// retryInBackground starts the runtime once the transient cause clears. It
+// never ends the service on its own: a configuration that stopped matching
+// its approval keeps it degraded too (the configuration check reports it),
+// as it would a running broker. Only Shutdown stops it.
+func (service *Service) retryInBackground(
+	ownedCtx context.Context,
+	resources componentResources,
+	release func(),
+	cancel context.CancelFunc,
+	done chan<- error,
+) {
+	stopped := func() {
+		release()
+		done <- nil
+		close(done)
+	}
+	delays := service.backgroundDelays
+	for attempt := 0; ; attempt++ {
+		timer := time.NewTimer(delays[min(attempt, len(delays)-1)])
+		select {
+		case <-ownedCtx.Done():
+			timer.Stop()
+			stopped()
+			return
+		case <-timer.C:
+		}
+		runtime, err := service.attemptRuntime(ownedCtx, resources)
+		if runtime != nil {
+			// Started, possibly while Shutdown cancelled ownedCtx: the
+			// runtime then stops at once and join reports it.
+			service.mu.Lock()
+			service.runtime = runtime
+			service.mu.Unlock()
+			service.logger.InfoContext(ownedCtx, "identity broker started after retrying",
+				"attempts", attempt+1)
+			service.join(runtime, release, cancel, done)
+			return
+		}
+		if ownedCtx.Err() != nil {
+			stopped()
+			return
+		}
+		code := "start"
+		if errors.Is(err, ErrConfigurationCheck) {
+			code = "configuration"
+		}
+		service.logger.WarnContext(ownedCtx, "identity broker start failed; retrying", "error_code", code,
+			"attempt", attempt+1, "retry_in", delays[min(attempt+1, len(delays)-1)].String())
+	}
+}
+
+// startRetryDelays bound how long Start itself waits for a transient failure
+// to clear, such as connector discovery while a fresh node's network and DNS
+// come up. Later attempts run in the background (backgroundRetryDelays).
+var startRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
+// backgroundRetryDelays space the background attempts; the last one repeats.
+var backgroundRetryDelays = []time.Duration{15 * time.Second, 30 * time.Second, time.Minute}
 
 // startRuntime builds the runtime, retrying a component start failure with a
 // fresh copy of the approved configuration each time. Invalid input fails at
@@ -185,27 +258,14 @@ func (service *Service) startRuntime(
 	resources componentResources,
 ) (*Runtime, error) {
 	for attempt := 0; ; attempt++ {
-		configuration, err := service.resolveApprovedConfiguration()
-		if err != nil {
-			return nil, err
-		}
-		runtime, err := service.newRuntime(ownedCtx, componentOptions{
-			issuer:                     service.options.Issuer,
-			configuration:              configuration,
-			idTokensValidFor:           service.options.IDTokenLifetime,
-			authRequestsValidFor:       service.options.AuthRequestLifetime,
-			signingKeysRotateAfter:     service.options.SigningKeyRotation,
-			garbageCollectionFrequency: service.options.GarbageCollectionInterval,
-			logger:                     service.logger,
-		}, resources)
-		clearComponentConfiguration(&configuration)
+		runtime, err := service.attemptRuntime(ownedCtx, resources)
 		if err == nil {
 			return runtime, nil
 		}
-		if !errors.Is(err, ErrComponentStart) || attempt >= len(startRetryDelays) {
+		if !errors.Is(err, ErrComponentStart) || attempt >= len(service.startDelays) {
 			return nil, err
 		}
-		delay := startRetryDelays[attempt]
+		delay := service.startDelays[attempt]
 		service.logger.WarnContext(ctx, "identity broker start failed; retrying",
 			"attempt", attempt+1, "retry_in", delay.String())
 		timer := time.NewTimer(delay)
@@ -216,6 +276,26 @@ func (service *Service) startRuntime(
 		case <-timer.C:
 		}
 	}
+}
+
+// attemptRuntime builds the runtime once from a fresh copy of the approved
+// configuration.
+func (service *Service) attemptRuntime(ownedCtx context.Context, resources componentResources) (*Runtime, error) {
+	configuration, err := service.resolveApprovedConfiguration()
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := service.newRuntime(ownedCtx, componentOptions{
+		issuer:                     service.options.Issuer,
+		configuration:              configuration,
+		idTokensValidFor:           service.options.IDTokenLifetime,
+		authRequestsValidFor:       service.options.AuthRequestLifetime,
+		signingKeysRotateAfter:     service.options.SigningKeyRotation,
+		garbageCollectionFrequency: service.options.GarbageCollectionInterval,
+		logger:                     service.logger,
+	}, resources)
+	clearComponentConfiguration(&configuration)
+	return runtime, err
 }
 
 func (service *Service) resolveApprovedConfiguration() (componentConfiguration, error) {
@@ -287,7 +367,7 @@ func (service *Service) Shutdown(ctx context.Context) error {
 		return ErrInvalidService
 	}
 	service.mu.Lock()
-	if !service.started || service.cancel == nil || service.runtime == nil {
+	if !service.started || service.cancel == nil {
 		service.mu.Unlock()
 		return ErrServiceNotStarted
 	}

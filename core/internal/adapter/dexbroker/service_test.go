@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -256,9 +257,6 @@ func testRuntimeWithoutStaticConfiguration(
 }
 
 func TestServiceRetriesATransientStartFailure(t *testing.T) {
-	previous := startRetryDelays
-	startRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
-	t.Cleanup(func() { startRetryDelays = previous })
 
 	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
 	if err := serverStorage.CreateConnector(t.Context(), storage.Connector{
@@ -272,6 +270,7 @@ func TestServiceRetriesATransientStartFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
+	service.startDelays = []time.Duration{time.Millisecond, time.Millisecond}
 	attempts := 0
 	service.newRuntime = func(ctx context.Context, options componentOptions, resources componentResources) (*Runtime, error) {
 		attempts++
@@ -293,9 +292,6 @@ func TestServiceRetriesATransientStartFailure(t *testing.T) {
 }
 
 func TestServiceStopsRetryingAfterTheBudget(t *testing.T) {
-	previous := startRetryDelays
-	startRetryDelays = []time.Duration{time.Millisecond}
-	t.Cleanup(func() { startRetryDelays = previous })
 
 	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
 	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
@@ -305,20 +301,179 @@ func TestServiceStopsRetryingAfterTheBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewService() error = %v", err)
 		}
-		attempts := 0
+		service.startDelays = []time.Duration{time.Millisecond}
+		service.backgroundDelays = []time.Duration{time.Hour}
+		var attempts atomic.Int32
 		service.newRuntime = func(context.Context, componentOptions, componentResources) (*Runtime, error) {
-			attempts++
+			attempts.Add(1)
 			return nil, failure
 		}
-		if err := service.Start(t.Context()); !errors.Is(err, ErrServiceStart) {
-			t.Fatalf("Start() error = %v, want start failure", err)
-		}
-		want := 2
+		err = service.Start(t.Context())
 		if errors.Is(failure, ErrInvalidComponent) {
-			want = 1
+			if !errors.Is(err, ErrServiceStart) || attempts.Load() != 1 {
+				t.Fatalf("invalid component: Start() = %v after %d attempts", err, attempts.Load())
+			}
+			continue
 		}
-		if attempts != want {
-			t.Fatalf("%v: attempts = %d, want %d", failure, attempts, want)
+		// A transient failure leaves the service up, unready and serving
+		// 503, retrying in the background (TD-CORE-161).
+		if err != nil || attempts.Load() != 2 || service.Ready() || service.Done() == nil {
+			t.Fatalf("transient failure: Start() = %v after %d attempts, ready %t", err, attempts.Load(), service.Ready())
 		}
+		response := httptest.NewRecorder()
+		service.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://issuer.example/dex/keys", nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("degraded status = %d", response.Code)
+		}
+		if err := service.Shutdown(t.Context()); err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+		if result := <-service.Done(); result != nil {
+			t.Fatalf("degraded shutdown result = %v", result)
+		}
+	}
+}
+
+func TestServiceStartsInTheBackgroundOnceTheCauseClears(t *testing.T) {
+
+	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
+	if err := serverStorage.CreateConnector(t.Context(), storage.Connector{
+		ID: "mock", Type: "mockCallback", Name: "Mock", ResourceVersion: "1",
+	}); err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
+	t.Cleanup(func() { _ = resource.Shutdown(context.Background()) })
+	service, err := NewService(validServiceTestOptions(t), resource, componentTestLogger())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	service.startDelays = []time.Duration{time.Millisecond}
+	service.backgroundDelays = []time.Duration{time.Millisecond}
+	var attempts atomic.Int32
+	service.newRuntime = func(ctx context.Context, options componentOptions, resources componentResources) (*Runtime, error) {
+		if attempts.Add(1) < 5 {
+			return nil, ErrComponentStart
+		}
+		return testRuntimeWithoutStaticConfiguration(ctx, options, resources)
+	}
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !service.Ready() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !service.Ready() || attempts.Load() != 5 {
+		t.Fatalf("ready = %t after %d attempts", service.Ready(), attempts.Load())
+	}
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	<-service.Done()
+}
+
+func degradedTestService(t *testing.T) (*Service, string) {
+	t.Helper()
+	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
+	if err := serverStorage.CreateConnector(t.Context(), storage.Connector{
+		ID: "mock", Type: "mockCallback", Name: "Mock", ResourceVersion: "1",
+	}); err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
+	t.Cleanup(func() { _ = resource.Shutdown(context.Background()) })
+	options := validServiceTestOptions(t)
+	secretPath := filepath.Join(t.TempDir(), "connector-secret")
+	if err := os.WriteFile(secretPath, []byte(strings.Repeat("c", 48)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := config.NewSecretFile(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.OIDCConnectors[0].ClientSecretFile = secret
+	service, err := NewService(options, resource, componentTestLogger())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	service.startDelays = []time.Duration{time.Millisecond}
+	service.backgroundDelays = []time.Duration{time.Millisecond}
+	return service, secretPath
+}
+
+func waitForService(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestServiceStaysDegradedWhileConfigurationDrifts(t *testing.T) {
+	service, secretPath := degradedTestService(t)
+	var attempts atomic.Int32
+	var provider atomic.Bool
+	service.newRuntime = func(ctx context.Context, options componentOptions, resources componentResources) (*Runtime, error) {
+		attempts.Add(1)
+		if !provider.Load() {
+			return nil, ErrComponentStart
+		}
+		return testRuntimeWithoutStaticConfiguration(ctx, options, resources)
+	}
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	// The secret changes while the broker waits: it stays degraded rather
+	// than ending the process, and starts once the approved one is back.
+	if err := os.WriteFile(secretPath, []byte(strings.Repeat("d", 48)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider.Store(true)
+	before := attempts.Load()
+	time.Sleep(50 * time.Millisecond)
+	if service.Ready() || attempts.Load() != before {
+		t.Fatalf("a drifted configuration started the runtime (attempts %d → %d)", before, attempts.Load())
+	}
+	select {
+	case result := <-service.Done():
+		t.Fatalf("drift ended the service: %v", result)
+	default:
+	}
+	if err := os.WriteFile(secretPath, []byte(strings.Repeat("c", 48)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitForService(t, service.Ready)
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	<-service.Done()
+}
+
+func TestServiceShutdownDuringAnAttemptStopsCleanly(t *testing.T) {
+	service, _ := degradedTestService(t)
+	var attempts atomic.Int32
+	inAttempt := make(chan struct{})
+	service.newRuntime = func(ctx context.Context, _ componentOptions, _ componentResources) (*Runtime, error) {
+		if attempts.Add(1) < 3 {
+			return nil, ErrComponentStart
+		}
+		close(inAttempt)
+		<-ctx.Done()
+		// newDexComponent answers a cancelled context as invalid input.
+		return nil, ErrInvalidComponent
+	}
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	<-inAttempt
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if result := <-service.Done(); result != nil {
+		t.Fatalf("shutdown during an attempt published %v", result)
 	}
 }

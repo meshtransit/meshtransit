@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,7 +57,11 @@ type componentResources struct {
 // dexComponent adapts the pinned server to the product-owned runtime contract.
 // Its done channel closes only after all server workers join.
 type dexComponent struct {
-	server              *server.Server
+	server *server.Server
+	// callbackPath and returnURL let ServeHTTP replace Dex's page for an
+	// expired sign-in (expired_signin.go).
+	callbackPath        string
+	returnURL           string
 	signer              signer.Signer
 	outboundHTTPClients *outboundHTTPClients
 	cancel              context.CancelFunc
@@ -113,7 +118,9 @@ func newDexComponent(ctx context.Context, options componentOptions, resources co
 		cancel()
 		return nil, ErrComponentStart
 	}
-	outboundHTTPClients, err := newOIDCOutboundHTTPClients(options.configuration)
+	// ctx is the service's owned context: Shutdown ends it, and with it any
+	// provider request a start attempt is waiting on.
+	outboundHTTPClients, err := newOIDCOutboundHTTPClients(ctx, options.configuration)
 	if err != nil {
 		cancel()
 		return nil, ErrComponentStart
@@ -160,9 +167,12 @@ func newDexComponent(ctx context.Context, options componentOptions, resources co
 		return nil, ErrComponentStart
 	}
 
+	issuerURL, _ := url.Parse(options.issuer)
 	component := &dexComponent{
 		server: dexServer, signer: localSigner, outboundHTTPClients: outboundHTTPClients,
-		cancel: cancel, doneCh: make(chan struct{}),
+		callbackPath: strings.TrimSuffix(issuerURL.Path, "/") + "/callback",
+		returnURL:    returnURLOf(options.configuration),
+		cancel:       cancel, doneCh: make(chan struct{}),
 	}
 	go component.ownLifecycle(serverDone)
 	return component, nil
@@ -209,7 +219,16 @@ func isNilStorage(serverStorage storage.Storage) bool {
 }
 
 func (component *dexComponent) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	component.server.ServeHTTP(response, request)
+	component.server.ServeHTTP(component.responseFor(response, request), request)
+}
+
+// responseFor wraps the callback's response so an expired sign-in gets the
+// MeshTransit page (expired_signin.go).
+func (component *dexComponent) responseFor(response http.ResponseWriter, request *http.Request) http.ResponseWriter {
+	if component.returnURL != "" && request.Method == http.MethodGet && request.URL.Path == component.callbackPath {
+		return &expiredSignInWriter{ResponseWriter: response, returnURL: component.returnURL}
+	}
+	return response
 }
 
 const signerProbePayload = "meshtransit-signer-readiness-v1"

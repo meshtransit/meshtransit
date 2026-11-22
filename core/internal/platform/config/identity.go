@@ -57,7 +57,7 @@ const (
 	defaultIdentityPostgreSQLConnectionLifetime = 30 * time.Minute
 
 	defaultIdentityIDTokenLifetime     = 5 * time.Minute
-	defaultIdentityAuthRequestLifetime = 5 * time.Minute
+	defaultIdentityAuthRequestLifetime = 10 * time.Minute // matches Core's pending sign-in (TD-API-12)
 	defaultIdentitySigningKeyRotation  = 6 * time.Hour
 	defaultIdentityGarbageCollection   = 5 * time.Minute
 	defaultIdentityRequestTimeout      = 15 * time.Second

@@ -46,9 +46,9 @@ func (checker *identitySignerChecker) Check(ctx context.Context) error {
 	if checker == nil || checker.service == nil || ctx == nil || ctx.Err() != nil {
 		return errInvalidIdentityBrokerComposition
 	}
-	// The dependency monitor runs its first check before services start. The
-	// broker performs the same cryptographic proof synchronously during Start;
-	// later checks exercise the running signer directly.
+	// The dependency monitor runs its first check before services start; the
+	// application checks again once they have (a broker may start degraded,
+	// without a runtime, and then fails this check until it is up).
 	if checker.service.Done() == nil {
 		return nil
 	}
