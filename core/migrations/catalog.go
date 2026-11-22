@@ -725,6 +725,8 @@ func Catalog() []Migration {
 			kubernetesClusterTrustReadSQL),
 		newMigration(312, "An enrollment key's issuer must be a member of its Network to issue and to use it",
 			enrollmentKeyIssuerMembershipSQL),
+		newMigration(313, "Audit retention keeps at least 12 months; Kubernetes operation erasure is an operator's",
+			auditRetentionFloorSQL),
 	}
 }
 
@@ -1440,3 +1442,6 @@ var kubernetesClusterTrustReadSQL string
 
 //go:embed 000312_enrollment_key_issuer_membership.up.sql
 var enrollmentKeyIssuerMembershipSQL string
+
+//go:embed 000313_audit_retention_floor.up.sql
+var auditRetentionFloorSQL string

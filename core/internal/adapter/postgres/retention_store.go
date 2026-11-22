@@ -20,7 +20,9 @@ const (
 	pruneIdempotencySQL = `SELECT mesh_ops.prune_idempotency_records_v1($1::INTEGER, $2::INTEGER)`
 	pruneOutboxSQL      = `SELECT mesh_ops.prune_outbox_events_v1($1::INTEGER, $2::INTEGER, $3::INTEGER)::TEXT`
 	dropAuditSQL        = `SELECT mesh_ops.drop_audit_event_partitions_v1($1::INTEGER)`
-	pruneAuditSQL       = `SELECT mesh_ops.prune_audit_rows_v1($1::INTEGER, $2::INTEGER)::TEXT`
+	// v2 (schema 313) refuses fewer than 12 months; operator step 313 hands
+	// it to mesh_retention before the rollout.
+	pruneAuditSQL       = `SELECT mesh_ops.prune_audit_rows_v2($1::INTEGER, $2::INTEGER)::TEXT`
 	foldSummaryMarksSQL = `SELECT mesh_ops.fold_network_summary_marks_v1($1::INTEGER)`
 	// maximumRetentionBatch is what the definer functions accept (schema 274).
 	maximumRetentionBatch = 5000
@@ -121,7 +123,7 @@ func (store *RetentionStore) PruneOutbox(ctx context.Context, deliveredDays, ter
 
 // DropAuditPartitions drops the whole Activity months past keepMonths.
 func (store *RetentionStore) DropAuditPartitions(ctx context.Context, keepMonths int) ([]string, error) {
-	if !store.usable(ctx, 1) || keepMonths < 1 || keepMonths > 120 {
+	if !store.usable(ctx, 1) || keepMonths < retention.MinimumAuditKeepMonths || keepMonths > 120 {
 		return nil, ErrInvalidRetentionStore
 	}
 	var dropped []string
@@ -134,7 +136,7 @@ func (store *RetentionStore) DropAuditPartitions(ctx context.Context, keepMonths
 // PruneAudit removes up to limit rows of each kind the dropped months leave
 // behind.
 func (store *RetentionStore) PruneAudit(ctx context.Context, keepMonths, limit int) (retention.AuditRemoved, error) {
-	if !store.usable(ctx, limit) || keepMonths < 1 || keepMonths > 120 {
+	if !store.usable(ctx, limit) || keepMonths < retention.MinimumAuditKeepMonths || keepMonths > 120 {
 		return retention.AuditRemoved{}, ErrInvalidRetentionStore
 	}
 	var answer string

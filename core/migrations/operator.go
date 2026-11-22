@@ -319,3 +319,10 @@ var runtimeFunctionGrantsSQL string
 // RuntimeFunctionGrantsSQL takes the owner-held functions away from
 // mesh_runtime itself (role isolation S2.3).
 func RuntimeFunctionGrantsSQL() string { return runtimeFunctionGrantsSQL }
+
+//go:embed operator/000313_audit_retention_floor_ownership.sql
+var auditRetentionFloorOwnershipSQL string
+
+// AuditRetentionFloorOwnershipSQL hands prune_audit_rows_v2 (schema 313, at
+// least 12 months) to mesh_retention and grants it to the worker.
+func AuditRetentionFloorOwnershipSQL() string { return auditRetentionFloorOwnershipSQL }

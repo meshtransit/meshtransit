@@ -42,6 +42,10 @@ type Policy struct {
 	IdempotencyGrace time.Duration
 }
 
+// MinimumAuditKeepMonths is the compliance floor PostgreSQL enforces too
+// (schema 313, TD-SEC-94).
+const MinimumAuditKeepMonths = 12
+
 // DefaultPolicy is the owner's (2026-11-04): Activity twelve months,
 // delivered events a week, failed ones a month, idempotency a day past expiry.
 func DefaultPolicy() Policy {
@@ -50,7 +54,7 @@ func DefaultPolicy() Policy {
 }
 
 func (policy Policy) valid() bool {
-	return policy.AuditKeepMonths >= 1 && policy.AuditKeepMonths <= 120 &&
+	return policy.AuditKeepMonths >= MinimumAuditKeepMonths && policy.AuditKeepMonths <= 120 &&
 		policy.OutboxDeliveredDays >= 1 && policy.OutboxDeliveredDays <= 365 &&
 		policy.OutboxTerminalDays >= policy.OutboxDeliveredDays && policy.OutboxTerminalDays <= 365 &&
 		policy.IdempotencyGrace >= time.Hour && policy.IdempotencyGrace <= 30*24*time.Hour

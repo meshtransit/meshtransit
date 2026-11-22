@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 312 {
-		t.Fatalf("len(Catalog()) = %d, want 312", len(catalog))
+	if len(catalog) != 313 {
+		t.Fatalf("len(Catalog()) = %d, want 313", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 312 {
-		t.Fatalf("LatestVersion() = %d, want 312", LatestVersion())
+	if LatestVersion() != 313 {
+		t.Fatalf("LatestVersion() = %d, want 313", LatestVersion())
 	}
 }
 
@@ -8355,7 +8355,11 @@ func TestOnlyRetentionDeletesEvidence(t *testing.T) {
 	gate := regexp.MustCompile(`(?i)reject_immutable_change_v2|DROP\s+TRIGGER\s+\w*_immutable|DISABLE\s+TRIGGER`)
 	for _, migration := range Catalog() {
 		sql := stripSQLComments(migration.SQL)
-		if migration.Version != 274 {
+		if migration.Version == 313 {
+			// Reviewed: schema 313 restates three retention functions of 274
+			// and 245 with only the retention floor raised (TD-SEC-94).
+			assertRetentionFloorRestatement(t, migration.SQL)
+		} else if migration.Version != 274 {
 			if match := evidence.FindString(sql); match != "" {
 				t.Errorf("migration %d deletes evidence: %q", migration.Version, match)
 			}
@@ -8936,5 +8940,38 @@ func TestSignupWorkspaceDefault(t *testing.T) {
 	want := strings.Replace(original, "p_workspace_public_id, p_display_name,", "p_workspace_public_id, 'Default',", 1)
 	if got := signupBody(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops.sign_up_account_v1("); got != want {
 		t.Error("schema 305 changes sign_up_account_v1 beyond the Workspace name")
+	}
+}
+
+// assertRetentionFloorRestatement checks that schema 313's functions are
+// schema 274's and 245's bodies with only "p_keep_months < 1" raised to 12.
+func assertRetentionFloorRestatement(t *testing.T, sql313 string) {
+	t.Helper()
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	for _, function := range []struct {
+		name, previous string
+		version        int64
+	}{
+		{"drop_audit_event_partitions_v1", "drop_audit_event_partitions_v1", 274},
+		// v1 belongs to mesh_retention: v2 is its copy under a new name.
+		{"prune_audit_rows_v2", "prune_audit_rows_v1", 274},
+		{"maintain_kubernetes_operation_partitions_v1", "maintain_kubernetes_operation_partitions_v1", 245},
+	} {
+		restated := strings.Replace(body(sql313, function.name), "p_keep_months < 12 OR", "p_keep_months < 1 OR", 1)
+		restated = strings.Replace(restated, function.name+"(", function.previous+"(", 1)
+		if restated != body(migrationVersion(t, function.version).SQL, function.previous) {
+			t.Errorf("schema 313 changes %s beyond its retention floor", function.name)
+		}
+	}
+	if strings.Count(sql313, "CREATE OR REPLACE FUNCTION") != 2 || strings.Count(sql313, "CREATE FUNCTION") != 1 ||
+		strings.Contains(sql313, "GRANT ") {
+		t.Error("schema 313 does more than restate two functions, copy one and revoke grants")
 	}
 }

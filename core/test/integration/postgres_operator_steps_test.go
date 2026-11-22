@@ -183,6 +183,8 @@ func TestPostgreSQLOperatorSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assertOperatorUpgradeThroughRetentionFloor(ctx, t, admin, migrationConfig, adminConfig)
+
 	assertOperatorLogins(ctx, t, admin, operator, freshAdmin, freshMigration)
 	assertOperatorGroups(ctx, t, admin, operator, freshMigration)
 	assertCreateRoleOperator(ctx, t, admin, freshAdmin, freshMigration)
@@ -825,5 +827,47 @@ func assertOperatorConnectionLimits(ctx context.Context, t *testing.T, admin *pg
 	if err := admin.QueryRow(ctx, `SELECT rolconnlimit FROM pg_catalog.pg_roles WHERE rolname = 'mesh_worker'`).
 		Scan(&limit); err != nil || limit != -1 {
 		t.Fatalf("mesh_worker connection limit = %d/%v, want none", limit, err)
+	}
+}
+
+// assertOperatorUpgradeThroughRetentionFloor upgrades a database the way a
+// running installation is: migrated through 312 with every operator step,
+// then schema 313, whose prune_audit_rows_v1 belongs to mesh_retention
+// (step 274) — the migration must not try to replace it — and then step 313.
+func assertOperatorUpgradeThroughRetentionFloor(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	migrationConfig, adminConfig config.MigrationConfig) {
+	t.Helper()
+	database := createOperatorStepDatabase(ctx, t, admin)
+	migration := migrationConfig
+	migration.PostgreSQL.Database = database
+	operatorConfig := adminConfig
+	operatorConfig.PostgreSQL.Database = database
+	runner := openIntegrationMigrationRunner(ctx, t, migration)
+	if _, err := runner.UpThrough(ctx, integrationLegacyCopyVersion); err != nil {
+		t.Fatalf("migrate the upgrade database through %d: %v", integrationLegacyCopyVersion, err)
+	}
+	copyIntegrationLegacyRuntime(ctx, t, database)
+	if _, err := openIntegrationMigrationRunner(ctx, t, migration).UpThrough(ctx, 312); err != nil {
+		t.Fatalf("migrate the upgrade database through 312: %v", err)
+	}
+	operator := openIntegrationOperatorRunner(ctx, t, operatorConfig)
+	if _, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true}); err != nil {
+		t.Fatalf("operator steps through 312: %v", err)
+	}
+	if _, err := openIntegrationMigrationRunner(ctx, t, migration).Up(ctx); err != nil {
+		t.Fatalf("migrate an operated database to 313: %v", err)
+	}
+	if _, err := operator.Apply(ctx, postgresadapter.OperatorApplyOptions{AfterRollout: true}); err != nil {
+		t.Fatalf("operator step 313: %v", err)
+	}
+	assertNoPendingOperatorSteps(ctx, t, migration)
+	var owner string
+	var workerExecutes bool
+	if err := openFreshAdmin(ctx, t, admin, database).QueryRow(ctx, `SELECT owner.rolname,
+    pg_catalog.has_function_privilege('mesh_worker', function.oid, 'EXECUTE')
+FROM pg_catalog.pg_proc AS function JOIN pg_catalog.pg_roles AS owner ON owner.oid = function.proowner
+WHERE function.oid = 'mesh_ops.prune_audit_rows_v2(integer, integer)'::regprocedure`).Scan(
+		&owner, &workerExecutes); err != nil || owner != "mesh_retention" || !workerExecutes {
+		t.Fatalf("prune_audit_rows_v2 owned by %q, worker executes %t, %v", owner, workerExecutes, err)
 	}
 }

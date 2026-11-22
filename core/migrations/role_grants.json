@@ -764,7 +764,7 @@
       "mesh_ops.prepare_trust_contract_device_removal_v1",
       "mesh_ops.prepare_trust_contract_expiry_v1",
       "mesh_ops.prune_access_ledger_v1",
-      "mesh_ops.prune_audit_rows_v1",
+      "mesh_ops.prune_audit_rows_v2",
       "mesh_ops.prune_device_captive_windows_v1",
       "mesh_ops.prune_device_enforcement_v1",
       "mesh_ops.prune_idempotency_records_v1",

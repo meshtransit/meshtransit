@@ -209,7 +209,8 @@ FOR VALUES FROM ('2020-01-01 00:00:00+00') TO ('2020-02-01 00:00:00+00')`); err 
 		{"mesh_worker", "mesh_ops.record_kubernetes_operations_v2(jsonb)", false},
 		{"mesh_worker", "mesh_ops.record_kubernetes_operation_outcomes_v2(jsonb, jsonb)", false},
 		{"mesh_worker", "mesh_ops.maintain_kubernetes_operation_partitions_v1(integer)", true},
-		{"mesh_worker", "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", true},
+		// Schema 313 (TD-SEC-94): erasure is an operator's command.
+		{"mesh_worker", "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", false},
 		{"mesh_observer", "mesh_ops.record_kubernetes_operations_v1(jsonb)", false},
 		{"mesh_observer", "mesh_ops.record_kubernetes_operations_v2(jsonb)", false},
 		{"mesh_observer", "mesh_ops.erase_kubernetes_operations_v1(uuid, text, text, integer)", false},

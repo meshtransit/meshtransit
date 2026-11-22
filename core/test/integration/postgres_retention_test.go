@@ -105,6 +105,15 @@ WHERE event.state = 'pending' ORDER BY event.id LIMIT 1`).Scan(&answered); err !
 		assertPostgreSQLCode(t, err, attempt.code)
 		_ = transaction.Rollback(ctx)
 	}
+	// Schema 313 (TD-SEC-94): no caller keeps less than 12 months of audit.
+	for _, call := range []string{
+		`SELECT mesh_ops.drop_audit_event_partitions_v1(11)`,
+		`SELECT mesh_ops.prune_audit_rows_v2(11, 10)`,
+		`SELECT mesh_ops.maintain_kubernetes_operation_partitions_v1(11)`,
+	} {
+		_, err := admin.Exec(ctx, call)
+		assertPostgreSQLCode(t, err, "22023")
+	}
 	for _, call := range []string{
 		`SELECT mesh_ops.prune_outbox_events_v1(7, 30, 10)`,
 		`SELECT mesh_ops.prune_idempotency_records_v1(86400, 10)`,
