@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"meshtransit.net/shared/key"
@@ -160,6 +161,9 @@ func applyEnv(fs *flag.FlagSet, env func(string) (string, bool)) error {
 	return err
 }
 
+// maxRelayKeyFile bounds the key file read (the key is ~100 bytes).
+const maxRelayKeyFile = 4096
+
 // loadRelayKey reads the key file, refusing files other users can read.
 func loadRelayKey(path string) (key.RelayPrivate, error) {
 	return loadRelayKeyFrom(path, os.Getenv("CREDENTIALS_DIRECTORY"))
@@ -170,9 +174,22 @@ func loadRelayKey(path string) (key.RelayPrivate, error) {
 // file in a directory only the service can open, so group-read is accepted
 // there; anywhere else the file must not be readable by group or others.
 func loadRelayKeyFrom(path, credentialsDir string) (key.RelayPrivate, error) {
-	info, err := os.Stat(path)
+	// The mode is checked on the open file, so what is checked is what is
+	// read (TD-SEC-28): no swap between a stat and a read. Symlinks are
+	// followed (a Kubernetes Secret mount is one); the target must be a
+	// regular file.
+	// O_NONBLOCK: a FIFO fails the regular-file check instead of blocking.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // operator-supplied path
 	if err != nil {
 		return key.RelayPrivate{}, fmt.Errorf("relay key: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return key.RelayPrivate{}, fmt.Errorf("relay key: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return key.RelayPrivate{}, fmt.Errorf("relay key %s is not a regular file", path)
 	}
 	refused := os.FileMode(0o077)
 	if inCredentialsDir(path, credentialsDir) {
@@ -181,9 +198,13 @@ func loadRelayKeyFrom(path, credentialsDir string) (key.RelayPrivate, error) {
 	if info.Mode().Perm()&refused != 0 {
 		return key.RelayPrivate{}, fmt.Errorf("relay key %s is readable by other users (mode %s); run chmod 600", path, info.Mode().Perm())
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied path
+	raw, err := io.ReadAll(io.LimitReader(file, maxRelayKeyFile+1))
 	if err != nil {
 		return key.RelayPrivate{}, fmt.Errorf("relay key: %w", err)
+	}
+	if len(raw) > maxRelayKeyFile {
+		clear(raw)
+		return key.RelayPrivate{}, fmt.Errorf("relay key %s is larger than %d bytes", path, maxRelayKeyFile)
 	}
 	defer clear(raw)
 	k, err := key.ParseRelayPrivateBytes(raw)

@@ -187,3 +187,52 @@ func TestLoadRelayKeyAcceptsSystemdCredential(t *testing.T) {
 		t.Fatal("world-readable credential accepted")
 	}
 }
+
+// TD-SEC-28: the mode checked is the mode of the file read. A symlink to a
+// key other users can read is refused, one to a 0600 key (a Kubernetes
+// Secret mount) is accepted; a directory is refused; an oversized file does
+// not parse.
+func TestLoadRelayKeyChecksTheFileItReads(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relay.key")
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), []string{"genkey", "--out", path}, noEnv, &out, &errOut); code != 0 {
+		t.Fatalf("genkey exit %d: %s", code, errOut.String())
+	}
+	link := filepath.Join(dir, "linked.key")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(link, ""); err != nil {
+		t.Fatalf("a symlink to a private key was refused: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil { //nolint:gosec // deliberately too open
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(link, ""); err == nil {
+		t.Fatal("a symlink to a readable key was accepted")
+	}
+	if _, err := loadRelayKeyFrom(dir, ""); err == nil {
+		t.Fatal("a directory was accepted")
+	}
+	large := filepath.Join(dir, "large.key")
+	if err := os.WriteFile(large, bytes.Repeat([]byte("a"), 2*maxRelayKeyFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(large, ""); err == nil {
+		t.Fatal("an oversized key file parsed")
+	}
+	// A valid key followed by filler past the bound is refused, not cut.
+	valid, err := os.ReadFile(path) //nolint:gosec // the test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := append(append(valid, bytes.Repeat([]byte(" "), maxRelayKeyFile)...), []byte("junk")...)
+	if err := os.WriteFile(large, padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(large, ""); err == nil {
+		t.Fatal("a key with filler past the bound parsed")
+	}
+}

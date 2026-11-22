@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"meshtransit.net/relay/internal/corelink"
+	"meshtransit.net/relay/internal/logging"
 	"meshtransit.net/relay/internal/metrics"
 	"meshtransit.net/relay/internal/probe"
 	"meshtransit.net/relay/internal/server"
@@ -27,7 +28,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	logger := slog.New(slog.NewJSONHandler(logOut, &slog.HandlerOptions{Level: slog.Level(level)}))
+	logger := logging.New(logOut, slog.Level(level))
 	relayKey, err := loadRelayKey(cfg.keyFile)
 	if err != nil {
 		return err
@@ -124,7 +125,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		// initialStateWait passes (then the relay serves on its bootstrap
 		// keys, and tickets, valid for minutes, bound the exposure).
 		if err := pollInitialState(ctx, link); err != nil {
-			logger.Warn("initial relay state poll failed; serving with bootstrap keys", "error", err)
+			logger.Warn("initial relay state poll failed; serving with bootstrap keys", logging.ErrorAttrs(err)...)
 		}
 	}
 

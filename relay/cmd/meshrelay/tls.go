@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
+
+	"meshtransit.net/relay/internal/logging"
 )
 
 // tlsConfig builds the TLS configuration of the stream transport. TLS is not
@@ -100,9 +102,11 @@ func baseTLSConfig(cfg serveConfig, logger *slog.Logger) (*tls.Config, error) {
 			}
 			cert, err := m.GetCertificate(hello)
 			// Issuance failures are otherwise invisible (each shows only as a
-			// failed TLS handshake); log them at most once a minute.
-			if err != nil && time.Now().Unix()-lastLog.Swap(time.Now().Unix()) >= 60 {
-				logger.Warn("acme certificate unavailable", "host", host, "error", err)
+			// failed TLS handshake); log them at most once a minute. A name
+			// this relay does not serve (scanners) is not one, and must not
+			// use up the minute.
+			if err != nil && hello.ServerName == host && time.Now().Unix()-lastLog.Swap(time.Now().Unix()) >= 60 {
+				logger.Warn("acme certificate unavailable", append([]any{"host", host}, logging.ErrorAttrs(err)...)...)
 			}
 			return cert, err
 		}

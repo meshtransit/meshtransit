@@ -335,7 +335,7 @@ func (s *Server) sendControlTo(to *session, b *binding, msg mtrp.ControlMessage)
 	}
 	plain, err := mtrp.AppendControlMessage(make([]byte, 0, 64), msg)
 	if err != nil {
-		s.cfg.Logger.Error("encode control message", "type", msg.Type, "error", err)
+		s.cfg.Logger.Error("encode control message", "type", msg.Type, "error", err, "error_code", "encode_failed")
 		return
 	}
 	frame, err := to.crypto.SealControl(make([]byte, 0, mtrp.ControlHeaderSize+len(plain)+16), plain)

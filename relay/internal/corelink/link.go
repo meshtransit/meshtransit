@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"meshtransit.net/relay/internal/logging"
 	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/mtrp"
 )
@@ -40,6 +41,20 @@ const (
 )
 
 var errNotNewer = errors.New("corelink: relay state is not newer than the current one")
+
+// errStateExpired is a relay state past its expiry.
+var errStateExpired = errors.New("corelink: relay state expired")
+
+// statusError is a Core answer with an unexpected HTTP status; its code and
+// status are what the log shows (TD-SEC-28).
+type statusError struct {
+	code   string
+	status int
+}
+
+func (e statusError) Error() string     { return fmt.Sprintf("corelink: %s: status %d", e.code, e.status) }
+func (e statusError) ErrorCode() string { return e.code }
+func (e statusError) StatusCode() int   { return e.status }
 
 // Config configures a Link.
 type Config struct {
@@ -212,8 +227,8 @@ func (l *Link) Run(ctx context.Context) error {
 		case err != nil:
 			failures++
 			delay = retryDelay(l.cfg.Interval, failures)
-			l.cfg.Logger.Warn("relay state update failed", "error", err, "retry_in", delay.String(),
-				"state_expired", !l.expiresAt.IsZero() && l.cfg.Now().After(l.expiresAt))
+			l.cfg.Logger.Warn("relay state update failed", append(logging.ErrorAttrs(err), "retry_in", delay.String(),
+				"state_expired", !l.expiresAt.IsZero() && l.cfg.Now().After(l.expiresAt))...)
 		case outcome == pollApplied || outcome == pollHeld:
 			// Core holds the next poll until it signs a new state.
 			failures, delay = 0, 0
@@ -286,12 +301,12 @@ func (l *Link) poll(ctx context.Context) (pollOutcome, error) {
 	case http.StatusOK:
 	default:
 		l.cfg.Metrics("bad_status")
-		return pollAnswered, fmt.Errorf("corelink: fetch: status %d", resp.StatusCode)
+		return pollAnswered, statusError{code: "bad_status", status: resp.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, mtrp.MaxDocumentPayload+1024))
 	if err != nil {
 		l.cfg.Metrics("fetch_failed")
-		return pollAnswered, fmt.Errorf("corelink: read: %w", err)
+		return pollAnswered, logging.Code("read_failed", fmt.Errorf("corelink: read: %w", err))
 	}
 	if err := l.apply(body); err != nil {
 		if errors.Is(err, errNotNewer) {
@@ -301,6 +316,9 @@ func (l *Link) poll(ctx context.Context) (pollOutcome, error) {
 			return pollNotNewer, nil
 		}
 		l.cfg.Metrics("rejected")
+		if !errors.Is(err, errStateExpired) {
+			err = logging.Code("state_rejected", err)
+		}
 		return pollAnswered, err
 	}
 	l.etag = resp.Header.Get("ETag")
@@ -323,7 +341,7 @@ func (l *Link) apply(doc []byte) error {
 		return errNotNewer
 	}
 	if !now.Before(state.ExpiresAt) {
-		return fmt.Errorf("corelink: relay state expired at %s", state.ExpiresAt.UTC().Format(time.RFC3339))
+		return logging.Code("state_expired", fmt.Errorf("%w at %s", errStateExpired, state.ExpiresAt.UTC().Format(time.RFC3339)))
 	}
 	keys, err := state.TrustedKeySet(now)
 	if err != nil {
@@ -375,12 +393,12 @@ func (l *Link) PollGrant(ctx context.Context) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		l.cfg.Metrics("grant_bad_status")
-		return fmt.Errorf("corelink: grant fetch: status %d", resp.StatusCode)
+		return statusError{code: "grant_bad_status", status: resp.StatusCode}
 	}
 	sealed, err := io.ReadAll(io.LimitReader(resp.Body, maxSealedGrant+1))
 	if err != nil || len(sealed) > maxSealedGrant {
 		l.cfg.Metrics("grant_fetch_failed")
-		return errors.New("corelink: grant read failed or too large")
+		return logging.Code("grant_read_failed", errors.New("corelink: grant read failed or too large"))
 	}
 	if err := l.applyGrant(sealed); err != nil {
 		if errors.Is(err, errNotNewer) {
@@ -388,7 +406,7 @@ func (l *Link) PollGrant(ctx context.Context) error {
 			return nil
 		}
 		l.cfg.Metrics("grant_rejected")
-		return err
+		return logging.Code("grant_rejected", err)
 	}
 	l.cfg.Metrics("grant_applied")
 	return nil

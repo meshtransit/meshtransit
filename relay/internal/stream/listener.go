@@ -22,6 +22,8 @@ import (
 	"github.com/coder/websocket"
 
 	"meshtransit.net/shared/mtrp"
+
+	"meshtransit.net/relay/internal/logging"
 )
 
 // ALPN identifiers and the WebSocket endpoint.
@@ -167,7 +169,7 @@ func (l *Listener) Serve(ctx context.Context) error {
 			// connections) must not stop the relay: back off and retry.
 			backoff = min(max(2*backoff, 5*time.Millisecond), acceptBackoffMax)
 			l.cfg.Metrics("accept_error")
-			l.cfg.Logger.Warn("stream accept failed", "error", acceptErr, "retry_in", backoff.String())
+			l.cfg.Logger.Warn("stream accept failed", append(logging.ErrorAttrs(acceptErr), "retry_in", backoff.String())...)
 			select {
 			case <-ctx.Done():
 			case <-time.After(backoff):
