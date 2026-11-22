@@ -81,7 +81,7 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 	caddy := string(rendered.Files["Caddyfile"])
 	for _, want := range []string{"mesh.example.com {", "id.mesh.example.com {", "@control path /mtcp/v1* /relay/v1*",
 		"tls_trust_pool file /var/lib/meshtransit/secrets/ca.crt", "email ops@example.com",
-		"@relay path /mtrp/v1", "reverse_proxy https://172.30.0.1:8479", "tls_server_name relay.meshtransit.internal",
+		"@relay path /mtrp/v1", "reverse_proxy https://console.meshtransit.internal:8443 {\n\t\t\trequest_buffers 1MiB", "reverse_proxy https://172.30.0.1:8479", "tls_server_name relay.meshtransit.internal",
 		"http:// {\n\thandle /generate_204 {\n\t\treverse_proxy http://172.30.0.1:8480", "respond 404"} {
 		if !strings.Contains(caddy, want) {
 			t.Errorf("Caddyfile lacks %q", want)

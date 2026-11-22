@@ -312,8 +312,13 @@ func caddyfile(config Config, layout Layout) []byte {
 		upstream(relayTLSAddress, "relay."+internalDomain) + "\n\t}\n")
 	builder.WriteString("\t@register path /register/v1*\n\thandle @register {\n\t\t" +
 		upstream("login."+internalDomain+":9443", config.Domain) + "\n\t}\n")
-	builder.WriteString("\thandle {\n\t\t" + upstream("console."+internalDomain+":8443", "console."+internalDomain) +
-		"\n\t}\n}\n\n")
+	// Caddy buffers a request's body (at most the edge's 1 MiB) before the
+	// Console edge sees it, so a client that sends slowly holds a Caddy read,
+	// not the edge's small body budget (TD-SEC-82).
+	console := strings.Replace(upstream("console."+internalDomain+":8443", "console."+internalDomain),
+		"reverse_proxy https://console."+internalDomain+":8443 {",
+		"reverse_proxy https://console."+internalDomain+":8443 {\n\t\t\trequest_buffers 1MiB", 1)
+	builder.WriteString("\thandle {\n\t\t" + console + "\n\t}\n}\n\n")
 	builder.WriteString(config.IdentityHost() + " {\n\t" +
 		strings.ReplaceAll(upstream("meshcore:9444", config.IdentityHost()), "\n\t\t", "\n\t") + "\n}\n\n")
 	// Clients behind an exit node probe for a captive portal with plain
