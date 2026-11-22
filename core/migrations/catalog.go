@@ -715,6 +715,8 @@ func Catalog() []Migration {
 			kubernetesInstallTokensSQL),
 		newMigration(307, "Kubernetes clusters take install tokens: trust mode, preapproved join keys",
 			kubernetesPreapprovedJoinKeysSQL),
+		newMigration(308, "Kubernetes gateways can be suspended for a contested trust; trust digest and join token use",
+			kubernetesTrustContestGroundworkSQL),
 	}
 }
 
@@ -1415,3 +1417,6 @@ var kubernetesInstallTokensSQL string
 
 //go:embed 000307_kubernetes_preapproved_join_keys.up.sql
 var kubernetesPreapprovedJoinKeysSQL string
+
+//go:embed 000308_kubernetes_trust_contest_groundwork.up.sql
+var kubernetesTrustContestGroundworkSQL string

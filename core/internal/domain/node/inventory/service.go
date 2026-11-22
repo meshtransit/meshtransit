@@ -69,7 +69,8 @@ type Lifecycle struct {
 	// Owner is set for a member Device.
 	Owner Member
 	// SuspendedReason is "admin", "handover" or "member" for a suspended
-	// Device.
+	// Device, or "trust_contested" for a Kubernetes gateway whose cluster's
+	// trust is contested (schema 308).
 	SuspendedReason string
 	// HandoverTo is the member a handover waits for.
 	HandoverTo Member
@@ -93,7 +94,7 @@ func (lifecycle Lifecycle) IsValid(state string) bool {
 		return false
 	}
 	switch lifecycle.SuspendedReason {
-	case "", "admin", "member":
+	case "", "admin", "member", "trust_contested":
 		return lifecycle.HandoverTo == (Member{})
 	case "handover":
 		return lifecycle.HandoverTo.PrincipalID.IsValid()

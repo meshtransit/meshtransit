@@ -684,8 +684,112 @@ FOR EACH ROW EXECUTE FUNCTION mesh_ops.refuse_kubernetes_gateway_reference_v1('d
 	if err := exec(`INSERT INTO kubernetes_guard_probe VALUES (-1, NULL, NULL)`); err == nil {
 		t.Fatal("a guard naming an unknown column let a row through")
 	}
-	if err := exec(`UPDATE mesh.device SET state = 'revoked', version = version + 1 WHERE id = $1`, deviceID); err != nil {
+	assertKubernetesTrustContestGuard(t, exec, deviceID)
+	if err := exec(`UPDATE mesh.device SET state = 'revoked', suspended_reason = NULL, version = version + 1
+WHERE id = $1`, deviceID); err != nil {
 		t.Fatalf("revoking a gateway Device: %v", err)
+	}
+}
+
+// assertKubernetesTrustContestGuard qualifies schema 308: a gateway Device
+// is suspended for a contested trust, and resumed, only by the migrator
+// inside a trust change (any role can set the flag); no other reason or
+// Device kind takes that suspension; a resumed gateway is in its cluster's
+// group again.
+func assertKubernetesTrustContestGuard(t *testing.T, exec func(string, ...any) error, deviceID int64) {
+	t.Helper()
+	trustChange := func(on bool) {
+		t.Helper()
+		value, role := "off", "RESET ROLE"
+		if on {
+			value, role = "on", "SET LOCAL ROLE mesh_migrator"
+		}
+		if err := exec(role); err != nil {
+			t.Fatal(err)
+		}
+		if err := exec(`SELECT pg_catalog.set_config('mesh.kubernetes_trust_change', $1, TRUE)`, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const (
+		contest = `UPDATE mesh.device SET state = 'suspended', suspended_reason = 'trust_contested',
+    version = version + 1 WHERE id = $1`
+		resume  = `UPDATE mesh.device SET state = 'active', suspended_reason = NULL, version = version + 1 WHERE id = $1`
+		inGroup = `SELECT 1/(SELECT pg_catalog.count(*)::INTEGER FROM mesh.device_group_member AS member
+    JOIN mesh.device_group AS device_group ON device_group.id = member.device_group_id
+    JOIN mesh.device AS device ON device.id = member.device_id
+    WHERE member.device_id = $1 AND device_group.kubernetes_cluster_id = device.kubernetes_cluster_id)`
+	)
+	// The gateway's Network scope: a gateway joins or leaves its group only
+	// in it.
+	if err := exec(`SELECT pg_catalog.set_config('mesh.workspace_id', workspace_id::TEXT, TRUE),
+    pg_catalog.set_config('mesh.network_id', network_id::TEXT, TRUE) FROM mesh.device WHERE id = $1`,
+		deviceID); err != nil {
+		t.Fatal(err)
+	}
+	// The cluster's group, as ensure_kubernetes_cluster_policy_group_v1
+	// makes it (the gateway, made above without triggers, is not a member).
+	if err := exec(`INSERT INTO mesh.device_group (public_id, deployment_id, workspace_id, network_id, name, name_key,
+    description, kind, kubernetes_cluster_id, created_at, updated_at)
+SELECT pg_catalog.uuidv7(), workspace.deployment_id, device.workspace_id, device.network_id,
+    'kubernetes-cluster:' || cluster.public_id::TEXT, 'kubernetes-cluster:' || cluster.public_id::TEXT, '',
+    'kubernetes_cluster', cluster.id, pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+FROM mesh.device AS device
+JOIN mesh.workspace AS workspace ON workspace.id = device.workspace_id
+JOIN mesh.kubernetes_cluster AS cluster ON cluster.id = device.kubernetes_cluster_id
+WHERE device.id = $1
+  AND NOT EXISTS (SELECT 1 FROM mesh.device_group AS existing WHERE existing.kubernetes_cluster_id = cluster.id)`,
+		deviceID); err != nil {
+		t.Fatalf("make the cluster's group: %v", err)
+	}
+	if err := exec(contest, deviceID); err == nil {
+		t.Fatal("a gateway Device was suspended for a contested trust outside a trust change")
+	}
+	// The flag alone, set by another role, is not a trust change.
+	if err := exec(`SELECT pg_catalog.set_config('mesh.kubernetes_trust_change', 'on', TRUE)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec(contest, deviceID); err == nil {
+		t.Fatal("a role other than the migrator suspended a gateway Device for a contested trust")
+	}
+	trustChange(true)
+	if err := exec(`UPDATE mesh.device SET state = 'suspended', suspended_reason = 'admin',
+    version = version + 1 WHERE id = $1`, deviceID); err == nil {
+		t.Fatal("a trust change suspended a gateway Device for an administrator")
+	}
+	if err := exec(contest, deviceID); err != nil {
+		t.Fatalf("a trust change suspending a gateway Device: %v", err)
+	}
+	if err := exec(`UPDATE mesh.device SET suspended_reason = 'admin', version = version + 1 WHERE id = $1`,
+		deviceID); err == nil {
+		t.Fatal("a contested gateway Device's suspension turned into an administrator's")
+	}
+	trustChange(false)
+	if err := exec(`SELECT pg_catalog.set_config('mesh.kubernetes_trust_change', 'on', TRUE)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec(resume, deviceID); err == nil {
+		t.Fatal("a contested gateway Device resumed outside the migrator")
+	}
+	trustChange(true)
+	if err := exec(resume, deviceID); err != nil {
+		t.Fatalf("a trust change resuming a gateway Device: %v", err)
+	}
+	trustChange(false)
+	if err := exec(inGroup, deviceID); err != nil {
+		t.Fatalf("a resumed gateway Device is not in its cluster's group: %v", err)
+	}
+	trustChange(true)
+	if err := exec(contest, deviceID); err != nil {
+		t.Fatalf("a trust change suspending a gateway Device again: %v", err)
+	}
+	trustChange(false)
+	// Only a gateway Device takes the reason.
+	if err := exec(`UPDATE mesh.device SET state = 'suspended', suspended_reason = 'trust_contested',
+    version = version + 1
+WHERE id = (SELECT id FROM mesh.device WHERE kind = 'standard' AND state = 'active' AND deleted_at IS NULL
+    AND id <> $1 ORDER BY id LIMIT 1)`, deviceID); err == nil || !strings.Contains(err.Error(), "device_suspension_check") {
+		t.Fatalf("a standard Device suspended for a contested trust: %v", err)
 	}
 }
 

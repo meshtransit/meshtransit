@@ -85,6 +85,10 @@ const (
 	// SuspendedWithMember marks a Device suspended because its owner's
 	// membership is; it resumes with the member.
 	SuspendedWithMember SuspendedReason = "member"
+	// SuspendedTrustContested marks a Kubernetes gateway Device suspended
+	// because its cluster's trust is contested; only an administrator's
+	// choice for that cluster lifts it (schema 308).
+	SuspendedTrustContested SuspendedReason = "trust_contested"
 )
 
 // Change is one validated lifecycle change.

@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/shared/kubejoin"
 )
 
 // assertKubernetesInstallTokens qualifies V1-12 step 1b (schema 307): a
@@ -126,5 +128,60 @@ func assertKubernetesInstallTokens(ctx context.Context, t *testing.T, admin *pgx
 		ClusterID: anchored, Mode: kubecluster.TrustModePrivateTOFU, Version: detail.Cluster.Version(),
 		CorrelationID: newCorrelationID(t)}); !errors.Is(err, kubecluster.ErrTrustAnchored) {
 		t.Fatalf("a cluster with a trust went private_tofu: %v", err)
+	}
+	assertKubernetesTrustHelpers(ctx, t, admin, owner, custom, scope)
+}
+
+// assertKubernetesTrustHelpers qualifies the helpers of schema 308: the SQL
+// cluster trust digest equals kubejoin.ClusterTrustDigest, and a
+// principal's Network permission is read without a session (a binding or
+// the Workspace owner), as the session resolver reads it.
+func assertKubernetesTrustHelpers(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	owner, custom accountsession.Session, scope network.Scope) {
+	t.Helper()
+	jwks, err := kubejoin.ParseJWKS([]byte(fixtureJWKS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := kubejoin.ClusterTrustDigest(kubejoin.Trust{Issuer: fixtureIssuer, JWKS: jwks,
+		Namespace: "mt-kube-k1", ServiceAccount: "meshgw", PodName: "meshgw-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	if err := admin.QueryRow(ctx, `SELECT mesh_ops.kubernetes_cluster_trust_digest_v1($1, $2, $3, $4, $5)`,
+		fixtureIssuer, jwks.Canonical(), "mt-kube-k1", "meshgw", "meshgw").Scan(&got); err != nil ||
+		!bytes.Equal(got, want[:]) {
+		t.Fatalf("SQL cluster trust digest = %x, %v; want %x", got, err, want)
+	}
+
+	holds := func(session accountsession.Session, permission string) bool {
+		t.Helper()
+		var held bool
+		if err := admin.QueryRow(ctx, `SELECT mesh_ops.kubernetes_principal_holds_permission_internal_v1(
+    principal.id, workspace.id, network.id, $4, pg_catalog.clock_timestamp())
+FROM mesh.principal AS principal, mesh.workspace AS workspace
+JOIN mesh.network AS network ON network.workspace_id = workspace.id AND network.public_id = $3::UUID
+WHERE principal.public_id = $1::UUID AND workspace.public_id = $2::UUID`,
+			session.PrincipalID().String(), scope.WorkspaceID().String(), scope.NetworkID().String(),
+			permission).Scan(&held); err != nil {
+			t.Fatalf("holds(%s): %v", permission, err)
+		}
+		return held
+	}
+	if !holds(owner, "kubernetes_cluster.approve") || !holds(owner, "kubernetes_cluster.manage") {
+		t.Fatal("the owner does not hold the cluster permissions")
+	}
+	if holds(custom, "kubernetes_cluster.manage") {
+		t.Fatal("a role without kubernetes_cluster.manage holds it")
+	}
+	var unknown bool
+	if err := admin.QueryRow(ctx, `SELECT mesh_ops.kubernetes_principal_holds_permission_internal_v1(
+    -1, workspace.id, network.id, 'kubernetes_cluster.approve', pg_catalog.clock_timestamp())
+FROM mesh.workspace AS workspace
+JOIN mesh.network AS network ON network.workspace_id = workspace.id AND network.public_id = $2::UUID
+WHERE workspace.public_id = $1::UUID`, scope.WorkspaceID().String(), scope.NetworkID().String()).Scan(&unknown); err != nil ||
+		unknown {
+		t.Fatalf("an unknown principal holds a permission: %v, %v", unknown, err)
 	}
 }
