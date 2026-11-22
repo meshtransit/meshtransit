@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 317 {
-		t.Fatalf("len(Catalog()) = %d, want 317", len(catalog))
+	if len(catalog) != 318 {
+		t.Fatalf("len(Catalog()) = %d, want 318", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 317 {
-		t.Fatalf("LatestVersion() = %d, want 317", LatestVersion())
+	if LatestVersion() != 318 {
+		t.Fatalf("LatestVersion() = %d, want 318", LatestVersion())
 	}
 }
 
@@ -9234,5 +9234,49 @@ func TestMigration317OnlyChangesTheCeiling(t *testing.T) {
 				strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.device_actor_within_ceiling_v1(")) {
 			t.Errorf("schema %d restates a function schema 317 copies", version)
 		}
+	}
+}
+
+// Schema 318 restates both Policy publication functions with the caller's
+// p_activated_at replaced by the transaction's time (TD-SEC-105).
+func TestMigration318OnlyPinsTheActivationTime(t *testing.T) {
+	t.Parallel()
+	sql318 := migrationVersion(t, 318).SQL
+	// From the CREATE: schema 052 first renames the older function.
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "CREATE FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			start = strings.Index(sql, "CREATE OR REPLACE FUNCTION mesh_ops."+name+"(")
+		}
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		start = strings.Index(sql[start:], "FUNCTION") + start
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	for _, function := range []struct {
+		name    string
+		version int64
+	}{{"publish_compiled_policy", 52}, {"publish_compiled_policy_v2", 148}} {
+		original := body(migrationVersion(t, function.version).SQL, function.name)
+		head, rest, _ := strings.Cut(original, "AS $function$")
+		want := head + "AS $function$" + strings.ReplaceAll(rest, "p_activated_at", "pg_catalog.transaction_timestamp()")
+		if body(sql318, function.name) != want {
+			t.Errorf("schema 318 changes %s beyond its activation time", function.name)
+		}
+		for version := function.version + 1; version < 318; version++ {
+			sql := migrationVersion(t, version).SQL
+			if strings.Contains(sql, "CREATE FUNCTION mesh_ops."+function.name+"(") ||
+				strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops."+function.name+"(") ||
+				strings.Contains(sql, "ALTER FUNCTION mesh_ops."+function.name+"(") {
+				t.Errorf("schema %d changes %s after the version 318 copies", version, function.name)
+			}
+		}
+	}
+	if strings.Count(sql318, "CREATE OR REPLACE FUNCTION") != 2 || strings.Count(sql318, "CREATE ") != 2 ||
+		strings.Contains(sql318, "GRANT ") || strings.Contains(sql318, "REVOKE ") ||
+		strings.Contains(sql318, "ALTER ") || strings.Contains(sql318, "DROP ") {
+		t.Error("schema 318 does more than restate two functions")
 	}
 }

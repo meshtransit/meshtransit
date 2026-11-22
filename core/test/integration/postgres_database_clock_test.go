@@ -134,6 +134,9 @@ var databaseClockNowParameters = map[string]string{
 	"transition_resource_group_lifecycle_v1": "p_occurred_at",
 	"rebind_device_resource_v1":              "p_occurred_at",
 	"replace_resource_group_definition_v1":   "p_occurred_at",
+	// Schema 318.
+	"publish_compiled_policy":    "p_activated_at",
+	"publish_compiled_policy_v2": "p_activated_at",
 }
 
 // databaseClockNowFunctions are the functions schema 181 (and later 314, 315, 317)
