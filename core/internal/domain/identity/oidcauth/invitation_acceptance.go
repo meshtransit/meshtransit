@@ -53,27 +53,47 @@ type InvitationAcceptor interface {
 // acceptInvitation runs between the exchange and subject resolution.
 func (service *CallbackService) acceptInvitation(ctx context.Context, exchange ExchangeResult,
 	proof InvitationProof) error {
-	if service.invitations == nil || service.subjectKeys == nil {
+	err := service.tryInvitation(ctx, exchange, proof)
+	if errors.Is(err, ErrInvitationRejected) {
+		refusal := invitationRefusal(err)
+		if service.invitationObserver != nil {
+			service.invitationObserver.InvitationRefused(refusal)
+		}
+		// An old or used link is an ordinary mistake; the others may be
+		// someone trying a link that is not theirs.
+		level := slog.LevelWarn
+		if refusal == InvitationRefusalNotPending || refusal == InvitationRefusalNoVerifiedEmail {
+			level = slog.LevelInfo
+		}
+		service.logger.Log(ctx, level, "invitation link refused", "reason", refusal.String())
 		return ErrInvitationRejected
+	}
+	return err
+}
+
+func (service *CallbackService) tryInvitation(ctx context.Context, exchange ExchangeResult,
+	proof InvitationProof) error {
+	if service.invitations == nil || service.subjectKeys == nil {
+		return RefuseInvitation(InvitationRefusalInvalid)
 	}
 	digests, err := service.subjectKeys.Digests(exchange.claimed.snapshot.Route(), exchange.identity)
 	if err != nil {
-		return ErrInvitationRejected
+		return RefuseInvitation(InvitationRefusalInvalid)
 	}
 	lookup, err := NewSubjectLookup(exchange.claimed, digests)
 	if err != nil {
-		return ErrInvitationRejected
+		return RefuseInvitation(InvitationRefusalInvalid)
 	}
 	// The link names one address. Without an address the provider verified,
 	// this sign-in cannot show it is that person, so the link is not used.
 	email := exchange.identity.Profile().Email()
 	if email == "" {
-		return ErrInvitationRejected
+		return RefuseInvitation(InvitationRefusalNoVerifiedEmail)
 	}
 	acceptance := InvitationAcceptance{Lookup: lookup, Proof: proof, Email: email}
 	if err := service.invitations.AcceptInvitation(ctx, acceptance); err != nil {
 		if errors.Is(err, ErrInvitationRejected) {
-			return ErrInvitationRejected
+			return err
 		}
 		return ErrInvitationUnavailable
 	}

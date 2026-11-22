@@ -213,7 +213,8 @@ func composePrivateIdentity(
 		SessionKeys: keys.sessions, ProviderSessions: keys.providerSessions, Clock: ports.Clock,
 		Observer: callbackMetrics, SubjectObserver: subjectMetrics, IssueObserver: issueMetrics,
 		Invitations: ports.InvitationAcceptor, Signups: ports.AccountSignups,
-		Emails: ports.AccountEmails, EmailObserver: callbackMetrics,
+		Emails: ports.AccountEmails, EmailObserver: callbackMetrics, InvitationObserver: callbackMetrics,
+		Logger: ports.Logger,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

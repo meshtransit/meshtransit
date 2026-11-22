@@ -1,6 +1,7 @@
 package oidcauth
 
 import (
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -46,6 +47,12 @@ type CallbackDependencies struct {
 	// records none. EmailObserver counts those steps and may be nil.
 	Emails        AccountEmailStore
 	EmailObserver AccountEmailObserver
+	// InvitationObserver counts refused invitation links by reason and may
+	// be nil (TD-SEC-37).
+	InvitationObserver InvitationObserver
+	// Logger receives refused invitation links (the reason only); nil logs
+	// nothing.
+	Logger *slog.Logger
 }
 
 // CallbackService owns bounded synchronous composition, not public admission.
@@ -66,6 +73,9 @@ type CallbackService struct {
 	signups       AccountSignupStore
 	emails        AccountEmailStore
 	emailObserver AccountEmailObserver
+	// invitationObserver counts refused invitation links; may be nil.
+	invitationObserver InvitationObserver
+	logger             *slog.Logger
 	// emailTimeout bounds the email step; zero means accountEmailTimeout.
 	emailTimeout time.Duration
 	subjectKeys  *SubjectKeyring
@@ -145,6 +155,8 @@ func NewCallbackService(options CallbackOptions, deps CallbackDependencies) (*Ca
 		verification: verification, claim: claim, exchange: exchange, subject: subject, issue: issue, failure: failure,
 		invitations: deps.Invitations, signups: deps.Signups, subjectKeys: deps.SubjectKeys,
 		emails: nilAccountEmailStore(deps.Emails), emailObserver: nilAccountEmailObserver(deps.EmailObserver),
+		invitationObserver: nilInvitationObserver(deps.InvitationObserver),
+		logger:             callbackLogger(deps.Logger),
 	}, nil
 }
 
@@ -174,4 +186,18 @@ func nilAccountEmailObserver(observer AccountEmailObserver) AccountEmailObserver
 		return nil
 	}
 	return observer
+}
+
+func nilInvitationObserver(observer InvitationObserver) InvitationObserver {
+	if nilCallbackDependency(observer) {
+		return nil
+	}
+	return observer
+}
+
+func callbackLogger(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return logger
 }

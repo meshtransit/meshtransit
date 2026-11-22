@@ -58,3 +58,42 @@ func TestCallbackTelemetryBalancesConcurrentWorkAndBoundsLabels(t *testing.T) {
 		}
 	}
 }
+
+// TD-SEC-37: refused invitation links count under one closed reason label.
+func TestCallbackTelemetryCountsInvitationRefusalsByClosedReason(t *testing.T) {
+	t.Parallel()
+	telemetry := NewCallbackTelemetry()
+	registry := prometheus.NewPedanticRegistry()
+	if err := registry.Register(telemetry); err != nil {
+		t.Fatal(err)
+	}
+	for _, refusal := range []oidcauth.InvitationRefusal{
+		oidcauth.InvitationRefusalInvalid, oidcauth.InvitationRefusalNoVerifiedEmail,
+		oidcauth.InvitationRefusalEmailMismatch, oidcauth.InvitationRefusalNotPending,
+		oidcauth.InvitationRefusalInviterAuthority, oidcauth.InvitationRefusalMemberConflict, 0, 200,
+	} {
+		telemetry.InvitationRefused(refusal)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"invalid": true, "no_verified_email": true, "email_mismatch": true,
+		"not_pending": true, "inviter_authority": true, "member_conflict": true, "unknown": true}
+	seen := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "meshtransit_invitation_refused_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := metric.GetLabel()
+			if len(labels) != 1 || labels[0].GetName() != "reason" || !allowed[labels[0].GetValue()] {
+				t.Fatalf("labels %v", labels)
+			}
+			seen[labels[0].GetValue()] = metric.GetCounter().GetValue()
+		}
+	}
+	if len(seen) != 7 || seen["unknown"] != 2 || seen["email_mismatch"] != 1 {
+		t.Fatalf("refusals %v", seen)
+	}
+}

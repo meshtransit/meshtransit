@@ -13,6 +13,7 @@ type CallbackTelemetry struct {
 	results  *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	emails   *prometheus.CounterVec
+	refusals *prometheus.CounterVec
 }
 
 // NewCallbackTelemetry constructs no-data metrics without I/O or global effects.
@@ -44,7 +45,16 @@ func NewCallbackTelemetry() *CallbackTelemetry {
 		Name: "meshtransit_account_email_record_total",
 		Help: "Verified-email steps at browser sign-in by closed result, without the email or identity.",
 	}, []string{"result"})
-	return &CallbackTelemetry{active: active, results: results, duration: duration, emails: emails}
+	// Dashboard: sum by (reason) (rate(meshtransit_invitation_refused_total[1h]))
+	// Alert (for: 15m): sum(rate(meshtransit_invitation_refused_total{reason="email_mismatch"}[15m])) * 900 > 5
+	//   (someone trying invitation links with other accounts, TD-SEC-37; a provider sending a malformed or
+	//   IDN address counts here too). "invalid" mixes refusals with faults (a missing grant): read it
+	//   with the error logs.
+	refusals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meshtransit_invitation_refused_total",
+		Help: "Invitation links a sign-in could not use, by closed reason, without the link, email or identity.",
+	}, []string{"reason"})
+	return &CallbackTelemetry{active: active, results: results, duration: duration, emails: emails, refusals: refusals}
 }
 
 // CallbackOpened observes owned lifetime without any request data.
@@ -63,12 +73,18 @@ func (telemetry *CallbackTelemetry) AccountEmailStep(outcome oidcauth.AccountEma
 	telemetry.emails.WithLabelValues(outcome.String()).Inc()
 }
 
+// InvitationRefused counts one refused invitation link by its closed reason.
+func (telemetry *CallbackTelemetry) InvitationRefused(refusal oidcauth.InvitationRefusal) {
+	telemetry.refusals.WithLabelValues(refusal.String()).Inc()
+}
+
 // Describe implements the explicit private collector contract.
 func (telemetry *CallbackTelemetry) Describe(descriptions chan<- *prometheus.Desc) {
 	telemetry.active.Describe(descriptions)
 	telemetry.results.Describe(descriptions)
 	telemetry.duration.Describe(descriptions)
 	telemetry.emails.Describe(descriptions)
+	telemetry.refusals.Describe(descriptions)
 }
 
 // Collect emits only fixed names and bounded closed-result labels.
@@ -77,10 +93,12 @@ func (telemetry *CallbackTelemetry) Collect(metrics chan<- prometheus.Metric) {
 	telemetry.results.Collect(metrics)
 	telemetry.duration.Collect(metrics)
 	telemetry.emails.Collect(metrics)
+	telemetry.refusals.Collect(metrics)
 }
 
 var (
 	_ oidcauth.CallbackObserver     = (*CallbackTelemetry)(nil)
 	_ oidcauth.AccountEmailObserver = (*CallbackTelemetry)(nil)
+	_ oidcauth.InvitationObserver   = (*CallbackTelemetry)(nil)
 	_ prometheus.Collector          = (*CallbackTelemetry)(nil)
 )

@@ -43,16 +43,31 @@ type invitationAcceptanceRecord struct {
 	Role              *string `json:"role"`
 }
 
+// invitationAcceptanceError keeps why a link was refused, as a closed reason
+// (TD-SEC-37).
 func invitationAcceptanceError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
-		case "P0002", "MTV05", "MTV06", "MTV07", "MTV08", "42501", "22023", "23505":
-			return oidcauth.ErrInvitationRejected
+		case "MTV06":
+			return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalEmailMismatch)
+		case "MTV07":
+			return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalInviterAuthority)
+		case "MTV05", "MTV08", "23505":
+			// 23505: a concurrent first sign-in or acceptance into the same
+			// Workspace (a second use of one link waits on its lock: P0002).
+			return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalMemberConflict)
+		case "P0002":
+			return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalNotPending)
+		case "42501", "22023":
+			// The sign-in transaction does not match, the identity is
+			// ambiguous or its Account is not active, or a missing grant:
+			// "invalid" mixes faults with refusals (TD-SEC-37).
+			return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalInvalid)
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return oidcauth.ErrInvitationRejected
+		return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalNotPending)
 	}
 	return errors.Join(oidcauth.ErrInvitationUnavailable, err)
 }
@@ -62,7 +77,7 @@ func invitationAcceptanceError(err error) error {
 // is the accepting principal. The sign-in then resolves the subject as usual.
 func (store *InvitationStore) AcceptInvitation(ctx context.Context, acceptance oidcauth.InvitationAcceptance) error {
 	if !acceptance.Lookup.IsValid() || !acceptance.Proof.IsValid() || acceptance.Email == "" {
-		return oidcauth.ErrInvitationRejected
+		return oidcauth.RefuseInvitation(oidcauth.InvitationRefusalInvalid)
 	}
 	changeID, err := publicid.New()
 	if err != nil {
