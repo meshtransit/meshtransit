@@ -75,7 +75,10 @@ var deliveryScripts = scripted("hdel", "hget", "hmget", "hset", "pexpire", "zadd
 // methodNeeds is keyed by Client method name.
 var methodNeeds = map[string]aclNeed{
 	// Process plumbing, shared by every role.
-	"Check":            {commands: []string{"ping"}},
+	"Check": {commands: []string{"ping"}},
+	// The start-up check queues the role's commands in MULTI and DISCARDs
+	// them (acl_selfcheck.go); without EXEC nothing ever runs.
+	"CheckACL":         {commands: []string{"multi", "discard"}},
 	"Component":        {},
 	"MetricsCollector": {},
 	"Close":            {},
@@ -155,7 +158,7 @@ var methodNeeds = map[string]aclNeed{
 }
 
 // sharedMethods are called by every role (health, metrics, shutdown).
-var sharedMethods = []string{"Check", "Component", "MetricsCollector", "Close", "Shutdown"}
+var sharedMethods = []string{"Check", "CheckACL", "Component", "MetricsCollector", "Close", "Shutdown"}
 
 // roleMethods lists, per role, the Client methods its composition calls
 // (cmd/meshcore serve.go and the compose* functions it calls).
@@ -190,7 +193,7 @@ func ACLUser(role string) (string, error) {
 // rootCommands are allowed outside any selector: they name no key (the
 // connection, Pub/Sub on the role's channels).
 var rootCommands = map[string]bool{"hello": true, "auth": true, "ping": true, "publish": true,
-	"subscribe": true, "unsubscribe": true}
+	"subscribe": true, "unsubscribe": true, "multi": true, "discard": true}
 
 // RoleACLRules returns the ACL SETUSER rules of a role, without the user's
 // state or password. The root allows only the commands that name no key

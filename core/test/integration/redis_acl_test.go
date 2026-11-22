@@ -111,6 +111,19 @@ func TestRedisACLRoleUsers(t *testing.T) {
 		open(redisadapter.ACLRoleWorker), open(redisadapter.ACLRoleAll)
 	fixture := newRedisACLFixture(t)
 
+	// The start-up self-check passes for each role's own user, and names
+	// what a user of another role lacks (the api user checked as control).
+	for role, client := range map[string]*redisadapter.Client{redisadapter.ACLRoleAPI: api,
+		redisadapter.ACLRoleControl: control, redisadapter.ACLRoleWorker: worker, redisadapter.ACLRoleAll: all} {
+		if err := client.CheckACL(ctx, role); err != nil {
+			t.Fatalf("%s CheckACL() error = %v", role, err)
+		}
+	}
+	var lacking *redisadapter.ACLMissingError
+	if err := api.CheckACL(ctx, redisadapter.ACLRoleControl); !errors.As(err, &lacking) || len(lacking.Missing) == 0 {
+		t.Fatalf("api user checked as control: CheckACL() error = %v, want the missing list", err)
+	}
+
 	// control
 	fixture.presence(ctx, t, control, true)
 	fixture.gateway(ctx, t, control, true)

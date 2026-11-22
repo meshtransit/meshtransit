@@ -181,6 +181,18 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		// Redis answers, then its user may run what this role needs, whoever
+		// made it (the chart's ACL Job, the installer at a provider, the
+		// provider).
+		if err := waitForDependency(ctx, logger, redisClient,
+			processConfig.Dependencies.CheckTimeout, startupDeadline); err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "redis_unavailable", "error", err)
+			return 1
+		}
+		if code := checkRedisACL(ctx, logger, redisClient, processConfig.Role.String(), startupDeadline,
+			time.Now, sleepContext); code != "" {
+			return 1
+		}
 		checkers = append(checkers, redisClient)
 		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
 	}

@@ -46,6 +46,7 @@ type Options struct {
 // Client is the concrete Redis dependency owned by the composition root.
 type Client struct {
 	ping               func(context.Context) error
+	queueCommands      func(context.Context, [][]any) (map[int]error, error)
 	publish            func(context.Context, string, []byte) error
 	subscribe          func(context.Context, string) (messageSubscription, error)
 	acquirePresence    presenceAcquireFunc
@@ -117,6 +118,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		ping: func(checkCtx context.Context) error {
 			return client.Ping(checkCtx).Err()
 		},
+		queueCommands: queueOnOneConnection(clientOptions),
 		publish: func(publishCtx context.Context, channel string, payload []byte) error {
 			return client.Publish(publishCtx, channel, payload).Err()
 		},
