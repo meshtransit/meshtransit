@@ -88,8 +88,8 @@ func assertKubernetesInstallTokens(ctx context.Context, t *testing.T, admin *pgx
 	}
 	keys := newReplicaKeys(t)
 	ticket, err := store.OpenReplicaRequest(ctx, joinAttempt(t, plain.Presentation, keys))
-	if err != nil {
-		t.Fatalf("OpenReplicaRequest(tofu) = %v", err)
+	if err != nil || ticket.Preapproved {
+		t.Fatalf("OpenReplicaRequest(tofu) = %+v, %v; an ordinary key is no install token", ticket, err)
 	}
 	if _, err := service.Approve(ctx, kubecluster.Decision{Session: owner, Scope: scope, ClusterID: clusterID,
 		RequestID: ticket.Request.ID(), CorrelationID: newCorrelationID(t)}, joinCode(t, ticket, keys)); !errors.Is(err,

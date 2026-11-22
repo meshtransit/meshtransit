@@ -66,6 +66,11 @@ type Metrics struct {
 	// browserCompletions counts approved browser registrations Core tried to
 	// finish, by outcome (TD-CORE-150).
 	browserCompletions *prometheus.CounterVec
+	// installTokenApprovals counts install-token joins Core decided, by
+	// outcome; trustContested the clusters whose trust a join contested
+	// (V1-12 §3.4).
+	installTokenApprovals *prometheus.CounterVec
+	trustContested        prometheus.Counter
 	// siblingProofs counts sibling machine keys of browser sign-ins by
 	// result (duplicate-device design §16).
 	siblingProofs *prometheus.CounterVec
@@ -400,6 +405,14 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_browser_completions_total",
 			Help: "Browser registration completions by outcome: completed and refused per approval, failed per attempt.",
 		}, []string{"outcome"}),
+		installTokenApprovals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_kubernetes_install_token_approvals_total",
+			Help: "Kubernetes gateway joins with an install token by outcome: approved, contested, refused, failed.",
+		}, []string{"outcome"}),
+		trustContested: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_kubernetes_trust_contested_total",
+			Help: "Install-token joins that contested their cluster's trust; an administrator chooses.",
+		}),
 		siblingProofs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_mtcp_sibling_proofs_total",
 			Help: "Sibling machine keys of browser sign-ins by result: valid, invalid proof, dropped (malformed, repeated or own key).",
@@ -417,6 +430,9 @@ func NewMetrics() *Metrics {
 		completionAlreadyInNetwork, completionSiblingConflict,
 	} {
 		metrics.browserCompletions.WithLabelValues(outcome)
+	}
+	for _, outcome := range installTokenOutcomes {
+		metrics.installTokenApprovals.WithLabelValues(outcome)
 	}
 	for _, result := range []string{siblingValid, siblingInvalid, siblingDropped} {
 		metrics.siblingProofs.WithLabelValues(result)
@@ -464,6 +480,7 @@ func (metrics *Metrics) Collectors() []prometheus.Collector {
 		metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
 		metrics.sheds, metrics.unproven, metrics.discoReports, metrics.captiveUntaken, metrics.forwarding, metrics.keyExpiry, metrics.limits, metrics.mapNames,
 		metrics.browserCompletions,
+		metrics.installTokenApprovals, metrics.trustContested,
 		metrics.siblingProofs,
 		metrics.expiring, metrics.routeOffers, metrics.exitOffers, metrics.routeOfferDropped, metrics.routes, metrics.dnsRelayDropped, metrics.kubeClusters, metrics.kubeScopeTablesOversize, metrics.gatewayKeyAudit, metrics.kubeCerts, metrics.kubeCertWait,
 		metrics.kubeAudits, metrics.kubeAuditWait, metrics.kubeAuditReports, metrics.gatewayTokenOffset,
@@ -583,6 +600,27 @@ func (metrics *Metrics) browserCompletion(outcome string) {
 		return
 	}
 	metrics.browserCompletions.WithLabelValues(outcome).Inc()
+}
+
+// Install-token join outcomes.
+const (
+	installTokenApproved  = "approved"
+	installTokenContested = "contested"
+	installTokenRefused   = "refused"
+	installTokenFailed    = "failed"
+)
+
+var installTokenOutcomes = []string{installTokenApproved, installTokenContested, installTokenRefused,
+	installTokenFailed}
+
+func (metrics *Metrics) installTokenDecided(outcome string) {
+	if metrics == nil {
+		return
+	}
+	metrics.installTokenApprovals.WithLabelValues(outcome).Inc()
+	if outcome == installTokenContested {
+		metrics.trustContested.Inc()
+	}
 }
 
 func (metrics *Metrics) limited(limit string) {

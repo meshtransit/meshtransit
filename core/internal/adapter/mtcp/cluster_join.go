@@ -18,11 +18,13 @@ import (
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
-// ClusterJoins opens Kubernetes gateway replicas' requests and completes
-// the approved ones into gateway Devices (kubecluster.JoinStore and
+// ClusterJoins opens Kubernetes gateway replicas' requests, approves those
+// opened with an install token, and completes the approved ones into
+// gateway Devices (kubecluster.JoinStore, kubecluster.PreapprovalStore and
 // kubecluster.JoinCompletionStore).
 type ClusterJoins interface {
 	OpenReplicaRequest(ctx context.Context, attempt kubecluster.JoinAttempt) (kubecluster.JoinTicket, error)
+	Preapprove(ctx context.Context, preapproval kubecluster.Preapproval) (kubecluster.PreapprovalResult, error)
 	CompleteReplicaRequest(ctx context.Context, scope network.Scope, requestID kubecluster.RequestID,
 		identity node.RegistrationIdentity) (kubecluster.Completion, error)
 }
@@ -73,7 +75,7 @@ func (conversation *conversation) registerWithClusterJoin(ctx context.Context, m
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
 			message: "reported must be a JSON object of at most 16 short strings"})
 	}
-	trust, refused := podJoinTrust(join, conversation.application.now())
+	trust, pod, refused := podJoinTrust(join, conversation.application.now())
 	if refused != nil {
 		options.Metrics.limited(limitClusterJoinToken)
 		return conversation.reject(*refused)
@@ -119,6 +121,18 @@ func (conversation *conversation) registerWithClusterJoin(ctx context.Context, m
 			}},
 		})
 	}
+	// A request opened with an install token is decided by Core now; an
+	// ordinary key's waits for an administrator, as before.
+	if ticket.Preapproved && ticket.Request.Lifecycle().State() == kubecluster.RequestPending {
+		decided, refusal, err := conversation.preapprove(ctx, presentation, ticket, pod)
+		if err != nil {
+			return err
+		}
+		if refusal != nil {
+			return conversation.reject(*refusal)
+		}
+		ticket = decided
+	}
 	wait := clusterJoinWait{scope: ticket.Scope, requestID: ticket.Request.ID(), identity: identity}
 	// A request approved or completed before this session asked again
 	// completes now; one still waiting completes when approved.
@@ -151,6 +165,104 @@ func (conversation *conversation) registerWithClusterJoin(ctx context.Context, m
 	}
 	conversation.wait(approval{machine: machine, keys: keys, hostname: hostname, expires: expires, join: &wait})
 	return nil
+}
+
+// preapprove asks Core to approve a waiting request in the name of its
+// install token's maker (V1-12 design §3.3). A request of an ordinary key,
+// or one another session decided, keeps to the usual path. A refusal or a
+// contest ends the join with why; a failure answers INTERNAL (the replica
+// asks again, finding its request).
+func (conversation *conversation) preapprove(ctx context.Context, presentation enrollment.JoinKeyPresentation,
+	ticket kubecluster.JoinTicket, pod kubecluster.PodToken) (kubecluster.JoinTicket, *rejection, error) {
+	options := conversation.application.options
+	// The token was checked on this clock; one that has expired since asks
+	// again with a fresh one (kubelet refreshes it), never INVALID.
+	now := conversation.application.now()
+	if !pod.ExpiresAt.After(now) {
+		options.Metrics.installTokenDecided(installTokenRefused)
+		return ticket, nil, conversation.sendError(mtcpv1.Error_OVERLOADED,
+			"the pod's ServiceAccount token expired; asking again with a fresh one", 5000)
+	}
+	if !pod.IsValidAt(now) {
+		options.Metrics.installTokenDecided(installTokenRefused)
+		return ticket, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
+			message: "the pod's ServiceAccount token names no pod UID or token ID Core can use"}, nil
+	}
+	result, err := options.ClusterJoins.Preapprove(ctx, kubecluster.Preapproval{
+		KeyID: presentation.CredentialID(), RequestID: ticket.Request.ID(), Pod: pod,
+	})
+	switch {
+	case errors.Is(err, kubecluster.ErrNotWaiting):
+		return ticket, nil, nil
+	case errors.Is(err, kubecluster.ErrInvalid):
+		options.Metrics.installTokenDecided(installTokenRefused)
+		return ticket, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: "invalid registration"}, nil
+	case err != nil:
+		// A key revoked or expired since the open is refused as at the open;
+		// anything else answers INTERNAL and the replica asks again.
+		options.Metrics.installTokenDecided(installTokenFailed)
+		return ticket, nil, conversation.joinRefused(ctx, err)
+	}
+	switch result.Outcome {
+	case kubecluster.PreapprovalNotPreapproved:
+		return ticket, nil, nil
+	case kubecluster.PreapprovalApproved:
+		options.Metrics.installTokenDecided(installTokenApproved)
+		ticket.Request = result.Request
+		return ticket, nil, nil
+	case kubecluster.PreapprovalContested:
+		options.Metrics.installTokenDecided(installTokenContested)
+		options.Logger.WarnContext(ctx, "kubernetes cluster trust contested", "cluster_id", ticket.ClusterID.String(),
+			"suspended_devices", len(result.SuspendedDevices), "revoked_tokens", result.RevokedTokens)
+		return ticket, &rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+			message: "the cluster's signing keys differ from those its install token pinned; " +
+				"an administrator chooses which to trust"}, nil
+	default:
+		options.Metrics.installTokenDecided(installTokenRefused)
+		// A token spent already or expired on Core's clock: the pod asks
+		// again once kubelet gave it a fresh one (a restarted container reads
+		// the same token until then).
+		switch result.Reason {
+		case kubecluster.RefusedTokenReplayed:
+			return ticket, nil, conversation.sendError(mtcpv1.Error_OVERLOADED,
+				"the pod's ServiceAccount token was used already; asking again with a fresh one", 60000)
+		case kubecluster.RefusedPodTokenExpired:
+			return ticket, nil, conversation.sendError(mtcpv1.Error_OVERLOADED,
+				"the pod's ServiceAccount token expired; asking again with a fresh one", 5000)
+		}
+		refusal := installTokenRefusal(result.Reason)
+		return ticket, &refusal, nil
+	}
+}
+
+// installTokenRefusal says why Core did not approve an install-token join.
+func installTokenRefusal(reason string) rejection {
+	notPermitted := func(message string) rejection {
+		return rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED, message: message}
+	}
+	switch reason {
+	case kubecluster.RefusedTokenUnusable, kubecluster.RefusedTokenUsed:
+		return rejection{code: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_EXHAUSTED,
+			message: "the install token is revoked, expired or used up"}
+	case kubecluster.RefusedOrdinalUsed:
+		return rejection{code: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_EXHAUSTED,
+			message: "another pod already used the install token for this replica"}
+	case kubecluster.RefusedPodOrdinal:
+		return notPermitted("the pod is not one of the replicas the install token covers")
+	case kubecluster.RefusedPodHeld:
+		return rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
+			message: "a Device or an approval already holds this pod"}
+	case kubecluster.RefusedTrustContested:
+		return notPermitted("the cluster's trust is contested; an administrator chooses which to trust")
+	case kubecluster.RefusedDiffersFromTrust:
+		return notPermitted("the cluster's signing keys differ from those it trusts")
+	case kubecluster.RefusedApprover:
+		return notPermitted("the install token's maker may no longer approve replicas; ask for a new token")
+	case kubecluster.RefusedInstallTokensOff:
+		return notPermitted("the cluster no longer takes install tokens")
+	default:
+		return notPermitted("the join was refused")
+	}
 }
 
 // joinRefused answers a request the store did not open without telling a
@@ -232,9 +344,11 @@ func (conversation *conversation) checkClusterJoin(ctx context.Context, keys pro
 // and keys the pod sent with it, and returns the trust the join code v2
 // binds (K1.1 design §6.2). The administrator's code anchors the keys: a
 // token signed by keys the pod made up only names a request no one approves.
-func podJoinTrust(join *mtcpv1.RegisterRequest_ClusterJoin, now time.Time) (kubecluster.JoinTrust, *rejection) {
-	invalid := func(message string) (kubecluster.JoinTrust, *rejection) {
-		return kubecluster.JoinTrust{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
+func podJoinTrust(join *mtcpv1.RegisterRequest_ClusterJoin, now time.Time) (kubecluster.JoinTrust,
+	kubecluster.PodToken, *rejection) {
+	invalid := func(message string) (kubecluster.JoinTrust, kubecluster.PodToken, *rejection) {
+		return kubecluster.JoinTrust{}, kubecluster.PodToken{},
+			&rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
 	}
 	if join.GetServiceAccountToken() == "" {
 		return invalid("a Kubernetes gateway joins with its pod's ServiceAccount token: upgrade meshgw and " +
@@ -253,7 +367,7 @@ func podJoinTrust(join *mtcpv1.RegisterRequest_ClusterJoin, now time.Time) (kube
 	// whose provider rotates them on its own would stop rotating gateway
 	// keys: only cluster-local issuers join (design §14).
 	if !clusterLocalIssuer(issuer) {
-		return kubecluster.JoinTrust{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+		return kubecluster.JoinTrust{}, kubecluster.PodToken{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
 			message: "only clusters with a cluster-local issuer (kind, kubeadm) join for now; " +
 				"clusters with a public issuer (EKS, GKE, AKS) join once administrators can replace a cluster's keys"}
 	}
@@ -277,7 +391,10 @@ func podJoinTrust(join *mtcpv1.RegisterRequest_ClusterJoin, now time.Time) (kube
 	if err != nil {
 		return invalid("the pod is not a StatefulSet replica")
 	}
-	return trust, nil
+	// What an install-token approval spends: the token once, and the pod's
+	// ordinal for this pod (UID) only.
+	pod := kubecluster.PodToken{PodUID: claims.PodUID, JTI: claims.JTI, ExpiresAt: claims.Expiry}
+	return trust, pod, nil
 }
 
 // clusterLocalIssuer reports whether issuer names a host only the cluster

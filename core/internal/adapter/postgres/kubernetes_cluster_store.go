@@ -996,6 +996,8 @@ FROM mesh_ops.lock_kubernetes_join_key_v1($1::UUID)`
  $11::TEXT,$12::BYTEA,$13::BYTEA[],$14::TEXT,$15::TEXT,$16::TEXT,$17::TEXT,$18::BYTEA,$19::BYTEA)::TEXT`
 )
 
+const kubernetesJoinKeyPreapprovedSQL = `SELECT mesh_ops.kubernetes_join_key_is_preapproved_v1($1::UUID)`
+
 var _ kubecluster.JoinStore = (*KubernetesClusterStore)(nil)
 
 // OpenReplicaRequest resolves the join key's Network, locks the key,
@@ -1069,8 +1071,15 @@ func (store *KubernetesClusterStore) OpenReplicaRequest(ctx context.Context, att
 		if err != nil || nonceErr != nil || len(nonce) != 32 {
 			return false, kubecluster.ErrInvalid
 		}
+		// Schema 310: an install token's requests are Core's to decide.
+		var preapproved bool
+		if err := tx.QueryRow(ctx, kubernetesJoinKeyPreapprovedSQL,
+			attempt.Presentation.CredentialID().String()).Scan(&preapproved); err != nil {
+			return false, kubernetesJoinDatabaseError(err)
+		}
 		ticket = kubecluster.JoinTicket{Request: view, ClusterID: view.ClusterID(), Scope: scope,
-			Nonce: [32]byte(nonce), Created: opened.Created, TrustConflict: opened.TrustConflict}
+			Nonce: [32]byte(nonce), Created: opened.Created, TrustConflict: opened.TrustConflict,
+			Preapproved: preapproved}
 		if !opened.Created {
 			return false, nil
 		}

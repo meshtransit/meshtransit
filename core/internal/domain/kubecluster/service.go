@@ -441,6 +441,9 @@ type JoinTicket struct {
 	// signing material than their request holds: the replica's code cannot
 	// match, and its session answers CONFLICT with the request.
 	TrustConflict bool
+	// Preapproved is true when the key is an install token (V1-12): Core
+	// decides the request itself (PreapprovalStore).
+	Preapproved bool
 }
 
 // JoinStore opens requests for replicas' sessions: it verifies the key's

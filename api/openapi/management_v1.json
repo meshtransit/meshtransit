@@ -5945,7 +5945,8 @@
                               "type": "string",
                               "enum": [
                                 "replica_approval",
-                                "admin_paste"
+                                "admin_paste",
+                                "install_token"
                               ]
                             },
                             "set_at": {
@@ -6214,6 +6215,812 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/trust-mode": {
+      "put": {
+        "operationId": "setKubernetesClusterTrustMode",
+        "summary": "Set how a cluster anchors its first signing keys",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). code: the first replica an administrator approves by its code anchors the keys (K1). private_tofu: the first replica with an install token pins them, unconfirmed until an administrator confirms their digest. Only a cluster that trusts no keys yet changes mode (409 kubernetes_trust_anchored); leaving private_tofu revokes its install tokens.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The trust's version as a strong ETag, \"0\" for none"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "trust_mode"
+                ],
+                "properties": {
+                  "trust_mode": {
+                    "type": "string",
+                    "enum": [
+                      "code",
+                      "private_tofu"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The cluster's trust mode",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "description": "The cluster's new version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "trust_mode",
+                        "revoked_tokens",
+                        "kubernetes_cluster"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "trust_mode": {
+                          "type": "string",
+                          "enum": [
+                            "code",
+                            "private_tofu"
+                          ]
+                        },
+                        "revoked_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "kubernetes_cluster": {
+                          "$ref": "#/components/schemas/KubernetesCluster"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/install-tokens": {
+      "post": {
+        "operationId": "issueKubernetesInstallToken",
+        "summary": "Issue an install token: a join key Core approves replicas with",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve; the cluster must be in private_tofu mode (409 install_tokens_off). The token admits pods <statefulset>-0 to <statefulset>-(replicas-1), one use each, approved in the name of the person who made it while they keep both rights. It lives lifetime_seconds (5 minutes to a day, an hour by default) and is listed, read and revoked with the cluster's join keys.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "replicas"
+                ],
+                "properties": {
+                  "replicas": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5
+                  },
+                  "lifetime_seconds": {
+                    "type": "integer",
+                    "minimum": 300,
+                    "maximum": 86400
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new install token and its secret",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "join_key",
+                        "replicas",
+                        "secret"
+                      ],
+                      "properties": {
+                        "join_key": {
+                          "$ref": "#/components/schemas/KubernetesJoinKey"
+                        },
+                        "replicas": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 5
+                        },
+                        "secret": {
+                          "type": "string",
+                          "pattern": "^mtk1\\.",
+                          "description": "Shown only here; put it in a Kubernetes Secret, never in Helm values"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust/actions/confirm": {
+      "post": {
+        "operationId": "confirmKubernetesSigningTrust",
+        "summary": "Confirm a cluster's install-token trust",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). Confirms the unconfirmed trust whose digest is digest: compare it with what helm test prints first (409 kubernetes_trust_digest_mismatch otherwise; 409 kubernetes_trust_contested when contested).",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The trust's version as a strong ETag, \"0\" for none"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "digest"
+                ],
+                "properties": {
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "The cluster trust digest (meshtransit/kube-cluster-trust/v1) helm test prints, lowercase hex"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the action changed",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "description": "The cluster's new version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "resumed_device_ids",
+                        "revoked_device_ids",
+                        "suspended_device_ids",
+                        "revoked_tokens",
+                        "kubernetes_cluster"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "resumed_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "suspended_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "kubernetes_cluster": {
+                          "$ref": "#/components/schemas/KubernetesCluster"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust/actions/choose": {
+      "post": {
+        "operationId": "chooseKubernetesSigningTrust",
+        "summary": "Choose which signing keys a contested cluster trusts",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). The side of the contest whose digest is digest becomes the confirmed trust; the cluster's gateways approved under it resume and the others are revoked.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The trust's version as a strong ETag, \"0\" for none"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "digest"
+                ],
+                "properties": {
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "The cluster trust digest (meshtransit/kube-cluster-trust/v1) helm test prints, lowercase hex"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the action changed",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "description": "The cluster's new version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "resumed_device_ids",
+                        "revoked_device_ids",
+                        "suspended_device_ids",
+                        "revoked_tokens",
+                        "kubernetes_cluster"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "resumed_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "suspended_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "kubernetes_cluster": {
+                          "$ref": "#/components/schemas/KubernetesCluster"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust/actions/reset": {
+      "post": {
+        "operationId": "resetKubernetesSigningTrust",
+        "summary": "Reset a cluster's install-token trust",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). Removes the install-token trust, revokes the cluster's gateways and install tokens and returns the cluster to code mode. reason holds no secrets or personal data.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The trust's version as a strong ETag, \"0\" for none"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "description": "Why; printable, no surrounding space."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the reset changed",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "description": "The cluster's new version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "changed",
+                        "resumed_device_ids",
+                        "revoked_device_ids",
+                        "suspended_device_ids",
+                        "revoked_tokens",
+                        "kubernetes_cluster"
+                      ],
+                      "properties": {
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "resumed_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "suspended_device_ids": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PublicID"
+                          }
+                        },
+                        "revoked_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "kubernetes_cluster": {
+                          "$ref": "#/components/schemas/KubernetesCluster"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/signing-trust": {
       "get": {
         "operationId": "readKubernetesClusterSigningTrust",
@@ -6381,7 +7188,8 @@
                               "type": "string",
                               "enum": [
                                 "replica_approval",
-                                "admin_paste"
+                                "admin_paste",
+                                "install_token"
                               ]
                             },
                             "set_at": {
@@ -6658,7 +7466,8 @@
                               "type": "string",
                               "enum": [
                                 "replica_approval",
-                                "admin_paste"
+                                "admin_paste",
+                                "install_token"
                               ]
                             },
                             "set_at": {

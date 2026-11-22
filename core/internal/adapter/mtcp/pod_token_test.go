@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -50,9 +51,16 @@ func testPodClaims(now time.Time, pod string) map[string]any {
 		"iat": now.Add(-time.Minute).Unix(), "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(9 * time.Minute).Unix(),
 		"jti": "jti-" + pod,
 		"kubernetes.io": map[string]any{"namespace": "mt-kube-k1",
-			"pod":            map[string]any{"name": pod, "uid": "uid-" + pod},
+			"pod":            map[string]any{"name": pod, "uid": testPodUID(pod)},
 			"serviceaccount": map[string]any{"name": "meshgw", "uid": "sa-uid"}},
 	}
+}
+
+// testPodUID is a pod's UID, a lowercase UUID as Kubernetes makes them,
+// different for every pod name.
+func testPodUID(pod string) string {
+	sum := sha256.Sum256([]byte(pod))
+	return "6a3f1c2e-0000-4000-8000-" + hex.EncodeToString(sum[:6])
 }
 
 // signPodToken signs claims with key as the cluster does (ES256, kid k1).

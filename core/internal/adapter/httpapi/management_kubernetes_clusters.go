@@ -159,6 +159,7 @@ type kubernetesClusterPath struct {
 //	GET|PUT     kubernetes-clusters/{c}/access-settings                    read, replace (K2d d4b)
 //	GET         kubernetes-clusters/{c}/operation-exports                  export (K1d d1d)
 //	GET|POST    kubernetes-clusters/{c}/ca-retire-requests                 list, request (K1d d2a)
+//	PUT|POST    trust-mode, install-tokens, signing-trust/actions/*        V1-12 (routeKubernetesTrust)
 //
 // Only GET of a list takes a query: page_size and page_token (K1d).
 func parseKubernetesClusterPath(request *http.Request) (kubernetesClusterPath, bool) {
@@ -356,7 +357,7 @@ func (path *kubernetesClusterPath) route(rest []string) (map[string]string, bool
 		}
 		return map[string]string{http.MethodPost: operation}, true
 	default:
-		return nil, false
+		return path.routeKubernetesTrust(rest)
 	}
 }
 
@@ -483,6 +484,9 @@ func (handler *ManagementHandler) handleKubernetesClusters(ctx context.Context, 
 	case kubernetesRequestApproveOperation, kubernetesRequestRejectOperation:
 		return handler.decideKubernetesRequest(ctx, response, request, correlationID, path, session, fail)
 	default:
+		if isKubernetesTrustOperation(path.operation) {
+			return handler.serveKubernetesTrust(ctx, response, request, correlationID, path, session, fail)
+		}
 		return fail(*invalidManagementRequest())
 	}
 	return "success"
@@ -914,6 +918,25 @@ func classifyKubernetesClusterError(err error) managementError {
 	case errors.Is(err, kubecluster.ErrPodHeld):
 		return managementError{Status: http.StatusConflict, Code: "replica_pod_held",
 			Message: "Another Device or approval holds this pod; remove it first"}
+	// Schemas 307 and 309 (V1-12): install tokens and their trust.
+	case errors.Is(err, kubecluster.ErrInstallTokensOff):
+		return managementError{Status: http.StatusConflict, Code: "install_tokens_off",
+			Message: "The cluster takes no install tokens; set its trust mode to private_tofu first"}
+	case errors.Is(err, kubecluster.ErrTrustAnchored):
+		return managementError{Status: http.StatusConflict, Code: "kubernetes_trust_anchored",
+			Message: "The cluster already trusts signing keys; reset its trust before changing its mode"}
+	case errors.Is(err, kubecluster.ErrInstallTokenTrust):
+		return managementError{Status: http.StatusConflict, Code: "install_token_trust_only",
+			Message: "Only an install token anchors this cluster's trust; codes and pasted keys are refused"}
+	case errors.Is(err, kubecluster.ErrTrustContested):
+		return managementError{Status: http.StatusConflict, Code: "kubernetes_trust_contested",
+			Message: "The cluster's trust is contested; choose which signing keys to trust first"}
+	case errors.Is(err, kubecluster.ErrTrustDigest):
+		return managementError{Status: http.StatusConflict, Code: "kubernetes_trust_digest_mismatch",
+			Message: "The digest is not the trust's; compare it with helm test again"}
+	case errors.Is(err, kubecluster.ErrNoInstallTokenTrust):
+		return managementError{Status: http.StatusConflict, Code: "no_install_token_trust",
+			Message: "The cluster has no install-token trust in the state this action needs"}
 	case errors.Is(err, kubecluster.ErrInvalid):
 		return *invalidManagementRequest()
 	default:

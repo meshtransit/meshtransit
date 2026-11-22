@@ -17,11 +17,14 @@ const (
 	TrustFromReplicaApproval TrustSource = "replica_approval"
 	// TrustFromAdminPaste: keys an administrator pasted (K1.1b).
 	TrustFromAdminPaste TrustSource = "admin_paste"
+	// TrustFromInstallToken: the first replica an install token admitted
+	// (V1-12, schema 309), unconfirmed until an administrator confirms it.
+	TrustFromInstallToken TrustSource = "install_token"
 )
 
 // IsKnown reports one of the sources above.
 func (source TrustSource) IsKnown() bool {
-	return source == TrustFromReplicaApproval || source == TrustFromAdminPaste
+	return source == TrustFromReplicaApproval || source == TrustFromAdminPaste || source == TrustFromInstallToken
 }
 
 // SigningTrust is a cluster's ServiceAccount signing trust (K1.1 design

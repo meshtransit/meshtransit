@@ -44,6 +44,43 @@ type fakeClusterJoins struct {
 	// trustConflict answers as if the keys held a request with other
 	// signing material.
 	trustConflict bool
+	// preapproval is what Preapprove answers (zero: an ordinary key);
+	// approving moves the request to approved.
+	installToken   bool
+	preapproval    kubecluster.PreapprovalResult
+	preapproveErr  error
+	preapprovals   []kubecluster.Preapproval
+	lastOpenedView kubecluster.ReplicaRequestView
+}
+
+func (joins *fakeClusterJoins) Preapprove(_ context.Context, preapproval kubecluster.Preapproval) (
+	kubecluster.PreapprovalResult, error) {
+	joins.mu.Lock()
+	defer joins.mu.Unlock()
+	joins.preapprovals = append(joins.preapprovals, preapproval)
+	if joins.preapproveErr != nil {
+		return kubecluster.PreapprovalResult{}, joins.preapproveErr
+	}
+	result := joins.preapproval
+	if result.Outcome == "" {
+		result.Outcome = kubecluster.PreapprovalNotPreapproved
+	}
+	result.Request = joins.lastOpenedView
+	if result.Outcome == kubecluster.PreapprovalApproved {
+		joins.openState = kubecluster.RequestApproved
+		view, err := joins.viewLocked(joins.attempts[len(joins.attempts)-1])
+		if err != nil {
+			return kubecluster.PreapprovalResult{}, err
+		}
+		result.Request = view
+	}
+	return result, nil
+}
+
+func (joins *fakeClusterJoins) preapproved() []kubecluster.Preapproval {
+	joins.mu.Lock()
+	defer joins.mu.Unlock()
+	return append([]kubecluster.Preapproval(nil), joins.preapprovals...)
 }
 
 func (joins *fakeClusterJoins) OpenReplicaRequest(_ context.Context, attempt kubecluster.JoinAttempt) (
@@ -54,10 +91,27 @@ func (joins *fakeClusterJoins) OpenReplicaRequest(_ context.Context, attempt kub
 	if joins.openErr != nil {
 		return kubecluster.JoinTicket{}, joins.openErr
 	}
+	view, err := joins.viewLocked(attempt)
+	if err != nil {
+		return kubecluster.JoinTicket{}, err
+	}
+	joins.lastOpenedView = view
+	nonce := attempt.Nonce
+	if joins.trustConflict {
+		// The stored request's nonce, not the one this attempt proposed.
+		nonce = [32]byte{0xee}
+	}
+	return kubecluster.JoinTicket{Request: view, ClusterID: testClusterID, Scope: joins.scope,
+		Nonce: nonce, Created: !joins.trustConflict, TrustConflict: joins.trustConflict,
+		Preapproved: joins.installToken}, nil
+}
+
+// viewLocked is the request of attempt in the state the fake holds.
+func (joins *fakeClusterJoins) viewLocked(attempt kubecluster.JoinAttempt) (kubecluster.ReplicaRequestView, error) {
 	lifecycle, err := kubecluster.NewRequest(kubecluster.RequestParams{State: joins.openState,
 		CreatedAt: joins.expiresAt.Add(-time.Hour), ExpiresAt: joins.expiresAt})
 	if err != nil {
-		return kubecluster.JoinTicket{}, err
+		return kubecluster.ReplicaRequestView{}, err
 	}
 	params := kubecluster.ReplicaRequestParams{ID: attempt.RequestID, ClusterID: testClusterID,
 		KeyID: attempt.Presentation.CredentialID(), MachineFingerprint: hexFingerprint(attempt.MachineKey.Fingerprint()),
@@ -73,17 +127,7 @@ func (joins *fakeClusterJoins) OpenReplicaRequest(_ context.Context, attempt kub
 	if joins.openState == kubecluster.RequestCompleted {
 		params.DeviceID = joins.result.NodeID()
 	}
-	view, err := kubecluster.NewReplicaRequestView(params)
-	if err != nil {
-		return kubecluster.JoinTicket{}, err
-	}
-	nonce := attempt.Nonce
-	if joins.trustConflict {
-		// The stored request's nonce, not the one this attempt proposed.
-		nonce = [32]byte{0xee}
-	}
-	return kubecluster.JoinTicket{Request: view, ClusterID: testClusterID, Scope: joins.scope,
-		Nonce: nonce, Created: !joins.trustConflict, TrustConflict: joins.trustConflict}, nil
+	return kubecluster.NewReplicaRequestView(params)
 }
 
 func (joins *fakeClusterJoins) CompleteReplicaRequest(_ context.Context, scope network.Scope,
@@ -819,5 +863,153 @@ func TestClusterJoinTrustConflictCarriesTheRequest(t *testing.T) {
 		approval.GetRequestId() != "01890f90-0000-7000-8000-0000000000d1" ||
 		string(approval.GetRequestNonce()) != string(nonce[:]) {
 		t.Fatalf("rejected %v", rejected)
+	}
+}
+
+// An install token's request is approved by Core at once: the replica
+// completes without anyone typing a code, and Core spends the pod's token.
+func TestClusterJoinInstallTokenApproves(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+	f.clusterJoins.preapproval = kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalApproved}
+	f.clusterJoins.completed, f.clusterJoins.installToken = true, true
+	f.run()
+	request := f.request(4, clusterJoinAuth(testJoinKey, nil))
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, request); err != nil {
+		t.Fatal(err)
+	}
+	f.expectStream(node.Key(request.GetNodeKey()))
+	if f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetAuthorized() == nil {
+		t.Fatal("an approved install-token join did not authorize")
+	}
+	preapprovals := f.clusterJoins.preapproved()
+	if len(preapprovals) != 1 || preapprovals[0].Pod.PodUID != testPodUID("meshgw-0") ||
+		preapprovals[0].Pod.JTI != "jti-meshgw-0" || !preapprovals[0].Pod.ExpiresAt.After(f.now()) ||
+		preapprovals[0].RequestID.String() != "01890f90-0000-7000-8000-0000000000d1" ||
+		preapprovals[0].KeyID != f.clusterJoins.opened()[0].Presentation.CredentialID() {
+		t.Fatalf("preapprovals %+v", preapprovals)
+	}
+}
+
+// An ordinary key's request still waits for an administrator; Core never
+// asks to approve it.
+func TestClusterJoinOrdinaryKeyStillWaits(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+	f.run()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+		f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetPending() == nil {
+		t.Fatal("an ordinary key's join did not wait")
+	}
+	if len(f.clusterJoins.preapproved()) != 0 {
+		t.Fatal("Core asked to approve an ordinary key's request")
+	}
+}
+
+func TestClusterJoinInstallTokenRefusals(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		result kubecluster.PreapprovalResult
+		err    error
+		want   mtcpv1.RegisterResponse_Rejected_Code
+	}{
+		{name: "contested", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalContested},
+			want: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED},
+		{name: "ordinal used", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalRefused,
+			Reason: kubecluster.RefusedOrdinalUsed}, want: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_EXHAUSTED},
+		{name: "maker lost rights", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalRefused,
+			Reason: kubecluster.RefusedApprover}, want: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED},
+		{name: "differs from trust", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalRefused,
+			Reason: kubecluster.RefusedDiffersFromTrust}, want: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED},
+		{name: "invalid", err: kubecluster.ErrInvalid, want: mtcpv1.RegisterResponse_Rejected_INVALID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+			f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+			f.clusterJoins.preapproval, f.clusterJoins.preapproveErr = test.result, test.err
+			f.clusterJoins.installToken = true
+			f.run()
+			if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+				f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected().
+				GetCode(); got != test.want {
+				t.Fatalf("rejected %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// A request another session decided meanwhile keeps to the usual path.
+func TestClusterJoinPreapprovalNotWaiting(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+	f.clusterJoins.preapproveErr = kubecluster.ErrNotWaiting
+	f.clusterJoins.installToken = true
+	f.run()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+		f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetPending() == nil {
+		t.Fatal("a request decided elsewhere did not keep waiting")
+	}
+}
+
+// A pod token spent already, or a store that fails, is answered so the
+// replica asks again: with a fresh token, or the same request.
+func TestClusterJoinInstallTokenRetries(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		result kubecluster.PreapprovalResult
+		err    error
+		want   mtcpv1.Error_Code
+		retry  bool
+	}{
+		{name: "replayed", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalRefused,
+			Reason: kubecluster.RefusedTokenReplayed}, want: mtcpv1.Error_OVERLOADED, retry: true},
+		{name: "expired on Core", result: kubecluster.PreapprovalResult{Outcome: kubecluster.PreapprovalRefused,
+			Reason: kubecluster.RefusedPodTokenExpired}, want: mtcpv1.Error_OVERLOADED, retry: true},
+		{name: "store unavailable", err: kubecluster.ErrUnavailable, want: mtcpv1.Error_INTERNAL, retry: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+			f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+			f.clusterJoins.preapproval, f.clusterJoins.preapproveErr = test.result, test.err
+			f.clusterJoins.installToken = true
+			f.run()
+			if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+				f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+				t.Fatal(err)
+			}
+			got := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error)
+			if got.GetCode() != test.want || (got.GetRetryAfterMs() > 0) != test.retry {
+				t.Fatalf("error %v", got)
+			}
+		})
+	}
+	// A key revoked since the open is refused as at the open.
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.clusterJoins.expiresAt = f.now().Add(time.Hour)
+	f.clusterJoins.preapproveErr, f.clusterJoins.installToken = kubecluster.ErrKeyNotUsable, true
+	f.run()
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest,
+		f.request(4, clusterJoinAuth(testJoinKey, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.expect(sharedmtcp.MessageRegisterResponse).(*mtcpv1.RegisterResponse).GetRejected().
+		GetCode(); got != mtcpv1.RegisterResponse_Rejected_CREDENTIAL_EXHAUSTED {
+		t.Fatalf("rejected %v", got)
 	}
 }

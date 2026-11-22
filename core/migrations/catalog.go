@@ -719,6 +719,8 @@ func Catalog() []Migration {
 			kubernetesTrustContestGroundworkSQL),
 		newMigration(309, "Kubernetes clusters approve install-token replicas; confirm, choose and reset their trust",
 			kubernetesInstallTokenApprovalSQL),
+		newMigration(310, "A replica's session tells an install token from an ordinary join key",
+			kubernetesJoinKeyPreapprovedSQL),
 	}
 }
 
@@ -1425,3 +1427,6 @@ var kubernetesTrustContestGroundworkSQL string
 
 //go:embed 000309_kubernetes_install_token_approval.up.sql
 var kubernetesInstallTokenApprovalSQL string
+
+//go:embed 000310_kubernetes_join_key_preapproved.up.sql
+var kubernetesJoinKeyPreapprovedSQL string

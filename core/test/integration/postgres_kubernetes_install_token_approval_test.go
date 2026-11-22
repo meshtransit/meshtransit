@@ -70,7 +70,7 @@ func (join installTokenJoin) open(ctx context.Context, t *testing.T, store *post
 	attempt := joinAttempt(t, presentation, join.keys)
 	_, attempt.Trust = join.trust(t)
 	ticket, err := store.OpenReplicaRequest(ctx, attempt)
-	if err != nil || !ticket.Created {
+	if err != nil || !ticket.Created || !ticket.Preapproved {
 		t.Fatalf("OpenReplicaRequest(%s) = %+v, %v", join.pod, ticket, err)
 	}
 	return ticket
@@ -166,6 +166,11 @@ func assertKubernetesInstallTokenApproval(ctx context.Context, t *testing.T, adm
 	assertKubernetesEvent(ctx, t, admin, "kubernetes_cluster", clusterID.String(), "kubernetes_cluster.trust_pinned")
 	digest := first.digest(t)
 	assertTrustRow(ctx, t, admin, clusterID, "unconfirmed", digest)
+	// The cluster's signing read shows the pinned trust and its source.
+	signing, err := service.ReadSigning(ctx, owner, scope, clusterID)
+	if err != nil || signing.Trust == nil || signing.Trust.Source != kubecluster.TrustFromInstallToken {
+		t.Fatalf("ReadSigning() of an install-token cluster = %+v, %v", signing.Trust, err)
+	}
 	completion, err := completions.CompleteReplicaRequest(ctx, firstTicket.Scope, firstTicket.Request.ID(),
 		registrationIdentity(t, first.keys))
 	if err != nil || completion.State != kubecluster.RequestCompleted {
