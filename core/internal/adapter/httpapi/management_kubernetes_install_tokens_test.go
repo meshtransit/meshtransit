@@ -152,7 +152,7 @@ func TestParseKubernetesTrustPaths(t *testing.T) {
 		case kubernetesTrustReadOperation:
 			method = http.MethodGet
 		}
-		request := httptest.NewRequest(method, kubernetesClustersTestPath("/"+kubernetesTestCluster+rest), nil)
+		request := httptest.NewRequestWithContext(t.Context(), method, kubernetesClustersTestPath("/"+kubernetesTestCluster+rest), nil)
 		path, ok := parseKubernetesClusterPath(request)
 		if want == "" {
 			if ok && path.operation != "" {
@@ -164,7 +164,7 @@ func TestParseKubernetesTrustPaths(t *testing.T) {
 			t.Errorf("%s = %q, %t; want %q", rest, path.operation, ok, want)
 		}
 	}
-	put := httptest.NewRequest(http.MethodPut, kubernetesClustersTestPath("/"+kubernetesTestCluster+"/trust-mode"), nil)
+	put := httptest.NewRequestWithContext(t.Context(), http.MethodPut, kubernetesClustersTestPath("/"+kubernetesTestCluster+"/trust-mode"), nil)
 	if !isKubernetesTrustModeWrite(put) {
 		t.Fatal("the trust mode PUT is not a browser write")
 	}

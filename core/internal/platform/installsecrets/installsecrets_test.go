@@ -256,7 +256,7 @@ func TestRedisModes(t *testing.T) {
 		"secrets":{"redis-single":{"existingSecret":"auth","key":"password"}}}`); len(got) != 1 || !got["redis-single"] {
 		t.Errorf("single: redis items %v, want only the installer's redis-single", got)
 	}
-	for name, text := range map[string]string{
+	for name, text := range map[string]string{ //nolint:gosec // plan documents naming Secrets, no secret value
 		"single without its Secret": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"single"}`,
 		"single sharing a place": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"single","secrets":{
 			"redis-single":{"existingSecret":"s","key":"k"},"login-mesh-runtime":{"existingSecret":"s","key":"k"}}}`,

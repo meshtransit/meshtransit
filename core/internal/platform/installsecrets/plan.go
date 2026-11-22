@@ -62,13 +62,13 @@ func redisSingleItem() Item {
 }
 
 const (
-	// RedisACLPerRole: the chart's ACL Job keeps one user per role; the
+	// RedisACLPerRole means the chart's ACL Job keeps one user per role; the
 	// bootstrap makes their passwords (the default).
 	RedisACLPerRole RedisMode = "aclPerRole"
-	// RedisProviderUsers: the installer makes one user per role at the
+	// RedisProviderUsers means the installer makes one user per role at the
 	// provider (ElastiCache RBAC, Terraform) and brings each password.
 	RedisProviderUsers RedisMode = "providerUsers"
-	// RedisSingle: one user for every role (a service with a single AUTH
+	// RedisSingle means one user for every role (a service with a single AUTH
 	// password); the chart mounts the installer's Secret, no role password.
 	RedisSingle RedisMode = "single"
 )

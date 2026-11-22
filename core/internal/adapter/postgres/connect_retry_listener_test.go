@@ -24,7 +24,7 @@ import (
 
 func listen(t *testing.T, serve func(net.Conn)) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func readStartup(connection net.Conn) ([]byte, error) {
 
 func TestConnectErrorsFromRealConnects(t *testing.T) {
 	refused := func() string {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +93,7 @@ func TestConnectErrorsFromRealConnects(t *testing.T) {
 			return
 		}
 		fields := "SFATAL\x00VFATAL\x00C28P01\x00Mpassword authentication failed\x00\x00"
-		message := append([]byte{'E'}, binary.BigEndian.AppendUint32(nil, uint32(4+len(fields)))...)
+		message := append([]byte{'E'}, binary.BigEndian.AppendUint32(nil, uint32(4+len(fields)))...) //nolint:gosec // a short constant message
 		_, _ = connection.Write(append(message, fields...))
 	})
 	certificate := selfSigned(t)
@@ -106,7 +106,7 @@ func TestConnectErrorsFromRealConnects(t *testing.T) {
 			return
 		}
 		server := tls.Server(connection, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
-		_ = server.Handshake()
+		_ = server.HandshakeContext(context.Background())
 	})
 	cases := []struct {
 		name, address, sslmode string

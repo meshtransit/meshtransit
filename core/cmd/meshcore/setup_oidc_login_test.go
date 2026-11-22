@@ -44,7 +44,7 @@ images:
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
 	state := selfhost.State{ConnectorGeneration: 1, CoreClientGeneration: 1}
-	layout := selfhost.Layout{SecretsDir: "/var/lib/meshtransit/secrets", RunDir: "/var/lib/meshtransit/run"}
+	layout := selfhost.Layout{SecretsDir: "/var/lib/meshtransit/secrets", RunDir: "/var/lib/meshtransit/run"} //nolint:gosec // directory paths, no secret
 	settings := selfhost.IdentitySettings(parsed, state, layout)
 	identity, err := config.LoadIdentityFingerprintInput(settingsLookup(settings))
 	if err != nil {

@@ -28,7 +28,7 @@ import (
 const (
 	kubernetesTrustReadOperation     = "kubernetes_cluster_trust_read"
 	kubernetesTrustModeOperation     = "kubernetes_cluster_trust_mode_set"
-	kubernetesInstallTokenOperation  = "kubernetes_install_token_issue"
+	kubernetesInstallTokenOperation  = "kubernetes_install_token_issue" //nolint:gosec // a metric operation name, no secret
 	kubernetesTrustConfirmOperation  = "kubernetes_signing_trust_confirm"
 	kubernetesTrustChooseOperation   = "kubernetes_signing_trust_choose"
 	kubernetesTrustResetOperation    = "kubernetes_signing_trust_reset"
