@@ -731,6 +731,8 @@ func Catalog() []Migration {
 			deviceLifecycleDecisionTimeSQL),
 		newMigration(315, "Policy publication gate decides at the transaction's own time",
 			policyPublicationDecisionTimeSQL),
+		newMigration(316, "Policy approvals and Resource authority decide at the transaction's own time",
+			runtimeWritesDecisionTimeSQL),
 	}
 }
 
@@ -1455,3 +1457,6 @@ var deviceLifecycleDecisionTimeSQL string
 
 //go:embed 000315_policy_publication_decision_time.up.sql
 var policyPublicationDecisionTimeSQL string
+
+//go:embed 000316_runtime_writes_decision_time.up.sql
+var runtimeWritesDecisionTimeSQL string

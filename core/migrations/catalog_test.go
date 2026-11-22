@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 315 {
-		t.Fatalf("len(Catalog()) = %d, want 315", len(catalog))
+	if len(catalog) != 316 {
+		t.Fatalf("len(Catalog()) = %d, want 316", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 315 {
-		t.Fatalf("LatestVersion() = %d, want 315", LatestVersion())
+	if LatestVersion() != 316 {
+		t.Fatalf("LatestVersion() = %d, want 316", LatestVersion())
 	}
 }
 
@@ -9073,5 +9073,76 @@ func TestMigration315OnlyPinsTheDecisionTime(t *testing.T) {
 			strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.consume_policy_approval_for_publication_v1(") {
 			t.Errorf("schema %d restates the gate after the version 315 copies", version)
 		}
+	}
+}
+
+// Schema 316 restates ten runtime write functions with only the caller's
+// p_occurred_at replaced by the transaction's time outside its NULL check
+// (TD-SEC-105), and gives back schema 107's planner settings.
+func TestMigration316OnlyPinsTheDecisionTime(t *testing.T) {
+	t.Parallel()
+	sql316 := migrationVersion(t, 316).SQL
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	const parameter, database = "p_occurred_at", "pg_catalog.transaction_timestamp()"
+	functions := []struct {
+		name    string
+		version int64
+	}{
+		{"create_policy_approval_request_v1", 47}, {"approve_policy_approval_request_v1", 47},
+		{"request_resource_authority_change_v1", 42}, {"confirm_resource_authority_change_v1", 42},
+		{"create_device_resource_v1", 37}, {"create_resource_group_v1", 37},
+		{"transition_resource_lifecycle_v1", 186}, {"transition_resource_group_lifecycle_v1", 39},
+		{"rebind_device_resource_v1", 40}, {"replace_resource_group_definition_v1", 41},
+	}
+	for _, function := range functions {
+		restated := body(sql316, function.name)
+		original := body(migrationVersion(t, function.version).SQL, function.name)
+		head, rest, _ := strings.Cut(original, "AS $function$")
+		want := head + "AS $function$" + strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rest,
+			parameter+" IS NULL", "\x00"), parameter, database), "\x00", parameter+" IS NULL")
+		if restated != want {
+			t.Errorf("schema 316 changes %s beyond its decision time", function.name)
+		}
+		_, restatedBody, _ := strings.Cut(restated, "AS $function$")
+		if strings.Count(restatedBody, parameter) != strings.Count(restatedBody, parameter+" IS NULL") {
+			t.Errorf("%s still reads %s beyond its NULL check", function.name, parameter)
+		}
+		for version := function.version + 1; version < 316; version++ {
+			sql := migrationVersion(t, version).SQL
+			if strings.Contains(sql, "CREATE FUNCTION mesh_ops."+function.name+"(") ||
+				strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops."+function.name+"(") {
+				t.Errorf("schema %d restates %s after the version 316 copies", version, function.name)
+			}
+		}
+	}
+	// Exactly schema 107's two ALTER statements, again.
+	sql107 := migrationVersion(t, 107).SQL
+	for _, name := range []string{"approve_policy_approval_request_v1", "create_policy_approval_request_v1"} {
+		start := strings.Index(sql107, "ALTER FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("schema 107 does not alter %s", name)
+		}
+		statement := sql107[start : strings.Index(sql107[start:], ";")+start+1]
+		if strings.Count(sql316, statement) != 1 {
+			t.Errorf("schema 316 does not set %s's planner settings as schema 107 did", name)
+		}
+		for version := int64(108); version < 316; version++ {
+			if strings.Contains(migrationVersion(t, version).SQL, "ALTER FUNCTION mesh_ops."+name+"(") {
+				t.Errorf("schema %d alters %s after schema 107", version, name)
+			}
+		}
+	}
+	if strings.Count(sql316, "CREATE OR REPLACE FUNCTION") != len(functions) ||
+		strings.Count(sql316, "CREATE ") != len(functions) || strings.Count(sql316, "ALTER FUNCTION") != 2 ||
+		strings.Contains(sql316, "GRANT ") ||
+		strings.Contains(sql316, "REVOKE ") || strings.Contains(sql316, "DROP ") {
+		t.Error("schema 316 does more than restate the functions and their planner settings")
 	}
 }

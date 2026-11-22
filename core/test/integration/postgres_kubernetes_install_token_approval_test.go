@@ -82,7 +82,9 @@ func newPodToken(t *testing.T, uid string) kubecluster.PodToken {
 	if _, err := rand.Read(jti[:]); err != nil {
 		t.Fatal(err)
 	}
-	return kubecluster.PodToken{PodUID: uid, JTI: hex.EncodeToString(jti[:]), ExpiresAt: time.Now().Add(time.Hour)}
+	// Under the function's one-hour cap on the database clock, with room for a
+	// host clock ahead of it (a real projected token lives 600 seconds).
+	return kubecluster.PodToken{PodUID: uid, JTI: hex.EncodeToString(jti[:]), ExpiresAt: time.Now().Add(50 * time.Minute)}
 }
 
 func newPodUID(t *testing.T) string {

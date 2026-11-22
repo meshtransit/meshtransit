@@ -120,9 +120,20 @@ WHERE namespace.nspname = 'mesh_ops' AND function.proname = $1`, function, param
 }
 
 // databaseClockNowParameters are functions moved onto the transaction time
-// whose caller time has another name (schema 315, TD-SEC-105).
+// whose caller time has another name (schemas 315 and 316, TD-SEC-105).
 var databaseClockNowParameters = map[string]string{
 	"consume_policy_approval_for_publication_v1": "p_occurred_at",
+	// Schema 316.
+	"create_policy_approval_request_v1":      "p_occurred_at",
+	"approve_policy_approval_request_v1":     "p_occurred_at",
+	"request_resource_authority_change_v1":   "p_occurred_at",
+	"confirm_resource_authority_change_v1":   "p_occurred_at",
+	"create_device_resource_v1":              "p_occurred_at",
+	"create_resource_group_v1":               "p_occurred_at",
+	"transition_resource_lifecycle_v1":       "p_occurred_at",
+	"transition_resource_group_lifecycle_v1": "p_occurred_at",
+	"rebind_device_resource_v1":              "p_occurred_at",
+	"replace_resource_group_definition_v1":   "p_occurred_at",
 }
 
 // databaseClockNowFunctions are the functions schema 181 (and later 314, 315)
