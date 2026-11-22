@@ -219,7 +219,14 @@ func checkChartWorkload(t *testing.T, check chartCheck) {
 	for _, file := range check.workload.Files {
 		checkChartSecretSource(t, check, file)
 		// The service account token's mount is Kubernetes's, not Core's.
-		if file.Key == "*" || strings.HasPrefix(file.Path, chartServiceAccountMount) {
+		if strings.HasPrefix(file.Path, chartServiceAccountMount) {
+			continue
+		}
+		// A Secret mounted whole (no items): its keys are unknown here, so
+		// it covers every file under its directory.
+		if file.Key == "*" {
+			directory := strings.TrimSuffix(chartLocalPath(t, file.Path, root), "*")
+			written[chartWholeMount+directory] = true
 			continue
 		}
 		path := chartLocalPath(t, file.Path, root)
@@ -281,10 +288,28 @@ func checkChartPaths(t *testing.T, check chartCheck, command string, env map[str
 		}
 	}
 	for _, path := range paths {
-		if !written[strings.Replace(path, chartMountRoot, root, 1)] {
+		if !chartCovered(written, strings.Replace(path, chartMountRoot, root, 1)) {
 			t.Errorf("%s is named but not mounted", path)
 		}
 	}
+}
+
+// chartWholeMount marks, in the written set, the directory of a Secret
+// mounted whole.
+const chartWholeMount = "whole:"
+
+// chartCovered reports whether a file is mounted: written, or under a
+// Secret mounted whole.
+func chartCovered(written map[string]bool, path string) bool {
+	if written[path] {
+		return true
+	}
+	for entry := range written {
+		if directory, ok := strings.CutPrefix(entry, chartWholeMount); ok && strings.HasPrefix(path, directory) {
+			return true
+		}
+	}
+	return false
 }
 
 // chartMountedDirectory reports whether path is a directory holding a
