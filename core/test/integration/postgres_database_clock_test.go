@@ -106,8 +106,8 @@ WHERE namespace.nspname = 'mesh_ops' AND function.proname = ANY($1::TEXT[])
 	}
 }
 
-// databaseClockNowFunctions are the functions schema 181 moved onto the
-// transaction time.
+// databaseClockNowFunctions are the functions schema 181 (and later 314)
+// moved onto the transaction time.
 var databaseClockNowFunctions = []string{
 	"add_network_members_v1", "change_device_group_members_v1", "change_device_group_v1",
 	"change_device_lifecycle_v1", "change_device_tag_v1", "change_device_tag_v2", "change_device_tags_v1",
@@ -116,6 +116,8 @@ var databaseClockNowFunctions = []string{
 	"change_workspace_member_v1", "list_workspace_invitations_v1", "logout_device_v1",
 	"preview_workspace_invitation_v1", "remove_network_member_v1", "remove_workspace_member_v1",
 	"revoke_workspace_member_sessions_v1", "set_network_alias_ranges_v1",
+	// Schema 314 (TD-SEC-98).
+	"extend_device_v1", "set_network_device_lifetime_v1",
 }
 
 // stampShareAheadOfDatabase stands in for a previous binary whose host clock

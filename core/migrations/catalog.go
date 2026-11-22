@@ -727,6 +727,8 @@ func Catalog() []Migration {
 			enrollmentKeyIssuerMembershipSQL),
 		newMigration(313, "Audit retention keeps at least 12 months; Kubernetes operation erasure is an operator's",
 			auditRetentionFloorSQL),
+		newMigration(314, "Device extension and lifetime decide at the transaction's own time",
+			deviceLifecycleDecisionTimeSQL),
 	}
 }
 
@@ -1445,3 +1447,6 @@ var enrollmentKeyIssuerMembershipSQL string
 
 //go:embed 000313_audit_retention_floor.up.sql
 var auditRetentionFloorSQL string
+
+//go:embed 000314_device_lifecycle_decision_time.up.sql
+var deviceLifecycleDecisionTimeSQL string

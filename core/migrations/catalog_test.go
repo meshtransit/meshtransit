@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 313 {
-		t.Fatalf("len(Catalog()) = %d, want 313", len(catalog))
+	if len(catalog) != 314 {
+		t.Fatalf("len(Catalog()) = %d, want 314", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 313 {
-		t.Fatalf("LatestVersion() = %d, want 313", LatestVersion())
+	if LatestVersion() != 314 {
+		t.Fatalf("LatestVersion() = %d, want 314", LatestVersion())
 	}
 }
 
@@ -8973,5 +8973,54 @@ func assertRetentionFloorRestatement(t *testing.T, sql313 string) {
 	if strings.Count(sql313, "CREATE OR REPLACE FUNCTION") != 2 || strings.Count(sql313, "CREATE FUNCTION") != 1 ||
 		strings.Contains(sql313, "GRANT ") {
 		t.Error("schema 313 does more than restate two functions, copy one and revoke grants")
+	}
+}
+
+// Schema 314 restates extend_device_v1 and set_network_device_lifetime_v1
+// with only their permission check moved from the caller's p_evaluated_at onto
+// the transaction's time (TD-SEC-98).
+func TestMigration314OnlyPinsTheDecisionTime(t *testing.T) {
+	t.Parallel()
+	sql314 := migrationVersion(t, 314).SQL
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	for _, function := range []struct {
+		name, permission string
+		version          int64
+	}{{"extend_device_v1", "device.manage", 283}, {"set_network_device_lifetime_v1", "network.update", 179}} {
+		caller := "'" + function.permission + "', p_evaluated_at\n"
+		database := "'" + function.permission + "', pg_catalog.transaction_timestamp()\n"
+		restated := body(sql314, function.name)
+		if strings.Count(restated, database) != 1 ||
+			strings.Replace(restated, database, caller, 1) != body(migrationVersion(t, function.version).SQL, function.name) {
+			t.Errorf("schema 314 changes %s beyond its decision time", function.name)
+		}
+	}
+	if strings.Count(sql314, "CREATE OR REPLACE FUNCTION") != 2 ||
+		strings.Count(sql314, "CREATE ") != 2 || strings.Count(sql314, "$function$;") != 2 {
+		t.Error("schema 314 does more than restate two functions")
+	}
+	for _, statement := range []string{"GRANT ", "REVOKE ", "ALTER ", "DROP ", "DO ", "INSERT ", "UPDATE mesh", "DELETE "} {
+		if outside := strings.Split(sql314, "$function$"); len(outside) == 5 {
+			for i := 0; i < len(outside); i += 2 {
+				if strings.Contains(outside[i], statement) {
+					t.Errorf("schema 314 has %q outside the function bodies", statement)
+				}
+			}
+		}
+	}
+	// No later restatement than the ones it copies.
+	for version := int64(180); version < 314; version++ {
+		sql := migrationVersion(t, version).SQL
+		if strings.Contains(sql, "FUNCTION mesh_ops.extend_device_v1(") && version > 283 ||
+			strings.Contains(sql, "FUNCTION mesh_ops.set_network_device_lifetime_v1(") && version > 179 {
+			t.Errorf("schema %d restates a function after the version 314 copies", version)
+		}
 	}
 }
