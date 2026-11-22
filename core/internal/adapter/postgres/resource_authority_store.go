@@ -334,6 +334,9 @@ func (store *ResourceAuthorityStore) configureAndScope(
 		ctx, setResourceAuthorityScopeSQL,
 		scope.WorkspaceID().String(), scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return time.Time{}, errors.Join(authority.ErrForbidden, err)
+		}
 		return time.Time{}, fmt.Errorf("set exact Network scope: %w", classifyResourceAuthorityDatabaseError(ctx, err))
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {

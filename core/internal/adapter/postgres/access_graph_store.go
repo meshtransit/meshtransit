@@ -98,6 +98,9 @@ func (store *AccessGraphStore) ReadActive(
 		query.Scope().WorkspaceID().String(),
 		query.Scope().NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return accessgraph.Snapshot{}, errors.Join(accessgraph.ErrForbidden, err)
+		}
 		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {

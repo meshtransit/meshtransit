@@ -87,6 +87,9 @@ func (store *ResourceCatalogStore) Begin(
 		ctx, setResourceAuthorityScopeSQL,
 		scope.WorkspaceID().String(), scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return nil, errors.Join(catalog.ErrForbidden, err)
+		}
 		return nil, resourceCatalogDatabaseError(ctx, err)
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {

@@ -91,6 +91,9 @@ func (store *KubernetesClusterStore) transact(ctx context.Context, scope network
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return errors.Join(kubecluster.ErrForbidden, err)
+		}
 		return kubernetesClusterDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

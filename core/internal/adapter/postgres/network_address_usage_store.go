@@ -76,6 +76,9 @@ func (store *NetworkAddressUsageStore) Read(ctx context.Context, session account
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return addressusage.State{}, errors.Join(addressusage.ErrForbidden, err)
+		}
 		return addressusage.State{}, networkAddressUsageError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

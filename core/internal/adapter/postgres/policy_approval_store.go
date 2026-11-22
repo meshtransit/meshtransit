@@ -318,6 +318,9 @@ func (store *PolicyApprovalStore) configureAndScope(
 		scope.WorkspaceID().String(),
 		scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return 0, 0, errors.Join(approval.ErrForbidden, err)
+		}
 		return 0, 0, fmt.Errorf(
 			"set Policy approval Network scope: %w",
 			classifyPolicyApprovalDatabaseError(ctx, err),

@@ -73,6 +73,9 @@ func (store *EnrollmentKeyStore) transact(ctx context.Context, scope network.Sco
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return errors.Join(enrollmentkey.ErrForbidden, err)
+		}
 		return enrollmentKeyDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

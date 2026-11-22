@@ -68,6 +68,9 @@ func (store *DeviceLifecycleStore) transact(ctx context.Context, scope network.S
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return errors.Join(devicelifecycle.ErrForbidden, err)
+		}
 		return deviceLifecycleDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

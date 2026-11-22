@@ -121,6 +121,9 @@ func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, ne
 		var workspaceInternal, networkInternal int64
 		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, workspaceID,
 			networkID.String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+			if unknownNetworkScope(err) {
+				return history.Page{}, errors.Join(history.ErrForbidden, err)
+			}
 			return history.Page{}, auditHistoryError(err)
 		}
 		if workspaceInternal <= 0 || networkInternal <= 0 {

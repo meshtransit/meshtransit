@@ -104,6 +104,9 @@ func (store *DeviceTagStore) begin(ctx context.Context, scope network.Scope) (ac
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return tx, time.Time{}, errors.Join(devicetag.ErrForbidden, err)
+		}
 		return tx, time.Time{}, deviceTagDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

@@ -92,6 +92,9 @@ func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, sessio
 	}
 	var ws, net int64
 	if err := transaction.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(), scope.NetworkID().String()).Scan(&ws, &net); err != nil {
+		if unknownNetworkScope(err) {
+			return catalog.Snapshot{}, errors.Join(simulation.ErrForbidden, err)
+		}
 		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
 	}
 	if ws < 1 || net < 1 {

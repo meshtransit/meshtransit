@@ -117,6 +117,9 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		scope.WorkspaceID().String(),
 		scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return simulation.Baseline{}, errors.Join(simulation.ErrForbidden, err)
+		}
 		return simulation.Baseline{}, policySimulationDatabaseError(ctx, err)
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {

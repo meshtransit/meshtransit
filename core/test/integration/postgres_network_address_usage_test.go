@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -33,6 +34,20 @@ func assertNetworkAddressUsage(ctx context.Context, t *testing.T, admin *pgx.Con
 	state, err := service.Read(ctx, session, scope)
 	if err != nil {
 		t.Fatalf("read address usage: %v", err)
+	}
+	// TD-CORE-143: a Network that does not exist answers like one the
+	// Session may not read, never as a retryable failure.
+	unknownID, err := network.ParseID(mustPublicID(t).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := network.NewScope(scope.WorkspaceID(), unknownID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Read(ctx, session, unknown); !errors.Is(err, addressusage.ErrForbidden) ||
+		errors.Is(err, addressusage.ErrUnavailable) {
+		t.Fatalf("read an unknown Network's address usage: %v, want forbidden", err)
 	}
 	rows, err := admin.Query(ctx, `SELECT prefix.prefix::TEXT,
     CASE WHEN prefix.family = 4 THEN (1::BIGINT << (32 - masklen(prefix.prefix))) - 2

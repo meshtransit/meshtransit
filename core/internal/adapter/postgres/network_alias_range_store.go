@@ -93,6 +93,9 @@ func (store *NetworkAliasRangeStore) begin(ctx context.Context, scope network.Sc
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return tx, time.Time{}, errors.Join(aliasrange.ErrForbidden, err)
+		}
 		return tx, time.Time{}, networkAliasRangeError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

@@ -82,6 +82,9 @@ func (store *ConsoleNetworkSummaryStore) read(ctx context.Context, scope *networ
 		var workspaceInternal, networkInternal int64
 		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 			scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+			if unknownNetworkScope(err) {
+				return nil, errors.Join(networksummary.ErrReadForbidden, err)
+			}
 			return nil, consoleSummaryError(err)
 		}
 		if workspaceInternal <= 0 || networkInternal <= 0 {

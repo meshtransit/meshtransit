@@ -99,6 +99,9 @@ func (store *IdentityGroupStore) begin(ctx context.Context, scope network.Scope)
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return tx, time.Time{}, errors.Join(identitygroup.ErrForbidden, err)
+		}
 		return tx, time.Time{}, identityGroupDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {

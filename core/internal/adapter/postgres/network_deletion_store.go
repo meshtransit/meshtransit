@@ -51,10 +51,7 @@ func networkDeletionDatabaseError(err error) error {
 		switch pgError.Code {
 		case "42501":
 			return deletion.ErrForbidden
-		case "23503":
-			// set_network_scope: no such Network in the Workspace.
-			return deletion.ErrNotFound
-		case "P0002":
+		case "23503", "P0002":
 			return deletion.ErrNotFound
 		case "40001":
 			return deletion.ErrVersionConflict
@@ -69,7 +66,12 @@ func networkDeletionDatabaseError(err error) error {
 }
 
 // transact runs one exact-Network transaction and commits only when run asks.
-func (store *NetworkDeletionStore) transact(ctx context.Context, scope network.Scope,
+// unknown is the answer for a Workspace and Network pair that does not exist:
+// the one the operation gives for a Network the caller may not see, so the
+// Network's existence does not leak to another tenant (TD-CORE-143). The
+// read answers a Network outside the caller's Workspaces as not found, the
+// deletion as forbidden.
+func (store *NetworkDeletionStore) transact(ctx context.Context, scope network.Scope, unknown error,
 	run func(tx accountSessionTransaction, now time.Time) (bool, error)) (resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) {
 		return deletion.ErrInvalid
@@ -91,6 +93,9 @@ func (store *NetworkDeletionStore) transact(ctx context.Context, scope network.S
 	var workspaceInternal, networkInternal int64
 	if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, scope.WorkspaceID().String(),
 		scope.NetworkID().String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if unknownNetworkScope(err) {
+			return errors.Join(unknown, err)
+		}
 		return networkDeletionDatabaseError(err)
 	}
 	if workspaceInternal <= 0 || networkInternal <= 0 {
@@ -237,7 +242,7 @@ func (store *NetworkDeletionStore) Delete(ctx context.Context, command deletion.
 	}
 	scope := command.Scope
 	var outcome deletion.Outcome
-	err = store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
+	err = store.transact(ctx, scope, deletion.ErrForbidden, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, deleteNetworkSQL, append(sessionQueryArguments(command.Session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), command.ExpectedVersion, command.Reason,
@@ -340,7 +345,7 @@ func (store *NetworkDeletionStore) Read(ctx context.Context, session accountsess
 		return deletion.View{}, deletion.ErrInvalid
 	}
 	var view deletion.View
-	err := store.transact(ctx, scope, func(tx accountSessionTransaction, now time.Time) (bool, error) {
+	err := store.transact(ctx, scope, deletion.ErrNotFound, func(tx accountSessionTransaction, now time.Time) (bool, error) {
 		var encoded string
 		if err := tx.QueryRow(ctx, readNetworkSQL, append(sessionQueryArguments(session),
 			scope.WorkspaceID().String(), scope.NetworkID().String(), now)...).Scan(&encoded); err != nil {

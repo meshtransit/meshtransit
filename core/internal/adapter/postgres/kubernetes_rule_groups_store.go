@@ -280,7 +280,9 @@ func (groups *KubernetesClusterPolicyGroupStore) ReadPolicyKubernetesAccess(ctx 
 		}
 		return false, nil
 	})
-	if errors.Is(err, compilation.ErrForbidden) {
+	// The cluster store answers a Network it cannot scope (TD-CORE-143) as
+	// kubecluster.ErrForbidden: the same refusal as a reader without access.
+	if errors.Is(err, compilation.ErrForbidden) || errors.Is(err, kubecluster.ErrForbidden) {
 		return compilation.ReleasedKubernetesAccess{}, compilation.ErrForbidden
 	}
 	if err != nil {

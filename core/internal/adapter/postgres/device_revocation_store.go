@@ -252,6 +252,9 @@ func (store *DeviceRevocationStore) configureAndScope(
 		scope.WorkspaceID().String(),
 		scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return 0, 0, errors.Join(revocation.ErrForbidden, err)
+		}
 		return 0, 0, fmt.Errorf(
 			"set exact Network scope: %w",
 			classifyDeviceRevocationDatabaseError(ctx, err),

@@ -78,6 +78,25 @@ func assertPostgreSQLNetworkDeletion(ctx context.Context, t *testing.T, admin *p
 	if _, err := deletions.Delete(ctx, command(member, created.Version)); !errors.Is(err, deletion.ErrForbidden) {
 		t.Fatalf("member without network.delete: %v", err)
 	}
+	// TD-CORE-143: a Network that does not exist answers as one outside
+	// the caller's Workspaces does: not found to a read, forbidden to a
+	// deletion (delete_network_v1 refuses a scope it cannot see as such).
+	unknownID, err := network.ParseID(mustPublicID(t).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := network.NewScope(workspaceID, unknownID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deletions.Read(ctx, owner, unknown); !errors.Is(err, deletion.ErrNotFound) {
+		t.Fatalf("read an unknown Network: %v, want not found", err)
+	}
+	unknownCommand := command(owner, created.Version)
+	unknownCommand.Scope = unknown
+	if _, err := deletions.Delete(ctx, unknownCommand); !errors.Is(err, deletion.ErrForbidden) {
+		t.Fatalf("delete an unknown Network: %v, want forbidden", err)
+	}
 	if _, err := deletions.Delete(ctx, command(owner, created.Version+1)); !errors.Is(err, deletion.ErrVersionConflict) {
 		t.Fatalf("stale version: %v", err)
 	}

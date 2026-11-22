@@ -100,6 +100,9 @@ func (store *AccessGraphStore) readGraphOnce(
 		query.Scope().WorkspaceID().String(),
 		query.Scope().NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return accessgraph.GraphPage{}, errors.Join(accessgraph.ErrForbidden, err)
+		}
 		return accessgraph.GraphPage{}, accessGraphListingError(ctx, err)
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 {

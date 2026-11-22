@@ -261,6 +261,9 @@ func setResourceSharingScope(
 		scope.WorkspaceID().String(),
 		scope.NetworkID().String(),
 	).Scan(&workspaceInternalID, &networkInternalID); err != nil {
+		if unknownNetworkScope(err) {
+			return resourceSharingNetworkState{}, errors.Join(sharing.ErrForbidden, err)
+		}
 		return resourceSharingNetworkState{}, resourceSharingDatabaseError(ctx, err)
 	}
 	return readResourceSharingNetworkState(
