@@ -163,6 +163,12 @@ func kubernetesClusterDatabaseError(err error) error {
 			return kubecluster.ErrInstallTokenTrust
 		case "MTK53":
 			return kubecluster.ErrTrustContested
+		// Schema 309: the digest is not the trust's; no install-token trust
+		// in that state.
+		case "MTK54":
+			return kubecluster.ErrTrustDigest
+		case "MTK55":
+			return kubecluster.ErrNoInstallTokenTrust
 		case "MTK43":
 			return kubecluster.ErrNotRatcheted
 		case "MTK44":
