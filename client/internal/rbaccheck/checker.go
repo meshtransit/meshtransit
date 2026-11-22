@@ -25,9 +25,11 @@ const parallelReviews = 8
 var ErrUnauthorized = errors.New("rbaccheck: the API server refused the token")
 
 // Reviewer asks the API server whether the token's subject may do what
-// attributes say (a SelfSubjectAccessReview).
+// attributes say (a SelfSubjectAccessReview), and what it may do in a
+// namespace (a SelfSubjectRulesReview, for rights given by name).
 type Reviewer interface {
 	Review(ctx context.Context, token string, attributes Attributes) (bool, error)
+	RulesReviewer
 }
 
 // Tokens hands out a token of a group's account, and forgets one the API
@@ -335,7 +337,20 @@ func (checker *Checker) check(ctx context.Context, group Group, probe, made stri
 	if held != nil {
 		return Verdict{Reason: "may " + held.String(), Code: CodeRBACExceeds}, nil
 	}
-	return Verdict{Enabled: true}, nil
+	// Rights over named objects in a guarded namespace (TD-CLI-84).
+	named, incomplete, err := checker.heldByName(ctx, group.Name, &token)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if named != "" {
+		return Verdict{Reason: "may " + named, Code: CodeRBACExceeds}, nil
+	}
+	verdict := Verdict{Enabled: true}
+	if len(incomplete) > 0 {
+		verdict.Reason = "rights by name not proven absent in " + strings.Join(incomplete, ", ") +
+			": the API server could not list every rule there"
+	}
+	return verdict, nil
 }
 
 // firstHeld returns the first right, in order, the group holds, or nil,

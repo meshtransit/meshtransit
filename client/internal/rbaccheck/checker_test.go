@@ -14,8 +14,18 @@ import (
 type fakeReviewer struct {
 	mu      sync.Mutex
 	allow   map[string]func(Attributes) bool // by group
+	rules   map[string]RulesAnswer           // by group and namespace, "group/namespace"
 	fail    error
 	reviews int
+}
+
+func (reviewer *fakeReviewer) RulesReview(_ context.Context, token, namespace string) (RulesAnswer, error) {
+	reviewer.mu.Lock()
+	defer reviewer.mu.Unlock()
+	if reviewer.fail != nil {
+		return RulesAnswer{}, reviewer.fail
+	}
+	return reviewer.rules[strings.TrimPrefix(token, "token-")+"/"+namespace], nil
 }
 
 func (reviewer *fakeReviewer) Review(_ context.Context, token string, attributes Attributes) (bool, error) {
@@ -300,6 +310,13 @@ func (tokens *countingTokens) Forget(string, string) {
 
 type refusingReviewer struct{}
 
+func (refusingReviewer) RulesReview(_ context.Context, token, _ string) (RulesAnswer, error) {
+	if strings.HasPrefix(token, "stale-") {
+		return RulesAnswer{}, ErrUnauthorized
+	}
+	return RulesAnswer{}, nil
+}
+
 func (refusingReviewer) Review(_ context.Context, token string, _ Attributes) (bool, error) {
 	if strings.HasPrefix(token, "stale-") {
 		return false, ErrUnauthorized
@@ -532,6 +549,10 @@ func TestCheckerFindsAHeldRightBesideAFailure(t *testing.T) {
 // chunkReviewer allows "list secrets in the cluster" and fails the right
 // after it, in the same chunk.
 type chunkReviewer struct{}
+
+func (chunkReviewer) RulesReview(context.Context, string, string) (RulesAnswer, error) {
+	return RulesAnswer{}, nil
+}
 
 func (chunkReviewer) Review(_ context.Context, _ string, attributes Attributes) (bool, error) {
 	switch {
