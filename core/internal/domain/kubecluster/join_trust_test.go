@@ -55,7 +55,9 @@ func TestNewJoinTrust(t *testing.T) {
 		t.Fatalf("NewJoinTrust() error = %v", err)
 	}
 	digest, _ := kubejoin.TrustDigest(podTrust(t, jwks, "meshgw-3"))
-	if !trust.IsValid() || trust.Digest() != digest || trust.StatefulSet() != "meshgw" ||
+	clusterDigest, _ := kubejoin.ClusterTrustDigest(podTrust(t, jwks, "meshgw-0"))
+	if !trust.IsValid() || trust.Digest() != digest || trust.ClusterDigest() != clusterDigest ||
+		trust.StatefulSet() != "meshgw" ||
 		trust.PodName() != "meshgw-3" || trust.JoinKeyThumbprint() != signer.Thumbprint ||
 		len(trust.KeyThumbprints()) != 2 || string(trust.JWKS()) != string(jwks.Canonical()) ||
 		trust.Issuer() != "https://kubernetes.default.svc.cluster.local" || trust.Namespace() != "mt-kube-k1" ||

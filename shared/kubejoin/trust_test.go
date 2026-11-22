@@ -622,3 +622,66 @@ func TestKubernetesKeyID(t *testing.T) {
 
 // kindJWKS is the JWKS kind meshgw-a served on 2026-10-27.
 const kindJWKS = `{"keys":[{"use":"sig","kty":"RSA","kid":"W5g6JhuNGLKpWbGKkY1h_vyNJWNV3OHpeiEJLThDJhE","alg":"RS256","n":"ulb6f8XOFK8q2EKPjPXlwDQuMhPTiee6zlEDZu0twbQecr0w7uG6Vqghhovln3lwCtJdM_eHsWfgmd6I-HdaFUv738BlNvEZXanR9d5mSBmnIDtIUTpwrNOVTuskzBOMceJf86g7QwfL_ixA8xaavgt27B5dqZJcM34ORUy6O2qcm18keFqKhMoQ_FPnFS1xZmEPTw3VzBLpOAaI6sTh0-LBTtszztX-F6GYSw3bZenJUVQ9CHAPr4AtJRrRA0lpZj__gCz9CpajdNfJY712HzBv6tMb8ElqO3DaEr2ka40yqIug9wkMmlLg85MrMhtOZViuZq0hf_SAPFipqjVQKw","e":"AQAB"}]}`
+
+// The cluster trust digest names the StatefulSet, not the pod: every
+// replica of one install has the same one (V1-12 design §3.3).
+func TestClusterTrustDigestIsTheSameForEveryReplica(t *testing.T) {
+	t.Parallel()
+	first, err := ClusterTrustDigest(vectorTrust(t))
+	if err != nil {
+		t.Fatalf("ClusterTrustDigest() error = %v", err)
+	}
+	other := vectorTrust(t)
+	other.PodName = "meshgw-4"
+	second, err := ClusterTrustDigest(other)
+	if err != nil || second != first {
+		t.Fatalf("ClusterTrustDigest(meshgw-4) = %x, %v; want %x", second, err, first)
+	}
+	replica, err := TrustDigest(vectorTrust(t))
+	if err != nil || replica == first {
+		t.Fatalf("the cluster digest equals the join code's (%x): another label must keep them apart", first)
+	}
+}
+
+func TestClusterTrustDigestBindsEveryInput(t *testing.T) {
+	t.Parallel()
+	base, err := ClusterTrustDigest(vectorTrust(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecJSON, _ := ecKeyJSON(t, "ec")
+	kubernetesKeys := strings.TrimSuffix(strings.TrimPrefix(string(kubernetesJWKS()), `{"keys":[`), `]}`)
+	for name, change := range map[string]func(*Trust){
+		"issuer":          func(trust *Trust) { trust.Issuer += "/x" },
+		"other JWKS":      func(trust *Trust) { trust.JWKS = mustParseJWKS(t, []byte(`{"keys":[`+ecJSON+`]}`)) },
+		"one key more":    func(trust *Trust) { trust.JWKS = mustParseJWKS(t, []byte(`{"keys":[`+kubernetesKeys+`,`+ecJSON+`]}`)) },
+		"namespace":       func(trust *Trust) { trust.Namespace = "mt-kube-k2" },
+		"service account": func(trust *Trust) { trust.ServiceAccount = "meshgw2" },
+		"statefulset":     func(trust *Trust) { trust.PodName = "gateway-1" },
+		"boundary":        func(trust *Trust) { trust.Namespace, trust.ServiceAccount = "mt-kube-k1m", "eshgw" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			trust := vectorTrust(t)
+			change(&trust)
+			digest, err := ClusterTrustDigest(trust)
+			if err != nil || digest == base {
+				t.Fatalf("ClusterTrustDigest() = %x, %v; want a different digest", digest, err)
+			}
+		})
+	}
+}
+
+// The vector was computed independently, with Python's hashlib and struct
+// over the canonical JWKS bytes.
+func TestClusterTrustDigestVector(t *testing.T) {
+	t.Parallel()
+	digest, err := ClusterTrustDigest(vectorTrust(t))
+	if err != nil {
+		t.Fatalf("ClusterTrustDigest() error = %v", err)
+	}
+	if got := hex.EncodeToString(digest[:]); got !=
+		"8981fcf3aa7c75f6496a5df0e760ebf1298e0e98ffb196b7563c7cb748429ed2" {
+		t.Fatalf("ClusterTrustDigest() = %s", got)
+	}
+}

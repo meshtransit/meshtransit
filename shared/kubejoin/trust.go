@@ -52,14 +52,16 @@ const (
 	// AlgorithmES256 is ECDSA on P-256 with SHA-256.
 	AlgorithmES256 = "ES256"
 
-	trustLabel   = "meshtransit/kube-sa-trust/v1"
-	labelV2      = "meshtransit/kube-join-code/v2"
-	maxKeyID     = 128
-	minRSABits   = 2048
-	maxRSABits   = 4096
-	ecCoordSize  = 32
-	maxLabel     = 63
-	maxSubdomain = 253
+	trustLabel = "meshtransit/kube-sa-trust/v1"
+	// clusterTrustLabel keeps ClusterTrustDigest apart from TrustDigest.
+	clusterTrustLabel = "meshtransit/kube-cluster-trust/v1"
+	labelV2           = "meshtransit/kube-join-code/v2"
+	maxKeyID          = 128
+	minRSABits        = 2048
+	maxRSABits        = 4096
+	ecCoordSize       = 32
+	maxLabel          = 63
+	maxSubdomain      = 253
 )
 
 // rsaExponent is 65537, the only public exponent accepted.
@@ -482,6 +484,34 @@ func TrustDigest(trust Trust) ([32]byte, error) {
 	writeU16(hash, trust.Namespace)
 	writeU16(hash, trust.ServiceAccount)
 	writeU16(hash, trust.PodName)
+	return [32]byte(hash.Sum(nil)), nil
+}
+
+// ClusterTrustDigest is a cluster's install-token trust identity (V1-12
+// design §3.3): SHA-256 over its own label, the issuer, the canonical JWKS
+// (sorted by key ID: any key more or less changes it), the namespace, the
+// ServiceAccount and the StatefulSet of trust.PodName, each length
+// big-endian before its bytes. Every replica of one install has the same
+// digest; Core compares trusts by it while one is unconfirmed, and the
+// helm test and kubectl check print it for an administrator to confirm.
+func ClusterTrustDigest(trust Trust) ([32]byte, error) {
+	if trust.JWKS.IsZero() || len(trust.JWKS.canonical) > MaxJWKSSize || !ValidIssuer(trust.Issuer) ||
+		!ValidNamespace(trust.Namespace) || !ValidName(trust.ServiceAccount) || !ValidName(trust.PodName) {
+		return [32]byte{}, ErrInvalidTrust
+	}
+	statefulSet, ok := StatefulSetOf(trust.PodName)
+	if !ok {
+		return [32]byte{}, ErrInvalidTrust
+	}
+	hash := sha256.New()
+	hash.Write([]byte(clusterTrustLabel))
+	hash.Write([]byte{0})
+	writeU16(hash, trust.Issuer)
+	hash.Write(binary.BigEndian.AppendUint32(nil, uint32(len(trust.JWKS.canonical)))) //nolint:gosec // G115: at most MaxJWKSSize
+	hash.Write(trust.JWKS.canonical)
+	writeU16(hash, trust.Namespace)
+	writeU16(hash, trust.ServiceAccount)
+	writeU16(hash, statefulSet)
 	return [32]byte(hash.Sum(nil)), nil
 }
 

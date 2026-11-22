@@ -36,12 +36,17 @@ type JoinTrust struct {
 	podName           string
 	joinKeyThumbprint [32]byte
 	digest            [32]byte
+	clusterDigest     [32]byte
 }
 
 // NewJoinTrust takes trust whose token Core verified with the key whose
 // thumbprint is joinKeyThumbprint, one of trust's keys.
 func NewJoinTrust(trust kubejoin.Trust, joinKeyThumbprint [32]byte) (JoinTrust, error) {
 	digest, err := kubejoin.TrustDigest(trust)
+	if err != nil {
+		return JoinTrust{}, ErrInvalid
+	}
+	clusterDigest, err := kubejoin.ClusterTrustDigest(trust)
 	if err != nil {
 		return JoinTrust{}, ErrInvalid
 	}
@@ -61,6 +66,7 @@ func NewJoinTrust(trust kubejoin.Trust, joinKeyThumbprint [32]byte) (JoinTrust, 
 		issuer: trust.Issuer, jwks: trust.JWKS.Canonical(), keyThumbprints: thumbprints,
 		namespace: trust.Namespace, serviceAccount: trust.ServiceAccount, statefulSet: statefulSet,
 		podName: trust.PodName, joinKeyThumbprint: joinKeyThumbprint, digest: digest,
+		clusterDigest: clusterDigest,
 	}, nil
 }
 
@@ -94,3 +100,8 @@ func (trust JoinTrust) JoinKeyThumbprint() [32]byte { return trust.joinKeyThumbp
 
 // Digest returns the trust digest the join code v2 binds.
 func (trust JoinTrust) Digest() [32]byte { return trust.digest }
+
+// ClusterDigest returns the cluster trust digest (kubejoin.ClusterTrustDigest):
+// the same for every replica of one install, compared while an install-token
+// trust is unconfirmed (V1-12 design §3.3).
+func (trust JoinTrust) ClusterDigest() [32]byte { return trust.clusterDigest }

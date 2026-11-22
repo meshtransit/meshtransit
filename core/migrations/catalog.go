@@ -711,6 +711,8 @@ func Catalog() []Migration {
 		newMigration(303, "A refused browser sign-in ends at once", endRefusedBrowserIntentSQL),
 		newMigration(304, "The member directory names email and join time", memberDirectoryEmailSQL),
 		newMigration(305, "A new Account's Workspace is named Default", signupWorkspaceDefaultSQL),
+		newMigration(306, "Kubernetes clusters: trust mode, install tokens, signing trust state and digest",
+			kubernetesInstallTokensSQL),
 	}
 }
 
@@ -1405,3 +1407,6 @@ var memberDirectoryEmailSQL string
 
 //go:embed 000305_signup_workspace_default.up.sql
 var signupWorkspaceDefaultSQL string
+
+//go:embed 000306_kubernetes_install_tokens.up.sql
+var kubernetesInstallTokensSQL string
