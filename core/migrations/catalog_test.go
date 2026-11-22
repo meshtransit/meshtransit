@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 314 {
-		t.Fatalf("len(Catalog()) = %d, want 314", len(catalog))
+	if len(catalog) != 315 {
+		t.Fatalf("len(Catalog()) = %d, want 315", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 314 {
-		t.Fatalf("LatestVersion() = %d, want 314", LatestVersion())
+	if LatestVersion() != 315 {
+		t.Fatalf("LatestVersion() = %d, want 315", LatestVersion())
 	}
 }
 
@@ -9021,6 +9021,57 @@ func TestMigration314OnlyPinsTheDecisionTime(t *testing.T) {
 		if strings.Contains(sql, "FUNCTION mesh_ops.extend_device_v1(") && version > 283 ||
 			strings.Contains(sql, "FUNCTION mesh_ops.set_network_device_lifetime_v1(") && version > 179 {
 			t.Errorf("schema %d restates a function after the version 314 copies", version)
+		}
+	}
+}
+
+// Schema 315 restates the Policy publication gate with only the caller's
+// times replaced by the transaction's, outside their NULL checks
+// (TD-SEC-105), and gives the lock function back schema 107's planner settings.
+func TestMigration315OnlyPinsTheDecisionTime(t *testing.T) {
+	t.Parallel()
+	sql315 := migrationVersion(t, 315).SQL
+	sql048 := migrationVersion(t, 48).SQL
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	const database = "pg_catalog.transaction_timestamp()"
+	for _, function := range []struct{ name, parameter string }{
+		{"lock_policy_approval_for_publication_v1", "p_evaluated_at"},
+		{"consume_policy_approval_for_publication_v1", "p_occurred_at"},
+	} {
+		restated := body(sql315, function.name)
+		original := body(sql048, function.name)
+		head, rest, _ := strings.Cut(original, "AS $function$")
+		want := head + "AS $function$" + strings.ReplaceAll(
+			strings.ReplaceAll(strings.ReplaceAll(rest, function.parameter+" IS NULL", "\x00"),
+				function.parameter, database), "\x00", function.parameter+" IS NULL")
+		if restated != want {
+			t.Errorf("schema 315 changes %s beyond its decision time", function.name)
+		}
+		_, restatedBody, _ := strings.Cut(restated, "AS $function$")
+		if strings.Count(restatedBody, function.parameter) != 1 ||
+			strings.Count(restatedBody, function.parameter+" IS NULL") != 1 {
+			t.Errorf("%s still reads %s beyond its NULL check", function.name, function.parameter)
+		}
+	}
+	if strings.Count(sql315, "CREATE OR REPLACE FUNCTION") != 2 || strings.Count(sql315, "CREATE ") != 2 ||
+		strings.Contains(sql315, "GRANT ") || strings.Contains(sql315, "REVOKE ") || strings.Contains(sql315, "DROP ") ||
+		strings.Count(sql315, "ALTER FUNCTION") != 1 ||
+		!strings.Contains(sql315, "ALTER FUNCTION mesh_ops.lock_policy_approval_for_publication_v1(uuid, timestamp with time zone)\n"+
+			"    SET join_collapse_limit = 1 SET from_collapse_limit = 1 SET plan_cache_mode = force_generic_plan;") {
+		t.Error("schema 315 does more than restate the gate and its planner settings")
+	}
+	for version := int64(49); version < 315; version++ {
+		sql := migrationVersion(t, version).SQL
+		if strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.lock_policy_approval_for_publication_v1(") ||
+			strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.consume_policy_approval_for_publication_v1(") {
+			t.Errorf("schema %d restates the gate after the version 315 copies", version)
 		}
 	}
 }

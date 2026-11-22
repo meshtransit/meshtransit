@@ -729,6 +729,8 @@ func Catalog() []Migration {
 			auditRetentionFloorSQL),
 		newMigration(314, "Device extension and lifetime decide at the transaction's own time",
 			deviceLifecycleDecisionTimeSQL),
+		newMigration(315, "Policy publication gate decides at the transaction's own time",
+			policyPublicationDecisionTimeSQL),
 	}
 }
 
@@ -1450,3 +1452,6 @@ var auditRetentionFloorSQL string
 
 //go:embed 000314_device_lifecycle_decision_time.up.sql
 var deviceLifecycleDecisionTimeSQL string
+
+//go:embed 000315_policy_publication_decision_time.up.sql
+var policyPublicationDecisionTimeSQL string

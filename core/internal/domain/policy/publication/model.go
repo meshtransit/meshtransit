@@ -294,7 +294,8 @@ func (change Change) Resolution() Resolution { return change.resolution }
 // MutationIDs returns the stable durable identities for this change.
 func (change Change) MutationIDs() MutationIDs { return change.mutationIDs }
 
-// OccurredAt returns the stable decision time shared across retries.
+// OccurredAt returns this attempt's decision time: its transaction's database time
+// (each retry opens a new transaction and reads it again).
 func (change Change) OccurredAt() time.Time { return change.occurredAt }
 
 // IsValid reports whether all atomic publication facts agree.

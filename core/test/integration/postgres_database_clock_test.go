@@ -104,9 +104,28 @@ WHERE namespace.nspname = 'mesh_ops' AND function.proname = ANY($1::TEXT[])
 	if len(leftovers) != 0 {
 		t.Fatalf("functions still read the caller's time: %v", leftovers)
 	}
+	for function, parameter := range databaseClockNowParameters {
+		var reads bool
+		if err := admin.QueryRow(ctx, `SELECT pg_catalog.regexp_count(function.prosrc, $2) <>
+       pg_catalog.regexp_count(function.prosrc, $2 || ' IS NULL')
+FROM pg_catalog.pg_proc AS function
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = function.pronamespace
+WHERE namespace.nspname = 'mesh_ops' AND function.proname = $1`, function, parameter).Scan(&reads); err != nil {
+			t.Fatalf("read %s: %v", function, err)
+		}
+		if reads {
+			t.Fatalf("%s still reads the caller's %s", function, parameter)
+		}
+	}
 }
 
-// databaseClockNowFunctions are the functions schema 181 (and later 314)
+// databaseClockNowParameters are functions moved onto the transaction time
+// whose caller time has another name (schema 315, TD-SEC-105).
+var databaseClockNowParameters = map[string]string{
+	"consume_policy_approval_for_publication_v1": "p_occurred_at",
+}
+
+// databaseClockNowFunctions are the functions schema 181 (and later 314, 315)
 // moved onto the transaction time.
 var databaseClockNowFunctions = []string{
 	"add_network_members_v1", "change_device_group_members_v1", "change_device_group_v1",
@@ -118,6 +137,8 @@ var databaseClockNowFunctions = []string{
 	"revoke_workspace_member_sessions_v1", "set_network_alias_ranges_v1",
 	// Schema 314 (TD-SEC-98).
 	"extend_device_v1", "set_network_device_lifetime_v1",
+	// Schema 315 (TD-SEC-105).
+	"lock_policy_approval_for_publication_v1",
 }
 
 // stampShareAheadOfDatabase stands in for a previous binary whose host clock
