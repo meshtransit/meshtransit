@@ -229,8 +229,12 @@ func assertPostgreSQLKubernetesClusters(ctx context.Context, t *testing.T, admin
 
 	// An enrollment key's ID and secret, presented as a join key, open nothing.
 	enrollmentKeys := newIntegrationEnrollmentKeyService(t, runtimePool)
+	// Schema 312: only a Network member issues enrollment keys.
+	restoreMembership := keepNetwork203Membership(ctx, t, admin, owner)
+	setNetwork203Membership(ctx, t, admin, owner, "active")
 	enrollmentKey, err := enrollmentKeys.Issue(ctx, owner, enrollmentkey.IssueRequest{Scope: scope,
 		DeviceLifetime: enrollment.NeverExpiringDeviceLifetime(), CorrelationID: newCorrelationID(t)})
+	restoreMembership()
 	if err != nil {
 		t.Fatalf("issue an enrollment key: %v", err)
 	}

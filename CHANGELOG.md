@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- core (schema 312, TD-API-50): an enrollment key's creator must be an active
+  member of its Network, to create the key (`403 network_membership_required`)
+  and when the key is used: while the creator's Network or Workspace membership
+  is suspended or expired, the key is refused like a revoked one (intake writes
+  no pending registration; the client gets "the enrollment key is not valid").
+  The key list still shows such keys as active. Keys a non-member administrator
+  created before this change stop working.
 - core + meshd (schema 290, sign-in moves the machine): when a person approves
   a browser sign-in for a Network other than the one where the machine already
   is their own member Device, Core revokes that Device (reason `moved`, like

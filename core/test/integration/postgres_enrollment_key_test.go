@@ -70,6 +70,9 @@ func assertPostgreSQLEnrollmentKeys(ctx context.Context, t *testing.T, admin *pg
 	}
 	revokeAdmin := seedEnrollmentKeyRole(ctx, t, admin, confirmer, 1991, "admin")
 	owner := confirmer
+	// Schema 312: the issuer must be a Network member; the rest runs as one.
+	defer keepNetwork203Membership(ctx, t, admin, owner)()
+	assertEnrollmentKeyIssuerMustBeMember(ctx, t, admin, runtimePool, service, owner, members.scope)
 	issued, err := service.Issue(ctx, owner, enrollmentkey.IssueRequest{
 		Scope: members.scope, Description: "build server",
 		DeviceLifetime: enrollment.NeverExpiringDeviceLifetime(), CorrelationID: newCorrelationID(t),

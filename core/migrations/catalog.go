@@ -723,6 +723,8 @@ func Catalog() []Migration {
 			kubernetesJoinKeyPreapprovedSQL),
 		newMigration(311, "Read a Kubernetes cluster's trust mode, trust state and digests, and install tokens",
 			kubernetesClusterTrustReadSQL),
+		newMigration(312, "An enrollment key's issuer must be a member of its Network to issue and to use it",
+			enrollmentKeyIssuerMembershipSQL),
 	}
 }
 
@@ -1435,3 +1437,6 @@ var kubernetesJoinKeyPreapprovedSQL string
 
 //go:embed 000311_kubernetes_cluster_trust_read.up.sql
 var kubernetesClusterTrustReadSQL string
+
+//go:embed 000312_enrollment_key_issuer_membership.up.sql
+var enrollmentKeyIssuerMembershipSQL string

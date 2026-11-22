@@ -52,9 +52,10 @@ does not count.
 
 An enrollment key lets a machine register without a browser, for servers,
 routers and automation. A person with `enrollment_credential.issue` (the
-owner, `admin`, `it_admin`) creates one for a Network in the Console or with
-`POST …/networks/{network}/enrollment-keys`, and chooses two
-lifetimes separately:
+owner, `admin`, `it_admin`) who is an active member of the Network creates one
+for it in the Console or with `POST …/networks/{network}/enrollment-keys`
+(`403 network_membership_required` otherwise: the Devices a key enrolls are its
+creator's), and chooses two lifetimes separately:
 
 - **how long the key can be used**: 5 minutes to 30 days, 24 hours by
   default;
@@ -78,7 +79,9 @@ A key:
   with its state (`active`, `used`, `expired`, `revoked`), the Device lifetime
   chosen and the Device it enrolled, never with its secret.
 
-A Network has at most 100 usable keys. The Device a key enrolls belongs to
+A key whose creator is no longer an active member of the Network (suspended,
+expired) is refused at use like a revoked key, although the list still shows it
+as active and it counts toward the limit. A Network has at most 100 usable keys. The Device a key enrolls belongs to
 the person who created the key and is an ordinary Device from then on: the
 key expiring does not affect it. Creating, using and
 revoking a key are each recorded in the Network's activity log, with the

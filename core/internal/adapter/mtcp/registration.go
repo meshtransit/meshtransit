@@ -234,7 +234,12 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 // check failed or anything about other tenants.
 func (conversation *conversation) registrationFailed(ctx context.Context, err error) error {
 	switch {
-	case errors.Is(err, intake.ErrAuthenticationFailed):
+	case errors.Is(err, intake.ErrAuthenticationFailed),
+		// The key stopped being usable between intake and completion (revoked,
+		// expired, spent, or its issuer left the Network, schema 312):
+		// retrying cannot help.
+		errors.Is(err, enrollment.ErrCredentialInactive), errors.Is(err, enrollment.ErrCredentialExpired),
+		errors.Is(err, enrollment.ErrCredentialExhausted):
 		return conversation.reject(rejection{
 			code:    mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID,
 			message: "the enrollment key is not valid",

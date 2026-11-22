@@ -263,6 +263,9 @@ func newEnrollmentKeyBody(key enrollmentkey.Key) enrollmentKeyBody {
 
 func classifyEnrollmentKeyError(err error) managementError {
 	switch {
+	case errors.Is(err, enrollmentkey.ErrNotMember):
+		return managementError{Status: http.StatusForbidden, Code: "network_membership_required",
+			Message: "Join this Network to create enrollment keys in it: the Devices a key enrolls are yours"}
 	case errors.Is(err, enrollmentkey.ErrForbidden):
 		return managementError{Status: http.StatusForbidden, Code: "permission_denied",
 			Message: "You cannot manage enrollment keys in this Network"}

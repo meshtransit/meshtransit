@@ -2465,7 +2465,7 @@
       "post": {
         "operationId": "createEnrollmentKey",
         "summary": "Create an enrollment key",
-        "description": "Requires enrollment_credential.issue (the owner, admin or it_admin). Creates a key that enrolls exactly one Device into the Network. The key is usable for key_lifetime_seconds (24 hours by default); the Device it enrolls lives device_lifetime_seconds from registration, or never expires. The Device belongs to the caller. A Network has at most 100 usable keys. Recorded as enrollment_key.created. Creation is not idempotent: when the outcome is uncertain, list the keys and revoke one you cannot use rather than retrying blindly.",
+        "description": "Requires enrollment_credential.issue (the owner, admin or it_admin) and that the caller is an active member of the Network (403 network_membership_required otherwise). Creates a key that enrolls exactly one Device into the Network. The key is usable for key_lifetime_seconds (24 hours by default); the Device it enrolls lives device_lifetime_seconds from registration, or never expires. The Device belongs to the caller. A Network has at most 100 usable keys. Recorded as enrollment_key.created. Creation is not idempotent: when the outcome is uncertain, list the keys and revoke one you cannot use rather than retrying blindly.",
         "security": [
           {
             "accountSessionBearer": []

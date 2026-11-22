@@ -13,6 +13,7 @@ package enrollmentkey
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -37,6 +38,10 @@ var (
 	// ErrUsed reports a key that already enrolled its Device: the Device is
 	// managed from then on, not the key.
 	ErrUsed = errors.New("enrollment key: used")
+	// ErrNotMember reports an issuer who may issue keys but is not an active
+	// member of the Network: a key's Devices are its issuer's (schema 312).
+	// It is an ErrForbidden.
+	ErrNotMember = fmt.Errorf("%w: the issuer is not a member of the Network", ErrForbidden)
 	// ErrLimitReached reports a Network with MaximumActiveKeys usable keys.
 	ErrLimitReached = errors.New("enrollment key: too many usable keys")
 	// ErrUnavailable reports a dependency failure.

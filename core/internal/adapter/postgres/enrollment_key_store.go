@@ -93,6 +93,8 @@ func enrollmentKeyDatabaseError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
+		case "MTE04":
+			return enrollmentkey.ErrNotMember
 		case "42501", "23503":
 			return enrollmentkey.ErrForbidden
 		case "P0002":
