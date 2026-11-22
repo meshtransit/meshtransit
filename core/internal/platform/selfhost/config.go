@@ -51,15 +51,9 @@ type Images struct {
 	Relay   string `yaml:"relay"`
 }
 
-// Login is the upstream sign-in provider the identity broker federates.
-type Login struct {
-	Provider         string `yaml:"provider"`
-	ClientID         string `yaml:"client_id"`
-	ClientSecretFile string `yaml:"client_secret_file"`
-}
-
-// FirstAdmin is the Account bootstrap creates, by its provider subject (Core
-// never links an Account by email alone).
+// FirstAdmin is the Account bootstrap creates, by its provider subject (the
+// upstream "sub" claim; setup encodes it as the broker's subject). Core never
+// links an Account by email alone.
 type FirstAdmin struct {
 	Subject     string `yaml:"subject"`
 	DisplayName string `yaml:"display_name"`
@@ -171,9 +165,6 @@ func (config Config) validate() error {
 		{"identity_host", config.IdentityName == "" || validHostName(config.IdentityName)},
 		{"identity_host", !strings.EqualFold(config.IdentityHost(), config.Domain)},
 		{"acme_email", config.ACMEEmail == "" || emailAddress.MatchString(config.ACMEEmail)},
-		{"login.provider", config.Login.Provider == "google"},
-		{"login.client_id", validValue(config.Login.ClientID, 1, 256) && safeEnvValue(config.Login.ClientID)},
-		{"login.client_secret_file", validPath(config.Login.ClientSecretFile)},
 		{"first_admin.subject", validValue(config.FirstAdmin.Subject, 1, 255)},
 		{"first_admin.display_name", validValue(config.FirstAdmin.DisplayName, 1, 128)},
 		{"first_admin.workspace", validValue(config.FirstAdmin.Workspace, 1, 64)},
@@ -187,6 +178,12 @@ func (config Config) validate() error {
 		if !check.ok {
 			return invalid(check.field)
 		}
+	}
+	if err := config.Login.validate(); err != nil {
+		return err
+	}
+	if _, err := config.firstAdminSubject(); err != nil {
+		return err
 	}
 	if config.Mail != nil {
 		if err := config.Mail.validate(); err != nil {

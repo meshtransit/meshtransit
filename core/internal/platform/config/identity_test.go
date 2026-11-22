@@ -166,7 +166,7 @@ func TestLoadIdentityRejectsUnsafeSettingsWithoutEchoingValues(t *testing.T) {
 		{name: "connector display whitespace", key: envIdentityOIDCConnectorDisplayName, value: " Google"},
 		{name: "connector generation zero", key: envIdentityOIDCConnectorGeneration, value: "0"},
 		{name: "connector generation signed", key: envIdentityOIDCConnectorGeneration, value: "+1"},
-		{name: "non-google phase one issuer", key: envIdentityOIDCConnectorIssuer, value: "https://login.example.test"},
+		{name: "non-google issuer without endpoints", key: envIdentityOIDCConnectorIssuer, value: "https://login.example.test"},
 		{name: "connector client id whitespace", key: envIdentityOIDCConnectorClientID, value: "google client"},
 		{name: "relative connector secret", key: envIdentityOIDCConnectorClientSecretFile, value: "google-secret"},
 		{name: "core client id uppercase", key: envIdentityCoreClientID, value: "MeshTransit"},

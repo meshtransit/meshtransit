@@ -3,13 +3,17 @@
 package dexbroker
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"path"
 	"slices"
@@ -25,6 +29,11 @@ const (
 	minimumClientSecretBytes       = 32
 	maximumStaticConnectors        = 16
 	maximumStaticClients           = 16
+	// connectorOptionsDomain names the V1-22 connector options in the
+	// fingerprint; a connector without options adds nothing.
+	connectorOptionsDomain  = "meshtransit/identity-oidc-connector-options/v1\x00"
+	maximumConnectorCABytes = 64 * 1024
+	maximumPrivateNetworks  = 8
 )
 
 var errInvalidConfiguration = errors.New("invalid dex broker immutable configuration")
@@ -41,7 +50,64 @@ type OIDCConnectorOptions struct {
 	Endpoints        OIDCProviderEndpoints
 	ClientID         string
 	ClientSecretFile config.SecretFile
+
+	// The options below came with generic OIDC (V1-22). Their zero values
+	// are the Google connector's behaviour before them and add nothing to
+	// the fingerprint, so an approved Google configuration stays approved.
+
+	// Prompt is what the authorization URL asks of the upstream provider.
+	Prompt ConnectorPrompt
+	// NameClaim is the claim Dex names the person by (Dex userNameKey);
+	// empty: "name".
+	NameClaim string
+	// EmailMode says whether a missing email_verified claim may pass.
+	EmailMode EmailMode
+	// TokenAuth pins how the client authenticates at the token endpoint;
+	// empty: Dex tries Basic, then the request body.
+	TokenAuth TokenAuth
+	// CAFile adds a private CA to the system roots for this provider; never
+	// a way to skip verification.
+	CAFile config.TrustFile
+	// PrivateNetworks are the private ranges the provider may be reached in;
+	// metadata, loopback, link-local and tunnelled addresses stay refused.
+	PrivateNetworks []netip.Prefix
 }
+
+// ConnectorPrompt is the prompt the broker puts on the upstream
+// authorization URL.
+type ConnectorPrompt string
+
+// Upstream prompts.
+const (
+	// PromptSelectAccount (the zero value) shows the account chooser.
+	PromptSelectAccount ConnectorPrompt = ""
+	// PromptLogin asks the person to sign in again.
+	PromptLogin ConnectorPrompt = "login"
+	// PromptOmit adds no prompt: an upstream SSO session signs in silently.
+	PromptOmit ConnectorPrompt = "omit"
+)
+
+// EmailMode is how far the broker trusts the provider's email claim.
+type EmailMode string
+
+// Email modes.
+const (
+	// EmailRequired (the zero value): the token must say email_verified.
+	EmailRequired EmailMode = ""
+	// EmailAssume treats a token without email_verified as verified (a
+	// single-tenant provider that never sends it, such as Entra).
+	EmailAssume EmailMode = "assume"
+)
+
+// TokenAuth is the token endpoint client authentication.
+type TokenAuth string
+
+// Token endpoint authentications.
+const (
+	TokenAuthProbe TokenAuth = ""
+	TokenAuthBasic TokenAuth = "basic"
+	TokenAuthPost  TokenAuth = "post"
+)
 
 // OIDCProviderEndpoints pins the discovery result used by one connector.
 // The issuer discovery document is still fetched and issuer-validated, while
@@ -52,6 +118,10 @@ type OIDCProviderEndpoints struct {
 	AuthorizationURL string
 	TokenURL         string
 	JWKSURL          string
+	// UserInfoURL, when set, has Dex read the userinfo endpoint. Dex reads
+	// it from discovery, so it must equal the discovery document's; the
+	// broker only allows the call.
+	UserInfoURL string
 }
 
 // ClientOptions is a product-owned confidential broker client contract.
@@ -80,6 +150,19 @@ type componentOIDCConnector struct {
 	endpoints    OIDCProviderEndpoints
 	clientID     string
 	clientSecret string
+	prompt       ConnectorPrompt
+	nameClaim    string
+	emailMode    EmailMode
+	tokenAuth    TokenAuth
+	caPEM        []byte
+	privateNets  []netip.Prefix
+}
+
+// hasOptions reports options beyond the pre-V1-22 Google connector.
+func (connector componentOIDCConnector) hasOptions() bool {
+	return connector.prompt != PromptSelectAccount || connector.nameClaim != "" ||
+		connector.emailMode != EmailRequired || connector.tokenAuth != TokenAuthProbe ||
+		connector.endpoints.UserInfoURL != "" || len(connector.caPEM) != 0 || len(connector.privateNets) != 0
 }
 
 type componentClient struct {
@@ -117,10 +200,20 @@ func resolveConfiguration(
 			clearComponentConfiguration(&configuration)
 			return componentConfiguration{}, [sha256.Size]byte{}, errInvalidConfiguration
 		}
+		var caPEM []byte
+		if connector.CAFile.IsSet() {
+			caPEM, err = connector.CAFile.Read()
+			if err != nil || len(caPEM) == 0 || len(caPEM) > maximumConnectorCABytes || !validCAPEM(caPEM) {
+				clearComponentConfiguration(&configuration)
+				return componentConfiguration{}, [sha256.Size]byte{}, errInvalidConfiguration
+			}
+		}
 		configuration.connectors = append(configuration.connectors, componentOIDCConnector{
 			id: connector.ID, displayName: connector.DisplayName, generation: connector.Generation,
 			issuer: connector.Issuer, endpoints: connector.Endpoints,
 			clientID: connector.ClientID, clientSecret: secret,
+			prompt: connector.Prompt, nameClaim: connector.NameClaim, emailMode: connector.EmailMode,
+			tokenAuth: connector.TokenAuth, caPEM: caPEM, privateNets: slices.Clone(connector.PrivateNetworks),
 		})
 	}
 	for _, client := range options.Clients {
@@ -194,6 +287,9 @@ func fingerprintConfiguration(
 		material = appendFingerprintField(material, connector.clientID)
 		material = appendFingerprintField(material, connector.clientSecret)
 		material = appendFingerprintField(material, options.Issuer+"/callback")
+		if connector.hasOptions() {
+			material = appendConnectorOptions(material, connector)
+		}
 	}
 	material = appendFingerprintUint64(material, uint64(len(clients)))
 	for _, client := range clients {
@@ -206,6 +302,26 @@ func fingerprintConfiguration(
 	fingerprint := sha256.Sum256(material)
 	clear(material)
 	return fingerprint
+}
+
+// appendConnectorOptions adds the V1-22 options of a connector that has any.
+func appendConnectorOptions(material []byte, connector componentOIDCConnector) []byte {
+	material = appendFingerprintField(material, connectorOptionsDomain)
+	material = appendFingerprintField(material, string(connector.prompt))
+	material = appendFingerprintField(material, connector.nameClaim)
+	material = appendFingerprintField(material, string(connector.emailMode))
+	material = appendFingerprintField(material, string(connector.tokenAuth))
+	material = appendFingerprintField(material, connector.endpoints.UserInfoURL)
+	caDigest := sha256.Sum256(connector.caPEM)
+	if len(connector.caPEM) == 0 {
+		caDigest = [sha256.Size]byte{}
+	}
+	material = append(material, caDigest[:]...)
+	material = appendFingerprintUint64(material, uint64(len(connector.privateNets)))
+	for _, prefix := range connector.privateNets {
+		material = appendFingerprintField(material, prefix.String())
+	}
+	return material
 }
 
 func appendFingerprintField(destination []byte, value string) []byte {
@@ -231,9 +347,9 @@ func validConfigurationOptions(options ServiceOptions) bool {
 	connectorIDs := make(map[string]struct{}, connectorCount)
 	for _, connector := range options.OIDCConnectors {
 		if !validObjectID(connector.ID) || !validDisplayName(connector.DisplayName) ||
-			connector.Generation == 0 || !validHTTPSURL(connector.Issuer, false) ||
+			connector.Generation == 0 || !validConnectorIssuer(connector.Issuer) ||
 			!validProviderEndpoints(connector.Issuer, connector.Endpoints) ||
-			!validClientID(connector.ClientID) {
+			!validClientID(connector.ClientID) || !validConnectorOptions(connector) {
 			return false
 		}
 		if _, exists := connectorIDs[connector.ID]; exists {
@@ -255,18 +371,119 @@ func validConfigurationOptions(options ServiceOptions) bool {
 	return true
 }
 
-func validProviderEndpoints(issuer string, endpoints OIDCProviderEndpoints) bool {
-	if endpoints.DiscoveryURL != issuer+"/.well-known/openid-configuration" {
+// ProviderEndpointsFor pins a provider's endpoints with the discovery URL of
+// its issuer. The broker checks them when it starts.
+func ProviderEndpointsFor(issuer string, endpoints OIDCProviderEndpoints) OIDCProviderEndpoints {
+	endpoints.DiscoveryURL = discoveryURLOf(issuer)
+	return endpoints
+}
+
+// discoveryURLOf is an issuer's discovery URL: a trailing "/" (Auth0) is
+// dropped first, as go-oidc does.
+func discoveryURLOf(issuer string) string {
+	return strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+}
+
+// validConnectorIssuer accepts an https issuer, with one trailing "/" at
+// most, and an explicit port other than 443.
+func validConnectorIssuer(issuer string) bool {
+	trimmed := strings.TrimSuffix(issuer, "/")
+	return validHTTPSURL(trimmed, false) && validEndpointPort(trimmed)
+}
+
+// validEndpointPort refuses an explicit :443 (issuer and outbound rules are
+// compared as written) and anything but a number from 1 to 65535.
+func validEndpointPort(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
 		return false
 	}
-	for _, endpoint := range [...]string{
-		endpoints.DiscoveryURL,
-		endpoints.AuthorizationURL,
-		endpoints.TokenURL,
-		endpoints.JWKSURL,
-	} {
-		parsed, err := url.Parse(endpoint)
-		if err != nil || parsed.Port() != "" || !validHTTPSURL(endpoint, true) {
+	port := parsed.Port()
+	if port == "" {
+		return true
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535 && number != 443 && strconv.Itoa(number) == port
+}
+
+func validProviderEndpoints(issuer string, endpoints OIDCProviderEndpoints) bool {
+	if endpoints.DiscoveryURL != discoveryURLOf(issuer) {
+		return false
+	}
+	urls := []string{endpoints.DiscoveryURL, endpoints.AuthorizationURL, endpoints.TokenURL, endpoints.JWKSURL}
+	if endpoints.UserInfoURL != "" {
+		urls = append(urls, endpoints.UserInfoURL)
+	}
+	for _, endpoint := range urls {
+		if !validHTTPSURL(endpoint, true) || !validEndpointPort(endpoint) {
+			return false
+		}
+	}
+	return true
+}
+
+// validConnectorOptions checks the V1-22 options.
+func validConnectorOptions(connector OIDCConnectorOptions) bool {
+	switch connector.Prompt {
+	case PromptSelectAccount, PromptLogin, PromptOmit:
+	default:
+		return false
+	}
+	switch connector.EmailMode {
+	case EmailRequired, EmailAssume:
+	default:
+		return false
+	}
+	switch connector.TokenAuth {
+	case TokenAuthProbe, TokenAuthBasic, TokenAuthPost:
+	default:
+		return false
+	}
+	if connector.NameClaim != "" && !validClaimName(connector.NameClaim) {
+		return false
+	}
+	if len(connector.PrivateNetworks) > maximumPrivateNetworks {
+		return false
+	}
+	for _, prefix := range connector.PrivateNetworks {
+		if !validPrivateNetwork(prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// validCAPEM is a bundle of one or more PEM CA certificates and nothing
+// else: a private key, a leaf certificate or text between blocks is refused.
+func validCAPEM(bundle []byte) bool {
+	certificates := 0
+	for rest := bytes.TrimSpace(bundle); len(rest) != 0; rest = bytes.TrimSpace(rest) {
+		if !bytes.HasPrefix(rest, []byte("-----BEGIN ")) {
+			return false
+		}
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			return false
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid {
+			return false
+		}
+		certificates++
+	}
+	return certificates > 0
+}
+
+// validClaimName is a plain JSON claim name, such as preferred_username.
+func validClaimName(value string) bool {
+	if len(value) > 64 || value == "" {
+		return false
+	}
+	for index, character := range value {
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+		digit := character >= '0' && character <= '9'
+		if !letter && (index == 0 || !digit && character != '_' && character != '-' && character != '.') {
 			return false
 		}
 	}

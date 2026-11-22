@@ -65,10 +65,12 @@ func withImmutableConfiguration(
 		wrapped.clientsByID[value.ID] = value
 	}
 	for _, connector := range configuration.connectors {
-		authorizationURL, err := withAccountPrompt(connector.endpoints.AuthorizationURL)
+		authorizationURL, err := withUpstreamPrompt(connector.endpoints.AuthorizationURL, connector.prompt)
 		if err != nil {
 			return nil, errImmutableConfiguration
 		}
+		// The unsafe Dex options (userIDKey, claimMapping, insecureEnableGroups,
+		// issuerAlias, hostedDomains) stay unset: the subject is always "sub".
 		encoded, err := json.Marshal(dexoidc.Config{ //nolint:gosec // Required transient Dex connector input; immutable storage never persists it.
 			Issuer: connector.issuer, ClientID: connector.clientID,
 			ClientSecret: connector.clientSecret,
@@ -79,6 +81,10 @@ func withImmutableConfiguration(
 				TokenURL: connector.endpoints.TokenURL,
 				JWKSURL:  connector.endpoints.JWKSURL,
 			},
+			UserNameKey:               connector.nameClaim,
+			GetUserInfo:               connector.endpoints.UserInfoURL != "",
+			InsecureSkipEmailVerified: connector.emailMode == EmailAssume,
+			BasicAuthUnsupported:      basicAuthUnsupported(connector.tokenAuth),
 		})
 		if err != nil {
 			return nil, errImmutableConfiguration
@@ -99,14 +105,47 @@ func withImmutableConfiguration(
 // withAccountPrompt returns the authorization URL with the account chooser
 // prompt. Any prompt already present is replaced, never combined.
 func withAccountPrompt(authorizationURL string) (string, error) {
+	return withUpstreamPrompt(authorizationURL, PromptSelectAccount)
+}
+
+// withUpstreamPrompt returns the authorization URL with the connector's
+// prompt: select_account, login, or none at all. Any prompt already present
+// is replaced or removed, never combined.
+func withUpstreamPrompt(authorizationURL string, prompt ConnectorPrompt) (string, error) {
 	parsed, err := url.Parse(authorizationURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Fragment != "" {
 		return "", errImmutableConfiguration
 	}
 	query := parsed.Query()
-	query.Set("prompt", upstreamAccountPrompt)
+	switch prompt {
+	case PromptSelectAccount:
+		query.Set("prompt", upstreamAccountPrompt)
+	case PromptLogin:
+		query.Set("prompt", string(PromptLogin))
+	case PromptOmit:
+		query.Del("prompt")
+	default:
+		return "", errImmutableConfiguration
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+// basicAuthUnsupported maps token_auth onto Dex: probe keeps Dex's
+// detection, post sends the client secret in the form, and basic keeps the
+// Authorization header first (oauth2's auto-detection falls back to the form
+// only when the provider refuses the header).
+func basicAuthUnsupported(auth TokenAuth) *bool {
+	switch auth {
+	case TokenAuthPost:
+		value := true
+		return &value
+	case TokenAuthBasic:
+		value := false
+		return &value
+	default:
+		return nil
+	}
 }
 
 func (configured *immutableConfigurationStorage) GetClient(

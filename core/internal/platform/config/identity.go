@@ -109,6 +109,9 @@ type IdentityOIDCConnectorConfig struct {
 	Issuer           string
 	ClientID         string
 	ClientSecretFile SecretFile
+	// Endpoints are empty for Google.
+	Endpoints IdentityOIDCConnectorEndpoints
+	Behaviour IdentityOIDCConnectorBehaviour
 }
 
 // IdentityClientConfig is one immutable confidential broker client intent.
@@ -164,7 +167,11 @@ func loadIdentityConfig(
 	if err != nil {
 		return IdentityConfig{}, err
 	}
-	connectorIssuer, err := requiredValue(lookup, envIdentityOIDCConnectorIssuer, validateGoogleConnectorIssuer)
+	connectorIssuer, err := requiredValue(lookup, envIdentityOIDCConnectorIssuer, validateConnectorIssuer)
+	if err != nil {
+		return IdentityConfig{}, err
+	}
+	connectorEndpoints, connectorBehaviour, err := loadIdentityOIDCConnectorOptions(lookup, connectorIssuer)
 	if err != nil {
 		return IdentityConfig{}, err
 	}
@@ -320,6 +327,7 @@ func loadIdentityConfig(
 			ID: connectorID, DisplayName: connectorDisplayName, Generation: connectorGeneration,
 			Issuer: connectorIssuer, ClientID: connectorClientID,
 			ClientSecretFile: SecretFile{path: connectorClientSecretFile},
+			Endpoints:        connectorEndpoints, Behaviour: connectorBehaviour,
 		}},
 		Clients: []IdentityClientConfig{{
 			ID: coreClientID, DisplayName: coreClientDisplayName, Generation: coreClientGeneration,
@@ -588,13 +596,6 @@ func validateIdentityClientID(value string) error {
 		if character <= ' ' || character == 127 {
 			return ErrInvalid
 		}
-	}
-	return nil
-}
-
-func validateGoogleConnectorIssuer(value string) error {
-	if value != identityGoogleIssuer {
-		return ErrInvalid
 	}
 	return nil
 }

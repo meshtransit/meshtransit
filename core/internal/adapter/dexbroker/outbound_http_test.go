@@ -16,7 +16,7 @@ import (
 )
 
 func TestOIDCOutboundHTTPClientHasBoundedPolicy(t *testing.T) {
-	client, transport, err := newOIDCOutboundHTTPClient(GoogleOIDCProviderEndpoints())
+	client, transport, err := newOIDCOutboundHTTPClient(GoogleOIDCProviderEndpoints(), outboundConnectorPolicy{})
 	if err != nil {
 		t.Fatalf("newOIDCOutboundHTTPClient() error = %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSecureOutboundDialerRejectsPrivateResolution(t *testing.T) {
 			calls.Add(1)
 			return nil, errors.New("unexpected dial")
 		},
-		allowedHosts: map[string]struct{}{"provider.example": {}},
+		allowedHosts: map[string]struct{}{"provider.example:443": {}},
 	}
 	if _, err := dialer.dialContext(t.Context(), "tcp", "provider.example:443"); !errors.Is(err, errOutboundHTTPPolicy) {
 		t.Fatalf("dialContext() error = %v", err)
@@ -171,7 +171,7 @@ func TestSecureOutboundDialerUsesValidatedResolvedAddress(t *testing.T) {
 			peer = other
 			return connection, nil
 		},
-		allowedHosts: map[string]struct{}{"provider.example": {}},
+		allowedHosts: map[string]struct{}{"provider.example:443": {}},
 	}
 	connection, err := dialer.dialContext(t.Context(), "tcp", "provider.example:443")
 	if err != nil {
@@ -201,7 +201,7 @@ func TestValidOutboundIPRejectsSpecialUseRanges(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.address, func(t *testing.T) {
-			if got := validOutboundIP(netip.MustParseAddr(test.address)); got != test.valid {
+			if got := validOutboundIP(netip.MustParseAddr(test.address), nil); got != test.valid {
 				t.Fatalf("validOutboundIP() = %t, want %t", got, test.valid)
 			}
 		})

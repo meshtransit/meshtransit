@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"meshtransit.net/core/internal/adapter/dexbroker"
@@ -181,11 +182,27 @@ func identityPostgreSQLResourceOptions(
 func identityServiceOptions(identity config.IdentityConfig) dexbroker.ServiceOptions {
 	connectors := make([]dexbroker.OIDCConnectorOptions, 0, len(identity.OIDCConnectors))
 	for _, connector := range identity.OIDCConnectors {
+		endpoints := dexbroker.GoogleOIDCProviderEndpoints()
+		if connector.Endpoints != (config.IdentityOIDCConnectorEndpoints{}) {
+			endpoints = dexbroker.ProviderEndpointsFor(connector.Issuer, dexbroker.OIDCProviderEndpoints{
+				AuthorizationURL: connector.Endpoints.AuthorizationURL,
+				TokenURL:         connector.Endpoints.TokenURL,
+				JWKSURL:          connector.Endpoints.JWKSURL,
+				UserInfoURL:      connector.Endpoints.UserInfoURL,
+			})
+		}
+		behaviour := connector.Behaviour
 		connectors = append(connectors, dexbroker.OIDCConnectorOptions{
 			ID: connector.ID, DisplayName: connector.DisplayName, Generation: connector.Generation,
-			Issuer: connector.Issuer, Endpoints: dexbroker.GoogleOIDCProviderEndpoints(),
+			Issuer: connector.Issuer, Endpoints: endpoints,
 			ClientID:         connector.ClientID,
 			ClientSecretFile: connector.ClientSecretFile,
+			Prompt:           dexbroker.ConnectorPrompt(behaviour.Prompt),
+			NameClaim:        behaviour.NameClaim,
+			EmailMode:        dexbroker.EmailMode(behaviour.EmailMode),
+			TokenAuth:        dexbroker.TokenAuth(behaviour.TokenAuth),
+			CAFile:           behaviour.CAFile,
+			PrivateNetworks:  slices.Clone(behaviour.PrivateNetworks),
 		})
 	}
 	clients := make([]dexbroker.ClientOptions, 0, len(identity.Clients))

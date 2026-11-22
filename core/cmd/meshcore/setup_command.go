@@ -73,7 +73,7 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 		"approve-identity": {command.approve},
 		"render":           {command.render},
 		"check":            {command.check},
-		"apply":            {command.secrets, command.approveIfNew, command.render, command.check},
+		"apply":            {command.secrets, command.approveIfNew, command.render, command.checkForApply},
 		"migrate":          {command.migrateReported},
 		"renew-tls":        {command.renewTLS},
 	}
@@ -217,13 +217,27 @@ func (command setupCommand) approve() error {
 }
 
 // approveIfNew approves the identity configuration of a new installation
-// only; a change to an approved one waits for "setup approve-identity".
+// only; a change to an approved one waits for "setup approve-identity". An
+// approved state written before V1-22 is upgraded when the configuration
+// is still the approved one, which proves its provider.
 func (command setupCommand) approveIfNew() error {
 	state, err := selfhost.LoadState(command.paths.layout.SecretsDir)
-	if err != nil || state.IdentityFingerprint != "" {
+	if err != nil {
 		return err
 	}
-	return command.approve()
+	if state.IdentityFingerprint == "" {
+		return command.approve()
+	}
+	config, err := command.loadConfig()
+	if err != nil {
+		return err
+	}
+	upgraded, err := selfhost.UpgradeApprovedState(config, command.paths.layout, identityFingerprintFromSettings,
+		command.owner)
+	if err != nil || !upgraded {
+		return err
+	}
+	return command.report(map[string]any{"operation": "upgrade-state", "format": "v2"})
 }
 
 // render writes run/. While an identity change waits for approval it writes
@@ -300,10 +314,17 @@ func prepareRunDir(runDir string, owner *selfhost.Owner) error {
 // is what the processes will accept. A failure reports the stage and, for a
 // configuration error, the setting it names (Core's configuration errors
 // name settings, never values).
-func (command setupCommand) check() error {
+func (command setupCommand) check() error { return command.checkWith(true) }
+
+// checkForApply is check within apply: a sign-in provider that cannot be
+// reached is a warning there (an image bump must not wait for the IdP);
+// a provider that disagrees with config.yaml still fails.
+func (command setupCommand) checkForApply() error { return command.checkWith(false) }
+
+func (command setupCommand) checkWith(providerRequired bool) error {
 	stage, err := command.checkStages()
 	if err == nil {
-		return command.report(map[string]any{"operation": "check", "valid": true})
+		return command.checkLoginProvider(providerRequired)
 	}
 	failure := map[string]any{"operation": "check", "valid": false, "stage": stage}
 	if errors.Is(err, config.ErrInvalid) {
@@ -313,6 +334,47 @@ func (command setupCommand) check() error {
 		return reportErr
 	}
 	return fmt.Errorf("check failed at %s", stage)
+}
+
+// checkLoginProvider reads the sign-in provider's discovery document
+// through the broker's outbound policy and fails on any pinned endpoint it
+// disagrees with (V1-22). It also warns about a first_admin subject that
+// looks like an email address: subjects must never be reassigned.
+func (command setupCommand) checkLoginProvider(providerRequired bool) error {
+	core, err := readEnvFile(filepath.Join(command.paths.layout.RunDir, "core.env"))
+	if err != nil {
+		return err
+	}
+	processConfig, err := config.Load(settingsLookup(core))
+	if err != nil || processConfig.Identity == nil {
+		return errors.Join(errors.New("no identity configuration"), err)
+	}
+	report := map[string]any{"operation": "check", "valid": true}
+	warnings := []string{}
+	if parsed, err := command.loadConfig(); err == nil && strings.Contains(parsed.FirstAdmin.Subject, "@") {
+		warnings = append(warnings, "first_admin.subject looks like an email address: the provider's "+
+			"sub claim must never be reassigned, so a subject based on email or user name is unsafe")
+	}
+	findings, err := checkLoginDiscovery(command.ctx, *processConfig.Identity)
+	if err != nil && !providerRequired {
+		warnings = append(warnings, "the sign-in provider's discovery document could not be read; "+
+			"run setup check once it is reachable")
+		report["warnings"] = warnings
+		return command.report(report)
+	}
+	if len(warnings) != 0 {
+		report["warnings"] = warnings
+	}
+	if err != nil {
+		report["valid"], report["stage"] = false, "login provider discovery"
+		return errors.Join(command.report(report), fmt.Errorf("check failed at login provider discovery: %w", err))
+	}
+	if len(findings) != 0 {
+		report["valid"], report["stage"], report["discovery_mismatch"] = false, "login provider discovery", findings
+		return errors.Join(command.report(report),
+			errors.New("check failed: the provider's discovery document disagrees with config.yaml"))
+	}
+	return command.report(report)
 }
 
 func (command setupCommand) checkStages() (string, error) {

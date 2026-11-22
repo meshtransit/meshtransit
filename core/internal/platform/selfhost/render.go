@@ -51,7 +51,6 @@ const (
 	redisAddress     = "redis." + internalDomain + ":6379"
 	coreDatabase     = "meshtransit"
 	identityDatabase = "meshtransit_identity"
-	connectorID      = "google-v1"
 	coreClientID     = "meshtransit-console"
 	relayUDPPort     = 3479
 	relaySTUNPort    = 3478
@@ -149,16 +148,16 @@ func Render(config Config, state State, keys PublicKeys, layout Layout) (Rendere
 // fingerprint: what "setup approve-identity" fingerprints.
 func IdentitySettings(config Config, state State, layout Layout) map[string]string {
 	secret := func(name string) string { return filepath.Join(layout.SecretsDir, name) }
-	return map[string]string{
+	settings := map[string]string{
 		"MESHTRANSIT_ROLE":                                       "identity",
 		"MESHTRANSIT_IDENTITY_ISSUER":                            issuer(config),
 		"MESHTRANSIT_IDENTITY_ADDRESS":                           identityAddress,
 		"MESHTRANSIT_IDENTITY_TLS_CERTIFICATE_FILE":              secret("identity.crt"),
 		"MESHTRANSIT_IDENTITY_TLS_PRIVATE_KEY_FILE":              secret("identity.key"),
-		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ID":                 connectorID,
-		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_DISPLAY_NAME":       "Google",
+		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ID":                 config.Login.connectorID(),
+		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_DISPLAY_NAME":       config.Login.displayName(),
 		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_GENERATION":         strconv.FormatInt(state.ConnectorGeneration, 10),
-		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ISSUER":             "https://accounts.google.com",
+		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ISSUER":             config.Login.issuer(),
 		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_ID":          config.Login.ClientID,
 		"MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_SECRET_FILE": config.Login.ClientSecretFile,
 		"MESHTRANSIT_IDENTITY_CORE_CLIENT_ID":                    coreClientID,
@@ -172,6 +171,10 @@ func IdentitySettings(config Config, state State, layout Layout) map[string]stri
 		"MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_PASSWORD_FILE":    secret("identity-runtime-password"),
 		"MESHTRANSIT_IDENTITY_POSTGRES_CA_FILE":                  secret("ca.crt"),
 	}
+	for key, value := range config.Login.connectorSettings() {
+		settings[key] = value
+	}
+	return settings
 }
 
 func issuer(config Config) string        { return "https://" + config.IdentityHost() + "/oauth2" }
@@ -427,7 +430,7 @@ func loginProfileJSON(config Config, state State, layout Layout) ([]byte, error)
 		"issuer": base, "discovery_uri": base + "/.well-known/openid-configuration",
 		"authorization_endpoint": base + "/auth", "token_endpoint": base + "/token", "jwks_uri": base + "/keys",
 		"oidc_client_id": coreClientID, "redirect_id": "console-callback", "return_route_id": "console",
-		"connector_id": connectorID, "scopes": []string{"openid", "email", "federated:id"},
+		"connector_id": config.Login.connectorID(), "scopes": []string{"openid", "email", "federated:id"},
 		"tls_certificate_file": secret("login.crt"), "tls_private_key_file": secret("login.key"),
 		"client_secret_file": secret("login-client-secret"), "keys": keys,
 	}
@@ -435,10 +438,14 @@ func loginProfileJSON(config Config, state State, layout Layout) ([]byte, error)
 }
 
 func bootstrapPlanJSON(config Config) ([]byte, error) {
+	subject, err := config.firstAdminSubject()
+	if err != nil {
+		return nil, err
+	}
 	return marshal(map[string]any{
 		"format": "meshtransit-bootstrap/v1", "profile": "self_hosted",
 		"accounts": []map[string]string{{
-			"subject": config.FirstAdmin.Subject, "display_name": config.FirstAdmin.DisplayName,
+			"subject": subject, "display_name": config.FirstAdmin.DisplayName,
 			"workspace_name": config.FirstAdmin.Workspace,
 		}},
 	})

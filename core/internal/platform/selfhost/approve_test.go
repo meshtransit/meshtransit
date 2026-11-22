@@ -47,9 +47,10 @@ func TestApproveIdentityPinsThenAsksAgainOnChange(t *testing.T) {
 	if err != nil || again != first {
 		t.Fatalf("second approval = %+v, %v", again, err)
 	}
-	// A new upstream client is a change: render keeps the old pin until it
-	// is approved, and approval moves the generations on.
-	changed, err := ParseConfig([]byte(strings.Replace(validConfig, "1234.apps", "5678.apps", 1)))
+	// Another client secret file is a change: render keeps the old pin until
+	// it is approved, and approval moves the generations on.
+	changed, err := ParseConfig([]byte(strings.Replace(validConfig,
+		"/etc/meshtransit/google-client-secret", "/etc/meshtransit/google-client-secret-2", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}

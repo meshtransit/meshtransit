@@ -14,3 +14,8 @@ import (
 func migrateIdentityStorage(context.Context, config.MigrationConfig, *slog.Logger) error {
 	return errIdentityBrokerUnavailable
 }
+
+// checkLoginDiscovery needs the dexbroker build, where meshcore setup runs.
+func checkLoginDiscovery(context.Context, config.IdentityConfig) ([]struct{}, error) {
+	return nil, errIdentityBrokerUnavailable
+}

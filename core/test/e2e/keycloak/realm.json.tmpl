@@ -1,0 +1,38 @@
+{
+  "realm": "corp",
+  "enabled": true,
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "requiredActions": [
+    {"alias": "VERIFY_PROFILE", "name": "Verify Profile", "providerId": "VERIFY_PROFILE",
+     "enabled": false, "defaultAction": false, "priority": 90, "config": {}}
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [{
+      "providerId": "declarative-user-profile",
+      "subComponents": {},
+      "config": {"kc.user.profile.config": ["{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[]}"]}
+    }]
+  },
+  "clients": [{
+    "clientId": "meshtransit",
+    "enabled": true,
+    "protocol": "openid-connect",
+    "publicClient": false,
+    "clientAuthenticatorType": "client-secret",
+    "secret": "@CLIENT_SECRET@",
+    "redirectUris": ["https://issuer.example/dex/callback"],
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "implicitFlowEnabled": false,
+    "attributes": {"pkce.code.challenge.method": "S256"}
+  }],
+  "users": [
+    {"id": "4f2c0d4e-0000-4000-8000-000000000001", "username": "alice", "email": "alice@example.test",
+     "emailVerified": true, "enabled": true,
+     "credentials": [{"type": "password", "value": "@PASSWORD@", "temporary": false}]},
+    {"id": "4f2c0d4e-0000-4000-8000-000000000002", "username": "bob", "email": "bob@example.test",
+     "emailVerified": false, "enabled": true, "firstName": "Bob", "lastName": "Builder",
+     "credentials": [{"type": "password", "value": "@PASSWORD@", "temporary": false}]}
+  ]
+}

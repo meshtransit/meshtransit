@@ -14,13 +14,35 @@ acme_email: ops@example.com
 # The sign-in provider. Create an OAuth client (Web application) with the
 # redirect URI https://id.<domain>/oauth2/callback. Secret files live in
 # /etc/meshtransit, which every MeshTransit container mounts.
+# Accounts are keyed by the provider's subjects: after the first approval
+# the provider (issuer, client_id) cannot change.
 login:
   provider: google
   client_id: 1234567890-example.apps.googleusercontent.com
   client_secret_file: /etc/meshtransit/google-client-secret
 
-# The first administrator, by Google account subject (the "sub" claim, a
-# number), and the Workspace created for them.
+# Any other OpenID Connect provider (Keycloak, Entra ID per tenant, Okta,
+# Auth0, Authentik...): "setup check" compares the URLs with the provider's
+# discovery document. Its "sub" claim must never be reassigned.
+# login:
+#   provider: oidc
+#   display_name: Acme SSO          # the sign-in button
+#   issuer: https://sso.acme.example/realms/main   # exactly as in its tokens
+#   client_id: meshtransit
+#   client_secret_file: /etc/meshtransit/oidc-client-secret
+#   authorization_url: https://sso.acme.example/realms/main/protocol/openid-connect/auth
+#   token_url: https://sso.acme.example/realms/main/protocol/openid-connect/token
+#   jwks_url: https://sso.acme.example/realms/main/protocol/openid-connect/certs
+#   userinfo_url: ""                # only if names or email come from userinfo
+#   name_claim: preferred_username  # default: name
+#   email: required                 # or assume: no email_verified claim (one tenant only)
+#   token_auth: basic               # or post
+#   prompt: login                   # or select_account, or omit (no prompt)
+#   ca_file: ""                     # PEM of a private CA
+#   private_network_cidrs: []       # private ranges the provider is in, e.g. [10.20.0.0/16]
+
+# The first administrator, by the provider's subject (the "sub" claim of
+# their ID token; a number for Google), and the Workspace created for them.
 first_admin:
   subject: "100000000000000000000"
   display_name: Ada Admin

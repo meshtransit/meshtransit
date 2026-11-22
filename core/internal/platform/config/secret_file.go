@@ -68,6 +68,9 @@ func (file SecretFile) Read() (string, error) {
 	return credential, nil
 }
 
+// IsSet reports a trust file that names a path; the zero value names none.
+func (file TrustFile) IsSet() bool { return file.path != "" }
+
 // Read returns one bounded CA bundle. Certificate parsing belongs to the TLS
 // adapter that consumes it.
 func (file TrustFile) Read() ([]byte, error) {

@@ -26,3 +26,18 @@ func migrateIdentityStorage(ctx context.Context, migration config.MigrationConfi
 		ConnectTimeout: migration.ConnectTimeout, MaxConnectionLifetime: time.Minute,
 	}, logger)
 }
+
+// checkLoginDiscovery compares the login connector's pinned endpoints with
+// its provider's discovery document (setup check).
+func checkLoginDiscovery(ctx context.Context, identity config.IdentityConfig) ([]dexbroker.DiscoveryFinding, error) {
+	options := identityServiceOptions(identity)
+	findings := make([]dexbroker.DiscoveryFinding, 0)
+	for _, connector := range options.OIDCConnectors {
+		found, err := dexbroker.CheckProviderDiscovery(ctx, connector)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, found...)
+	}
+	return findings, nil
+}

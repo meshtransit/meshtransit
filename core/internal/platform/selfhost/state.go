@@ -17,8 +17,11 @@ import (
 var ErrInvalidState = errors.New("invalid self-host state")
 
 const (
-	stateFile   = "state.json"
-	stateFormat = "meshtransit-selfhost-state/v1"
+	stateFile = "state.json"
+	// stateFormat records the approved provider (V1-22); a setup that
+	// knows only v1 refuses it. v1 is still read.
+	stateFormat   = "meshtransit-selfhost-state/v2"
+	stateFormatV1 = "meshtransit-selfhost-state/v1"
 )
 
 // State is what setup decided once and must never change by accident: the
@@ -40,6 +43,9 @@ type State struct {
 	// change afterwards.
 	ApprovedIssuer string `json:"approved_issuer"`
 	ApprovedOrigin string `json:"approved_origin"`
+	// Provider is the sign-in provider the first approval saw (state v2).
+	// Accounts are keyed by its subjects, so it never changes afterwards.
+	Provider ApprovedProvider `json:"approved_provider,omitzero"`
 	// MTCPKeyNotAfter is the fixed control key expiry a state written
 	// before auto-renewal named. It is read and kept, never rendered: the
 	// control key now rolls (auto-renewal design §2.2).
@@ -62,13 +68,55 @@ func LoadState(dir string) (State, error) {
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	var state State
-	if err := decoder.Decode(&state); err != nil || state.Format != stateFormat || !state.valid() {
+	if err := decoder.Decode(&state); err != nil || !state.valid() {
 		return State{}, ErrInvalidState
 	}
 	return state, nil
 }
 
+// ApprovedProvider is the upstream sign-in provider an approval pinned.
+type ApprovedProvider struct {
+	Issuer      string `json:"issuer"`
+	ClientID    string `json:"client_id"`
+	ConnectorID string `json:"connector_id"`
+}
+
+func providerOf(config Config) ApprovedProvider {
+	return ApprovedProvider{
+		Issuer: config.Login.issuer(), ClientID: config.Login.ClientID, ConnectorID: config.Login.connectorID(),
+	}
+}
+
+// providerMatches reports whether config still names the approved provider.
+// A v1 state approved before V1-22 records none; it pinned Google, so only
+// an approved Google configuration (same fingerprint) is taken as its
+// provider.
+func (state State) providerMatches(config Config, status IdentityStatus) bool {
+	switch {
+	case state.IdentityFingerprint == "":
+		return true
+	case state.Provider != (ApprovedProvider{}):
+		return state.Provider == providerOf(config)
+	default:
+		return status == IdentityApproved
+	}
+}
+
 func (state State) valid() bool {
+	switch state.Format {
+	case stateFormatV1:
+		if state.Provider != (ApprovedProvider{}) {
+			return false
+		}
+	case stateFormat:
+		provider := state.Provider
+		if (state.IdentityFingerprint != "") !=
+			(provider.Issuer != "" && provider.ClientID != "" && provider.ConnectorID != "") {
+			return false
+		}
+	default:
+		return false
+	}
 	for _, id := range []string{state.DeploymentID, state.ProviderID, state.ClientID} {
 		parsed, err := publicid.Parse(id)
 		if err != nil || parsed.String() != id {
