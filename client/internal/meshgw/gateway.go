@@ -2,14 +2,18 @@ package meshgw
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"meshtransit.net/client/internal/daemon"
@@ -287,7 +291,7 @@ func serve(ctx context.Context, service runner, kubectl func(context.Context)) e
 // replica uses this identity: the gateway stops rather than share a Device.
 func openStores(ctx context.Context, cfg Config, mirror *k8sstate.Mirror, fail context.CancelCauseFunc,
 ) (*profile.Store, *identity.Store, error) {
-	key, err := ReadEnvelopeKey(cfg.EnvelopeKeyFile)
+	key, err := envelopeKey(ctx, cfg, sealedIdentities(mirror.Data()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -314,6 +318,62 @@ func openStores(ctx context.Context, cfg Config, mirror *k8sstate.Mirror, fail c
 			profiles.Close())
 	}
 	return profiles, identities, nil
+}
+
+// envelopeKey reads the replica's envelope key from its mount. With
+// MESHGW_ENVELOPE_SELF_MANAGED=on, a key the mount lacks is read from the
+// envelope Secret or, when the Secret lacks it too and the replica's state
+// holds no sealed identity, made here and added to it; the value comes from
+// the API, as the mount may show it only a minute later. A replica whose
+// sealed identities would need the lost key stops and says so: a new key
+// would leave them unreadable.
+func envelopeKey(ctx context.Context, cfg Config, sealed bool) ([]byte, error) {
+	key, err := ReadEnvelopeKey(cfg.EnvelopeKeyFile)
+	if err == nil || cfg.EnvelopeSecret == "" || !errors.Is(err, fs.ErrNotExist) {
+		return key, err
+	}
+	api, err := k8sstate.InClusterConfig(cfg.EnvelopeSecret)
+	if err != nil {
+		return nil, fmt.Errorf("meshgw: the envelope Secret: %w", err)
+	}
+	keyName := filepath.Base(cfg.EnvelopeKeyFile)
+	value, _, err := k8sstate.EnsureKey(ctx, api, keyName, envelopeKeyMaker(sealed, keyName, cfg),
+		func(value []byte) bool { return len(value) == envelopeKeyBytes })
+	if err != nil {
+		return nil, fmt.Errorf("meshgw: the envelope key: %w", err)
+	}
+	return value, nil
+}
+
+// ErrEnvelopeKeyLost means the envelope Secret lacks the replica's key while
+// its state holds identities sealed with it.
+var ErrEnvelopeKeyLost = errors.New("meshgw: the envelope key is missing but sealed identities need it")
+
+// envelopeKeyMaker makes a fresh envelope key, unless sealed identities
+// would need the lost one.
+func envelopeKeyMaker(sealed bool, keyName string, cfg Config) func() ([]byte, error) {
+	return func() ([]byte, error) {
+		if sealed {
+			return nil, fmt.Errorf("%w: put %s back into Secret %s, or remove the identity.* keys from Secret %s "+
+				"so the replica joins again", ErrEnvelopeKeyLost, keyName, cfg.EnvelopeSecret, cfg.StateSecret)
+		}
+		fresh := make([]byte, envelopeKeyBytes)
+		if _, err := rand.Read(fresh); err != nil {
+			return nil, err
+		}
+		return fresh, nil
+	}
+}
+
+// sealedIdentities reports whether the restored state holds identities,
+// which only this replica's envelope key opens.
+func sealedIdentities(data map[string][]byte) bool {
+	for key := range data {
+		if strings.HasPrefix(key, k8sstate.IdentityKeyPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // stopOnConflict passes writes to hook and stops the gateway, through fail,

@@ -48,6 +48,8 @@ refuse "fullname not a label" --set fullnameOverride=Mesh_GW
 refuse "quote in repository" --set "image.repository=a'b"
 refuse "backslash audience" --set-json 'apiServerAudiences=["a\\\\b"]'
 refuse "repeated namespace" --set 'groups[1].namespaces[1]=default'
+refuse "install token not mtk1" --set join.installToken=abc
+refuse "install token with a space" --set 'join.installToken=mtk1.a b'
 [[ $refused == 0 ]] || exit 1
 echo "refusals: ok"
 
@@ -63,6 +65,31 @@ printf '%s' "$out" | grep -q 'values: \["kube-system","local-path-storage"\]' ||
 render --set-json 'network.tcpSendBufferBytes=4194304' | grep -q 'MESHGW_TCP_SEND_BUFFER: "4194304"' || { echo "buffer not an integer" >&2; exit 1; }
 # The gateway's selectors leave the check's pods out (review c3 H1).
 [[ $(printf '%s' "$out" | grep -c 'app.kubernetes.io/component: gateway') -ge 6 ]] || { echo "gateway selectors" >&2; exit 1; }
+# V1-12: a self-managed envelope Secret renders empty, kept, named in the
+# state Role and mounted optional; an install token fills key-<n> of the
+# join Secret for every replica, and nothing else.
+self=$(render --set envelope.selfManaged=true --set join.installToken=mtk1.abc)
+printf '%s' "$self" | python3 -I -c '
+import sys
+docs = sys.stdin.read().split("\n---\n")
+def find(*needles):
+    found = [d for d in docs if all(n in d for n in needles)]
+    assert len(found) == 1, needles
+    return found[0]
+envelope = find("kind: Secret", "name: meshgw-envelope")
+assert "\ndata:" not in envelope and "stringData:" not in envelope, "envelope renders data"
+assert "helm.sh/resource-policy: keep" in envelope, "envelope not kept"
+join = find("kind: Secret", "name: meshgw-join")
+assert "key-0: bXRrMS5hYmM=" in join and "key-1: bXRrMS5hYmM=" in join and "key-2:" not in join, join
+role = find("kind: Role\nmetadata:\n  name: meshgw-state\n")
+assert "- meshgw-envelope" in role and "verbs: [\"get\", \"update\"]" in role, role
+sts = find("kind: StatefulSet")
+volume = sts[sts.index("- name: envelope\n          secret:"):]
+assert "optional: true" in volume.split("- name:")[1], volume[:300]
+' || { echo "self-managed envelope or install token" >&2; exit 1; }
+if printf '%s' "$out" | grep -q 'name: meshgw-envelope$\|MESHGW_ENVELOPE_SELF_MANAGED: "on"'; then
+  echo "the envelope Secret renders without selfManaged" >&2; exit 1
+fi
 echo "invariants: ok"
 
 if [[ $# -eq 1 ]]; then

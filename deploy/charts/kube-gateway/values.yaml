@@ -24,12 +24,21 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Secrets the chart never creates (Q80): create them with kubectl create
-# secret (never kubectl apply), or External Secrets.
+# The envelope Secret holds key-<n>, the key sealing replica n's identity.
+# selfManaged (V1-12, the one-command install): the chart renders it empty,
+# kept on uninstall and by Argo CD, and each replica adds its own key; no
+# key goes through Helm or GitOps. Otherwise create it yourself (Q80): with
+# kubectl create secret (never kubectl apply), or External Secrets.
 envelope:
   existingSecret: meshgw-envelope
+  selfManaged: false
+# The join Secret holds key-<n>, replica n's join key. installToken (V1-12,
+# pass it with --set-file): the chart renders the Secret with the install
+# token for every replica; the token lives in the release's data, expires
+# within a day and is spent per replica. Otherwise create the Secret.
 join:
   existingSecret: meshgw-join
+  installToken: ""
 
 # The API server's audiences: what it fills into a token minted without
 # any. `helm test` prints this cluster's value when it differs.

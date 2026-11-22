@@ -129,6 +129,10 @@ spec:
           secret:
             secretName: {{ .Values.envelope.existingSecret }}
             defaultMode: 0400
+            {{- if .Values.envelope.selfManaged }}
+            # The replica adds its own key; until then the mount lacks it.
+            optional: true
+            {{- end }}
         # Read only while a replica must join; may be deleted after.
         - name: join
           secret:

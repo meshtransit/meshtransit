@@ -20,9 +20,39 @@ metadata:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 type: Opaque
 {{- end }}
+{{- if .Values.envelope.selfManaged }}
+---
+# The envelope keys, one per replica, each added by its replica (V1-12):
+# rendered empty, kept on uninstall and by Argo CD like the state Secrets.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.envelope.existingSecret }}
+  labels: {{- include "kg.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+type: Opaque
+{{- end }}
+{{- with .Values.join.installToken }}
+---
+# The install token, for every replica (V1-12). Read only while a replica
+# joins; the token expires within a day.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $.Values.join.existingSecret }}
+  labels: {{- include "kg.labels" $ | nindent 4 }}
+type: Opaque
+data:
+  {{- range $ordinal := until (int $.Values.replicas) }}
+  key-{{ $ordinal }}: {{ $.Values.join.installToken | b64enc }}
+  {{- end }}
+{{- end }}
 ---
 # Each replica reads and writes only the state Secrets (create cannot be
-# limited by name, so the chart makes them).
+# limited by name, so the chart makes them), and adds its key to a
+# self-managed envelope Secret (never creates or deletes one).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -34,6 +64,9 @@ rules:
     resourceNames:
       {{- range $ordinal := until (int .Values.replicas) }}
       - {{ include "kg.statePrefix" $ }}-{{ $ordinal }}
+      {{- end }}
+      {{- if .Values.envelope.selfManaged }}
+      - {{ .Values.envelope.existingSecret }}
       {{- end }}
     verbs: ["get", "update"]
 ---

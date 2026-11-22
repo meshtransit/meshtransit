@@ -44,8 +44,13 @@ type Config struct {
 	Hostname string
 	// StateDir is a directory under the pod's emptyDir, rebuilt from the
 	// state Secret on every start.
-	StateDir          string
-	EnvelopeKeyFile   string
+	StateDir        string
+	EnvelopeKeyFile string
+	// EnvelopeSecret, set with MESHGW_ENVELOPE_SELF_MANAGED=on, is the
+	// envelope Secret (MESHGW_ENVELOPE_SECRET) the replica adds its own key
+	// to when its mount lacks one (V1-12 §3.7: the chart renders it empty,
+	// no key goes through Helm).
+	EnvelopeSecret    string
 	EnrollmentKeyFile string
 	// JoinKeyFile, when set (MESHGW_JOIN_DIR), makes the replica a K1
 	// gateway: it joins its cluster with this join key and an
@@ -186,13 +191,21 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Hostname:           hostname,
 		StateDir:           filepath.Clean(stateDir),
 		EnvelopeKeyFile:    filepath.Join(value("MESHGW_ENVELOPE_DIR", defaultEnvelopeDir), keyName),
-		EnrollmentKeyFile:  filepath.Join(value("MESHGW_ENROLLMENT_DIR", defaultEnrollDir), keyName),
-		StateSecret:        value("MESHGW_STATE_SECRET_PREFIX", defaultSecretPrefix) + "-" + strconv.Itoa(ordinal),
-		ProbeAddress:       value("MESHGW_PROBE_ADDRESS", defaultProbeAddress),
-		ListenPort:         listenPort,
-		KubeAPIPort:        kubeAPIPort,
-		KubeAPIBackend:     net.JoinHostPort(apiHost, apiPort),
-		Cluster:            cluster,
+
+		EnrollmentKeyFile: filepath.Join(value("MESHGW_ENROLLMENT_DIR", defaultEnrollDir), keyName),
+		StateSecret:       value("MESHGW_STATE_SECRET_PREFIX", defaultSecretPrefix) + "-" + strconv.Itoa(ordinal),
+		ProbeAddress:      value("MESHGW_PROBE_ADDRESS", defaultProbeAddress),
+		ListenPort:        listenPort,
+		KubeAPIPort:       kubeAPIPort,
+		KubeAPIBackend:    net.JoinHostPort(apiHost, apiPort),
+		Cluster:           cluster,
+	}
+	switch value("MESHGW_ENVELOPE_SELF_MANAGED", "off") {
+	case "on":
+		cfg.EnvelopeSecret = value("MESHGW_ENVELOPE_SECRET", defaultEnvelopeSecret)
+	case "off":
+	default:
+		return Config{}, errors.New(`meshgw: MESHGW_ENVELOPE_SELF_MANAGED must be "on" or "off"`)
 	}
 	if joinKeyFile == "" && value("MESHGW_CERTIFICATE_DIR", "") != "" {
 		return Config{}, errors.New("meshgw: MESHGW_CERTIFICATE_DIR needs MESHGW_JOIN_DIR")

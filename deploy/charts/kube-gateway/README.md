@@ -75,6 +75,26 @@ kubectl -n meshtransit-gateway create secret generic meshgw-join \
   --from-file=key-0=join-key.txt --from-file=key-1=join-key.txt
 ```
 
+**One command (V1-12).** For a cluster in `private_tofu` trust mode, the
+Console issues an install token instead: no Secret to create by hand.
+`envelope.selfManaged: true` renders the envelope Secret empty (kept on
+uninstall and by Argo CD); each replica adds its own key at its first start
+and never replaces one. `join.installToken` (pass it with `--set-file`)
+renders the join Secret with the token for every replica; the token lives in
+the release's data until it expires (at most a day), and each replica uses it
+once. Core approves the replicas in the token maker's name and pins the
+cluster's signing keys unconfirmed: compare the digest `helm test` prints
+with the one on the cluster's page, then confirm it.
+
+```sh
+helm install gateway oci://.../meshtransit-kube-gateway --namespace meshtransit-gateway -f values.yaml \
+  --set envelope.selfManaged=true --set-file join.installToken=install-token.txt
+```
+
+A replica whose envelope key is lost while its state holds a sealed identity
+stops rather than make a new key: put the key back, or remove the
+`identity.*` keys from its state Secret so it joins again.
+
 ## 2. Install
 
 ```sh

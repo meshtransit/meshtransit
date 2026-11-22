@@ -2,6 +2,7 @@ package meshgw
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -336,5 +337,73 @@ func TestLoadConfigCertificateDir(t *testing.T) {
 	enrolled["MESHGW_CERTIFICATE_DIR"] = "/var/run/meshgw/certificate"
 	if _, err := loadFrom(enrolled); err == nil {
 		t.Fatal("taken without MESHGW_JOIN_DIR")
+	}
+}
+
+// MESHGW_ENVELOPE_SELF_MANAGED=on lets the replica add its envelope key to
+// the Secret MESHGW_ENVELOPE_SECRET names; off, a missing key fails as
+// before (V1-12 §3.7).
+func TestLoadConfigEnvelopeSelfManaged(t *testing.T) {
+	t.Parallel()
+	env, _ := testEnv(t)
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.EnvelopeSecret != "" {
+		t.Fatalf("default: %q, %v", cfg.EnvelopeSecret, err)
+	}
+	env["MESHGW_ENVELOPE_SECRET"] = "guarded-only"
+	if cfg, err := loadFrom(env); err != nil || cfg.EnvelopeSecret != "" {
+		t.Fatalf("a guarded name alone turned self-managing on: %q, %v", cfg.EnvelopeSecret, err)
+	}
+	env["MESHGW_ENVELOPE_SELF_MANAGED"] = "on"
+	if cfg, err := loadFrom(env); err != nil || cfg.EnvelopeSecret != "guarded-only" {
+		t.Fatalf("on: %q, %v", cfg.EnvelopeSecret, err)
+	}
+	env["MESHGW_ENVELOPE_SELF_MANAGED"] = "yes"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("a value other than on or off was accepted")
+	}
+}
+
+// Off, or with the key mounted, the envelope key is the mounted file only.
+func TestEnvelopeKeyFromTheMount(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key-0")
+	cfg := Config{EnvelopeKeyFile: path}
+	if _, err := envelopeKey(t.Context(), cfg, false); err == nil {
+		t.Fatal("a missing key without self-managing was made up")
+	}
+	key := bytes.Repeat([]byte{0x0b}, 32)
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.EnvelopeSecret = "meshgw-envelope"
+	if got, err := envelopeKey(t.Context(), cfg, true); err != nil || !bytes.Equal(got, key) {
+		t.Fatalf("envelopeKey() = %x, %v", got, err)
+	}
+	// A key of the wrong size is refused, never replaced.
+	if err := os.WriteFile(path, key[:8], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envelopeKey(t.Context(), cfg, false); err == nil {
+		t.Fatal("a short mounted key was replaced")
+	}
+}
+
+// A lost key is never replaced while sealed identities need it.
+func TestEnvelopeKeyMaker(t *testing.T) {
+	t.Parallel()
+	cfg := Config{EnvelopeSecret: "meshgw-envelope", StateSecret: "meshgw-state-0"}
+	if _, err := envelopeKeyMaker(true, "key-0", cfg)(); !errors.Is(err, ErrEnvelopeKeyLost) ||
+		!strings.Contains(err.Error(), "meshgw-state-0") {
+		t.Fatalf("a key made over sealed identities: %v", err)
+	}
+	fresh, err := envelopeKeyMaker(false, "key-0", cfg)()
+	if err != nil || len(fresh) != 32 || bytes.Equal(fresh, make([]byte, 32)) {
+		t.Fatalf("a fresh key = %x, %v", fresh, err)
+	}
+	if !sealedIdentities(map[string][]byte{"identity.default": {1}}) ||
+		sealedIdentities(map[string][]byte{"profile.default": {1}}) {
+		t.Fatal("sealed identities")
 	}
 }

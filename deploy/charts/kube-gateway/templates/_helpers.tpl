@@ -165,6 +165,7 @@ MESHGW_ENVELOPE_DIR: /etc/meshgw/envelope
 MESHGW_STATE_SECRET_PREFIX: {{ include "kg.statePrefix" . | quote }}
 MESHGW_SERVICE_ACCOUNT: {{ include "kg.fullname" . | quote }}
 MESHGW_ENVELOPE_SECRET: {{ .Values.envelope.existingSecret | quote }}
+MESHGW_ENVELOPE_SELF_MANAGED: {{ ternary "on" "off" (.Values.envelope.selfManaged | default false) | quote }}
 MESHGW_JOIN_SECRET: {{ .Values.join.existingSecret | quote }}
 MESHGW_REPLICAS: {{ int .Values.replicas | quote }}
 MESHGW_KUBE_GROUPS: {{ include "kg.kubeGroups" . | quote }}
