@@ -733,6 +733,8 @@ func Catalog() []Migration {
 			policyPublicationDecisionTimeSQL),
 		newMigration(316, "Policy approvals and Resource authority decide at the transaction's own time",
 			runtimeWritesDecisionTimeSQL),
+		newMigration(317, "Workspace routers and exit nodes need route.withdraw; Device tags follow the owner ceiling",
+			deviceInfrastructureCeilingSQL),
 	}
 }
 
@@ -1460,3 +1462,6 @@ var policyPublicationDecisionTimeSQL string
 
 //go:embed 000316_runtime_writes_decision_time.up.sql
 var runtimeWritesDecisionTimeSQL string
+
+//go:embed 000317_device_infrastructure_ceiling.up.sql
+var deviceInfrastructureCeilingSQL string

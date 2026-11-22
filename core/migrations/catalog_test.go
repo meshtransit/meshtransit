@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 316 {
-		t.Fatalf("len(Catalog()) = %d, want 316", len(catalog))
+	if len(catalog) != 317 {
+		t.Fatalf("len(Catalog()) = %d, want 317", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 316 {
-		t.Fatalf("LatestVersion() = %d, want 316", LatestVersion())
+	if LatestVersion() != 317 {
+		t.Fatalf("LatestVersion() = %d, want 317", LatestVersion())
 	}
 }
 
@@ -9144,5 +9144,95 @@ func TestMigration316OnlyPinsTheDecisionTime(t *testing.T) {
 		strings.Contains(sql316, "GRANT ") ||
 		strings.Contains(sql316, "REVOKE ") || strings.Contains(sql316, "DROP ") {
 		t.Error("schema 316 does more than restate the functions and their planner settings")
+	}
+}
+
+// Schema 317 (TD-SEC-97) restates the Device owner ceiling and
+// change_device_tags_v2 with only the stated changes.
+func TestMigration317OnlyChangesTheCeiling(t *testing.T) {
+	t.Parallel()
+	sql317 := migrationVersion(t, 317).SQL
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	// The ceiling: schema 295's body, VOLATILE, at the transaction's time, the
+	// actor looked up first and the Workspace branch checking infrastructure.
+	ceiling := body(sql317, "device_actor_within_ceiling_v1")
+	const oldWorkspace = `    IF v_ownership = 'workspace' THEN
+        RETURN TRUE;
+    END IF;
+    SELECT principal.id INTO v_actor FROM mesh.principal AS principal WHERE principal.public_id = p_actor_public_id;
+    IF v_actor IS NULL THEN
+        RETURN FALSE;
+    END IF;
+`
+	const newWorkspace = `    SELECT principal.id INTO v_actor FROM mesh.principal AS principal WHERE principal.public_id = p_actor_public_id;
+    IF v_actor IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    IF v_ownership = 'workspace' THEN
+        -- A site router or exit node carries the Network's routes: only one
+        -- who may withdraw routes takes it out (TD-SEC-97).
+        IF (EXISTS (SELECT 1 FROM mesh.network_site_router AS router
+                    WHERE router.device_id = p_device_id AND router.network_id = p_network_id)
+            OR EXISTS (SELECT 1 FROM mesh.network_exit_node AS node
+                       WHERE node.device_id = p_device_id AND node.network_id = p_network_id))
+            AND NOT mesh_ops.kubernetes_principal_holds_permission_internal_v1(
+                v_actor, p_workspace_id, p_network_id, 'route.withdraw', pg_catalog.transaction_timestamp()) THEN
+            RETURN FALSE;
+        END IF;
+        -- A DNS zone's resolver answers the Network's names: only one who
+        -- may change DNS takes it out.
+        IF mesh_ops.device_is_dns_resolver_internal_v1(p_device_id)
+            AND NOT mesh_ops.kubernetes_principal_holds_permission_internal_v1(
+                v_actor, p_workspace_id, p_network_id, 'dns.manage', pg_catalog.transaction_timestamp()) THEN
+            RETURN FALSE;
+        END IF;
+        RETURN TRUE;
+    END IF;
+`
+	original := body(migrationVersion(t, 295).SQL, "device_actor_within_ceiling_v1")
+	head, rest, _ := strings.Cut(original, "AS $function$")
+	rest = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rest, "p_evaluated_at IS NULL", "\x00"),
+		"p_evaluated_at", "pg_catalog.transaction_timestamp()"), "\x00", "p_evaluated_at IS NULL")
+	if strings.Count(rest, oldWorkspace) != 1 {
+		t.Fatal("schema 295's Workspace branch not found")
+	}
+	want := strings.Replace(head, "STABLE\n", "VOLATILE\n", 1) + "AS $function$" +
+		strings.Replace(rest, oldWorkspace, newWorkspace, 1)
+	if ceiling != want {
+		t.Error("schema 317 changes the ceiling beyond its infrastructure branch")
+	}
+	for _, permission := range []string{"'route.withdraw'", "'dns.manage'"} {
+		if !strings.Contains(newWorkspace, permission) {
+			t.Errorf("the infrastructure branch does not ask for %s", permission)
+		}
+	}
+	tags := body(sql317, "change_device_tags_v2")
+	const added = `
+        -- Schema 317 (TD-SEC-97): within the owner's ceiling, as the Device's
+        -- lifecycle and revocation are.
+        OR (v_device.owner_principal_id IS DISTINCT FROM v_principal AND NOT mesh_ops.device_actor_within_ceiling_v1(
+            v_workspace, v_network, v_device.id, p_principal_public_id, v_now))`
+	if strings.Count(tags, added) != 1 || strings.Replace(tags, added, "", 1) != body(migrationVersion(t, 228).SQL, "change_device_tags_v2") {
+		t.Error("schema 317 changes change_device_tags_v2 beyond the ceiling check")
+	}
+	if strings.Count(sql317, "CREATE OR REPLACE FUNCTION") != 2 || strings.Count(sql317, "CREATE ") != 2 ||
+		strings.Contains(sql317, "GRANT ") || strings.Contains(sql317, "REVOKE ") || strings.Contains(sql317, "ALTER ") ||
+		strings.Contains(sql317, "DROP ") {
+		t.Error("schema 317 does more than restate two functions")
+	}
+	for version := int64(229); version < 317; version++ {
+		sql := migrationVersion(t, version).SQL
+		if strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.change_device_tags_v2(") ||
+			(version > 295 && strings.Contains(sql, "FUNCTION mesh_ops.device_actor_within_ceiling_v1(") &&
+				strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops.device_actor_within_ceiling_v1(")) {
+			t.Errorf("schema %d restates a function schema 317 copies", version)
+		}
 	}
 }

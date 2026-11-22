@@ -136,7 +136,7 @@ var databaseClockNowParameters = map[string]string{
 	"replace_resource_group_definition_v1":   "p_occurred_at",
 }
 
-// databaseClockNowFunctions are the functions schema 181 (and later 314, 315)
+// databaseClockNowFunctions are the functions schema 181 (and later 314, 315, 317)
 // moved onto the transaction time.
 var databaseClockNowFunctions = []string{
 	"add_network_members_v1", "change_device_group_members_v1", "change_device_group_v1",
@@ -150,6 +150,8 @@ var databaseClockNowFunctions = []string{
 	"extend_device_v1", "set_network_device_lifetime_v1",
 	// Schema 315 (TD-SEC-105).
 	"lock_policy_approval_for_publication_v1",
+	// Schema 317 (TD-SEC-97).
+	"device_actor_within_ceiling_v1",
 }
 
 // stampShareAheadOfDatabase stands in for a previous binary whose host clock

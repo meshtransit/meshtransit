@@ -28,7 +28,8 @@ const (
 // holds, and only the Workspace owner acts on the owner's Devices. An
 // it_admin (who grants only it_admin) changes and revokes nothing on the
 // owner's or an admin's Device, but still acts on a plain member's; the
-// owner acts on every Device. Device leaves with its original owner.
+// owner acts on every Device. Device leaves with its original owner. Schema
+// 317 (TD-SEC-97): a Workspace exit node also needs route.withdraw.
 func assertDeviceOwnerCeiling(ctx context.Context, t *testing.T, admin *pgx.Conn,
 	runtimePool *postgresadapter.Pool, lifecycle *devicelifecycle.Service, scope network.Scope,
 	owner, itAdmin accountsession.Session, device node.ID) {
@@ -119,6 +120,53 @@ WHERE public_id = $1::UUID`, args: []any{device.String()}}})
 	}
 	if err := act(itAdmin, devicelifecycle.ActionResume); err != nil {
 		t.Fatalf("it_admin resumed a Workspace Device: %v", err)
+	}
+	// Schema 317 (TD-SEC-97): a Workspace Device that is an exit node or a
+	// site router is the Network's infrastructure: it_admin, who may not
+	// withdraw routes, no longer takes it out; the owner still does. The rows
+	// skip their pool and site foreign keys and leave at the end.
+	runRemovalFixture(ctx, t, admin, []removalFixtureStatement{{sql: `INSERT INTO mesh.network_exit_node (public_id,
+    workspace_id, network_id, pool_id, device_id, priority, state, added_by_principal_id, created_at, updated_at)
+SELECT pg_catalog.uuidv7(), device.workspace_id, device.network_id, 0, device.id, 0, 'active', 11, now(), now()
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, args: []any{device.String()}}})
+	defer runRemovalFixture(ctx, t, admin, []removalFixtureStatement{{sql: `DELETE FROM mesh.network_exit_node
+WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, args: []any{device.String()}}})
+	exitNode := readIntegrationDevice(ctx, t, admin, device)
+	if err := act(itAdmin, devicelifecycle.ActionSuspend); !errors.Is(err, devicelifecycle.ErrForbidden) {
+		t.Fatalf("it_admin suspended a Workspace exit node: %v", err)
+	}
+	if _, err := revocations.Revoke(ctx, deviceOwnerCeilingRevocation(t, scope, device, exitNode.version,
+		itAdmin)); !errors.Is(err, revocation.ErrForbidden) {
+		t.Fatalf("it_admin revoked a Workspace exit node: %v", err)
+	}
+	assertDirectRevocation(t, "it_admin on a Workspace exit node",
+		directDeviceRevocations(ctx, t, admin, scope, itAdmin, device, directRevocation{})[0],
+		"42501", "Device is beyond the actor's ceiling")
+	if err := act(owner, devicelifecycle.ActionSuspend); err != nil {
+		t.Fatalf("owner suspended a Workspace exit node: %v", err)
+	}
+	if err := act(owner, devicelifecycle.ActionResume); err != nil {
+		t.Fatalf("owner resumed a Workspace exit node: %v", err)
+	}
+	// The same for a site router alone (pool and site rows are not needed:
+	// the fixture bypasses their foreign keys and is removed at the end).
+	runRemovalFixture(ctx, t, admin, []removalFixtureStatement{
+		{sql: `DELETE FROM mesh.network_exit_node WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`,
+			args: []any{device.String()}},
+		{sql: `INSERT INTO mesh.network_site_router (public_id, workspace_id, network_id, site_id, device_id, priority,
+    state, added_by_principal_id, created_at, updated_at)
+SELECT pg_catalog.uuidv7(), device.workspace_id, device.network_id, 0, device.id, 0, 'active', 11, now(), now()
+FROM mesh.device AS device WHERE device.public_id = $1::UUID`, args: []any{device.String()}}})
+	defer runRemovalFixture(ctx, t, admin, []removalFixtureStatement{{sql: `DELETE FROM mesh.network_site_router
+WHERE device_id = (SELECT id FROM mesh.device WHERE public_id = $1::UUID)`, args: []any{device.String()}}})
+	if err := act(itAdmin, devicelifecycle.ActionSuspend); !errors.Is(err, devicelifecycle.ErrForbidden) {
+		t.Fatalf("it_admin suspended a Workspace site router: %v", err)
+	}
+	if err := act(owner, devicelifecycle.ActionSuspend); err != nil {
+		t.Fatalf("owner suspended a Workspace site router: %v", err)
+	}
+	if err := act(owner, devicelifecycle.ActionResume); err != nil {
+		t.Fatalf("owner resumed a Workspace site router: %v", err)
 	}
 	// it_admin still acts on a plain member's Device.
 	ownedBy(9302)
