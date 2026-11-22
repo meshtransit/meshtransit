@@ -143,6 +143,35 @@ func TestCaddyUsesItsOwnCAWithoutAnACMEEmail(t *testing.T) {
 	if !strings.Contains(string(rendered.Files["Caddyfile"]), "\tlocal_certs\n") {
 		t.Fatal("no local_certs without an ACME email")
 	}
+	// HSTS would keep a browser from clicking through the untrusted local
+	// certificate.
+	if strings.Contains(string(rendered.Files["Caddyfile"]), "Strict-Transport-Security") {
+		t.Fatal("HSTS with local certificates")
+	}
+}
+
+// TD-SEC-65: both public hosts send HSTS with real certificates, as the
+// final value whatever an upstream sets.
+func TestCaddySendsHSTSOnBothHosts(t *testing.T) {
+	t.Parallel()
+	config, err := ParseConfig([]byte(validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := Render(config, approvedState(), testKeys, testLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caddyfile := string(rendered.Files["Caddyfile"])
+	const hsts = "\theader {\n\t\tdefer\n\t\tStrict-Transport-Security \"max-age=31536000\"\n\t}\n"
+	for _, host := range []string{config.Domain, config.IdentityHost()} {
+		if !strings.Contains(caddyfile, host+" {\n"+hsts) {
+			t.Errorf("%s has no HSTS:\n%s", host, caddyfile)
+		}
+	}
+	if strings.Count(caddyfile, "Strict-Transport-Security") != 2 {
+		t.Error("HSTS outside the two public hosts")
+	}
 }
 
 func TestComposeSizesPostgresForThePools(t *testing.T) {
