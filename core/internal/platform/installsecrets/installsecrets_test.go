@@ -202,6 +202,66 @@ func TestParsePlan(t *testing.T) {
 		"no release":         `{"profile":"cloud","fullname":"a"}`,
 		"allow unretained":   `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["capture"]}`,
 		"allow feature off":  `{"profile":"cloud","release":"r","fullname":"a","allowNewRetainedKeys":["kube-ca-wrap-key"]}`,
+		"unknown redis mode": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"cluster"}`,
+		"provider users made by the bootstrap": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"providerUsers",
+			"secrets":{"redis-api":{"existingSecret":"r","key":"api"},"redis-control":{"existingSecret":"r","key":"control"}}}`,
+		"single with a role password": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"single",
+			"secrets":{"redis-api":{"existingSecret":"r","key":"api"}}}`,
+	} {
+		if _, err := ParsePlan([]byte(text)); !errors.Is(err, ErrPlan) {
+			t.Errorf("%s: ParsePlan() = %v", name, err)
+		}
+	}
+}
+
+func TestRedisModes(t *testing.T) {
+	t.Parallel()
+	redisItems := func(text string) map[string]bool {
+		t.Helper()
+		plan, err := ParsePlan([]byte(text))
+		if err != nil {
+			t.Fatalf("ParsePlan(%s) = %v", text, err)
+		}
+		resolved, err := plan.Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := map[string]bool{}
+		for _, entry := range resolved {
+			if entry.Kind == KindRedisPassword {
+				found[entry.ID] = entry.BYO
+			}
+		}
+		return found
+	}
+	// The default makes every role's password.
+	for _, text := range []string{
+		`{"profile":"cloud","release":"r","fullname":"a"}`,
+		`{"profile":"cloud","release":"r","fullname":"a","redisMode":"aclPerRole"}`,
+	} {
+		if got := redisItems(text); len(got) != 3 || got["redis-api"] || got["redis-control"] || got["redis-worker"] {
+			t.Errorf("%s: redis items %v, want three made by the bootstrap", text, got)
+		}
+	}
+	// Provider users: the installer's three Secrets, never made.
+	got := redisItems(`{"profile":"cloud","release":"r","fullname":"a","redisMode":"providerUsers","secrets":{
+		"redis-api":{"existingSecret":"r","key":"api"},"redis-control":{"existingSecret":"r","key":"control"},
+		"redis-worker":{"existingSecret":"r","key":"worker"}}}`)
+	if len(got) != 3 || !got["redis-api"] || !got["redis-control"] || !got["redis-worker"] {
+		t.Errorf("providerUsers: redis items %v, want three of the installer's", got)
+	}
+	// Single: no role passwords; the one user's password is the installer's
+	// Secret, checked like any BYO item.
+	if got := redisItems(`{"profile":"cloud","release":"r","fullname":"a","redisMode":"single",
+		"secrets":{"redis-single":{"existingSecret":"auth","key":"password"}}}`); len(got) != 1 || !got["redis-single"] {
+		t.Errorf("single: redis items %v, want only the installer's redis-single", got)
+	}
+	for name, text := range map[string]string{
+		"single without its Secret": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"single"}`,
+		"single sharing a place": `{"profile":"cloud","release":"r","fullname":"a","redisMode":"single","secrets":{
+			"redis-single":{"existingSecret":"s","key":"k"},"login-mesh-runtime":{"existingSecret":"s","key":"k"}}}`,
+		"redis-single in another mode": `{"profile":"cloud","release":"r","fullname":"a",
+			"secrets":{"redis-single":{"existingSecret":"s","key":"k"}}}`,
 	} {
 		if _, err := ParsePlan([]byte(text)); !errors.Is(err, ErrPlan) {
 			t.Errorf("%s: ParsePlan() = %v", name, err)

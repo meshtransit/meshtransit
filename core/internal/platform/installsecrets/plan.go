@@ -46,7 +46,32 @@ type Plan struct {
 	// version 5 login profile: it finds them in the database by these
 	// names, or makes new ones for a new installation.
 	Login *LoginPlan `json:"login,omitempty"`
+	// RedisMode is how the roles' Redis users are kept: empty or
+	// RedisACLPerRole, RedisProviderUsers or RedisSingle.
+	RedisMode RedisMode `json:"redisMode,omitempty"`
 }
+
+// RedisMode is how the roles' Redis users are kept.
+type RedisMode string
+
+// redisSingleItem is, in RedisSingle, the one user's password: always the
+// installer's Secret (the provider made it), checked like any BYO item and
+// mounted into api, control and worker.
+func redisSingleItem() Item {
+	return Item{ID: "redis-single", Key: "password", Kind: KindRedisPassword}
+}
+
+const (
+	// RedisACLPerRole: the chart's ACL Job keeps one user per role; the
+	// bootstrap makes their passwords (the default).
+	RedisACLPerRole RedisMode = "aclPerRole"
+	// RedisProviderUsers: the installer makes one user per role at the
+	// provider (ElastiCache RBAC, Terraform) and brings each password.
+	RedisProviderUsers RedisMode = "providerUsers"
+	// RedisSingle: one user for every role (a service with a single AUTH
+	// password); the chart mounts the installer's Secret, no role password.
+	RedisSingle RedisMode = "single"
+)
 
 // LoginPlan names the login route the database knows its provider by.
 type LoginPlan struct {
@@ -106,6 +131,9 @@ func ParsePlan(data []byte) (Plan, error) {
 	if plan.Login != nil && !plan.Login.valid() {
 		return Plan{}, fmt.Errorf("%w: login", ErrPlan)
 	}
+	if !slices.Contains([]RedisMode{"", RedisACLPerRole, RedisProviderUsers, RedisSingle}, plan.RedisMode) {
+		return Plan{}, fmt.Errorf("%w: redisMode", ErrPlan)
+	}
 	if _, err := plan.Resolve(); err != nil {
 		return Plan{}, err
 	}
@@ -117,6 +145,10 @@ func (plan Plan) Resolve() ([]Resolved, error) {
 	items, err := Items(plan.Profile, plan.Features)
 	if err != nil {
 		return nil, err
+	}
+	if plan.RedisMode == RedisSingle {
+		items = slices.DeleteFunc(items, func(item Item) bool { return item.Kind == KindRedisPassword })
+		items = append(items, redisSingleItem())
 	}
 	resolved := make([]Resolved, 0, len(items))
 	used := map[string]string{}
@@ -138,6 +170,11 @@ func (plan Plan) Resolve() ([]Resolved, error) {
 		entry := Resolved{Item: item, SecretName: SecretName(plan.Fullname, item), SecretKey: item.Key}
 		if override, ok := plan.Secrets[item.ID]; ok {
 			entry.SecretName, entry.SecretKey, entry.BYO = override.ExistingSecret, override.Key, true
+		}
+		// A password the bootstrap made would match no user the installer
+		// made at the provider.
+		if plan.RedisMode != "" && plan.RedisMode != RedisACLPerRole && item.Kind == KindRedisPassword && !entry.BYO {
+			return nil, fmt.Errorf("%w: redisMode %s needs the installer's Secret for %s", ErrPlan, plan.RedisMode, item.ID)
 		}
 		// Two items in one place would share a value.
 		place := entry.SecretName + "/" + entry.SecretKey

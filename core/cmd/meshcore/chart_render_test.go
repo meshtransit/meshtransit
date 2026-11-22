@@ -61,8 +61,9 @@ type chartCheck struct {
 // chartPlan is the bootstrap plan's fullname and the Secret places
 // (name/key) of its items.
 type chartPlan struct {
-	fullname string
-	places   map[string]bool
+	fullname  string
+	places    map[string]bool
+	redisMode installsecrets.RedisMode
 }
 
 const (
@@ -127,7 +128,15 @@ func TestChartRender(t *testing.T) {
 			names = append(names, name)
 			commands[strings.Join(workload.Args, " ")] = true
 		}
+		// The ACL Job keeps the role users only when the chart owns them.
+		aclJob := plan.redisMode == "" || plan.redisMode == installsecrets.RedisACLPerRole
 		for _, command := range chartCommands {
+			if command == "redis acl apply" && !aclJob {
+				if commands[command] {
+					t.Errorf("%s: redisMode %s, but a workload runs %q", variant, plan.redisMode, command)
+				}
+				continue
+			}
 			if !commands[command] {
 				t.Errorf("%s: no workload runs %q", variant, command)
 			}
@@ -168,7 +177,7 @@ func chartBootstrapPlan(t *testing.T, variant string, render chartRender) chartP
 				places[item.SecretName+"/"+item.SecretKey] = true
 				places[item.SecretName+"/*"] = true
 			}
-			return chartPlan{fullname: plan.Fullname, places: places}
+			return chartPlan{fullname: plan.Fullname, places: places, redisMode: plan.RedisMode}
 		}
 	}
 	t.Fatalf("%s: no bootstrap Job with its plan file", variant)
