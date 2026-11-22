@@ -5,6 +5,18 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshgw (TD-SEC-69): a release build refuses to start without
+  `MESHGW_JOIN_DIR` (the kube-gateway chart always sets it), with
+  `MESHGW_KUBE_MODE=passthrough`, or with `MESHGW_KUBE_API_BACKEND`. The
+  enroll-only passthrough gateway (no per-person identity, no operation
+  records) and the API server override exist only in builds tagged
+  `meshgwtest`. An old K0-style deployment without a join directory stops at
+  start with an error naming the variable.
+- relay (TD-SEC-28): logs redact errors and secret-like attributes and carry a
+  closed `error_code` (and `status_code`) instead; the relay key file must be a
+  regular file of at most 4 KiB, checked on the file actually read.
+- setup (TD-SEC-65): the self-host Caddy sends HSTS (one year, no subdomains,
+  no preload) on the domain and identity host when it uses ACME certificates.
 - core (schema 312, TD-API-50): an enrollment key's creator must be an active
   member of its Network, to create the key (`403 network_membership_required`)
   and when the key is used: while the creator's Network or Workspace membership

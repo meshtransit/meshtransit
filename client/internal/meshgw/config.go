@@ -95,8 +95,15 @@ type Config struct {
 	Kube KubeConfig
 }
 
-// LoadConfig reads the pod's configuration from its environment.
+// LoadConfig reads the pod's configuration from its environment. A release
+// build refuses the test-only modes (TD-SEC-69): an enroll-only passthrough
+// gateway (no MESHGW_JOIN_DIR: no per-person identity, no operation records)
+// and MESHGW_KUBE_API_BACKEND.
 func LoadConfig(getenv func(string) string) (Config, error) {
+	return loadConfig(getenv, testModes)
+}
+
+func loadConfig(getenv func(string) string, allowTestModes bool) (Config, error) {
 	value := func(name, fallback string) string {
 		if got := strings.TrimSpace(getenv(name)); got != "" {
 			return got
@@ -210,6 +217,10 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if joinKeyFile == "" && value("MESHGW_CERTIFICATE_DIR", "") != "" {
 		return Config{}, errors.New("meshgw: MESHGW_CERTIFICATE_DIR needs MESHGW_JOIN_DIR")
 	}
+	if joinKeyFile == "" && !allowTestModes {
+		return Config{}, errors.New("meshgw: MESHGW_JOIN_DIR is required: install with the kube-gateway chart, which " +
+			"sets it; a gateway that only enrolls and passes kubectl through exists in test builds only")
+	}
 	if joinKeyFile == "" {
 		// A gateway that enrolls (K0) only passes kubectl through: proxy
 		// settings without MESHGW_JOIN_DIR are a mistake, refused rather
@@ -226,7 +237,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		cfg.Kube = KubeConfig{Mode: KubeModePassthrough}
 		return cfg, nil
 	}
-	cfg.Kube, err = loadKubeConfig(getenv, cfg, cfg.KubeAPIBackend, certificates)
+	cfg.Kube, err = loadKubeConfig(getenv, cfg, cfg.KubeAPIBackend, certificates, allowTestModes)
 	if err != nil {
 		return Config{}, err
 	}

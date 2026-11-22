@@ -406,8 +406,13 @@ func newKubectlPath(cfg Config, service *daemon.Service, coreNow func() time.Tim
 			{reason: "no Kubernetes group enabled", ok: func() bool { return anyGroupEnabled(cfg.Kube.Groups, runtime.checker.Verdict) }},
 		}, metrics: runtime.writeMetrics, status: map[string]func() any{"kube": runtime.status}}, nil
 	}
+	// A release build never reaches here through LoadConfig; refuse a
+	// hand-built Config too (TD-SEC-69).
+	if !testModes {
+		return kubectlPath{}, kubectlReadiness{}, errors.New("meshgw: passthrough exists in test builds only")
+	}
 	if cfg.JoinKeyFile != "" {
-		// Gone at K1f; support sees it on every start (review L8).
+		// Test builds only; support sees it on every start (review L8).
 		logger.Warn("kubectl passes through to the API server unchecked", "error_code",
 			"kubernetes_passthrough_mode")
 	}

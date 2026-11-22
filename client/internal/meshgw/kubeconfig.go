@@ -25,7 +25,7 @@ const (
 	// group (K1b).
 	KubeModeProxy = "proxy"
 	// KubeModePassthrough passes kubectl's TCP to the API server unchanged
-	// (K0): only when set explicitly, and gone at K1f.
+	// (K0): test builds only (TD-SEC-69).
 	KubeModePassthrough = "passthrough"
 )
 
@@ -104,7 +104,7 @@ type groupSpec struct {
 // loadKubeConfig reads a K1 gateway's kubectl configuration. apiServer is
 // KUBERNETES_SERVICE_HOST:PORT; certificates whether the replica keeps a
 // certificate, which the proxy serves with.
-func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, certificates bool,
+func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, certificates, allowTestModes bool,
 ) (KubeConfig, error) {
 	value := func(name, fallback string) string {
 		if got := strings.TrimSpace(getenv(name)); got != "" {
@@ -116,6 +116,9 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 	mode := value("MESHGW_KUBE_MODE", KubeModeProxy)
 	switch mode {
 	case KubeModePassthrough:
+		if !allowTestModes {
+			return KubeConfig{}, errors.New("meshgw: MESHGW_KUBE_MODE=passthrough exists in test builds only")
+		}
 		for _, name := range proxyOnlyVariables {
 			if value(name, "") != "" {
 				return KubeConfig{}, fmt.Errorf("meshgw: MESHGW_KUBE_MODE=passthrough takes no %s", name)
@@ -148,6 +151,9 @@ func loadKubeConfig(getenv func(string) string, cfg Config, apiServer string, ce
 	}
 	server := "https://" + apiServer
 	override := value("MESHGW_KUBE_API_BACKEND", "")
+	if override != "" && !allowTestModes {
+		return KubeConfig{}, errors.New("meshgw: MESHGW_KUBE_API_BACKEND exists in test builds only")
+	}
 	if override != "" {
 		parsed, err := url.Parse(override)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path != "" || parsed.User != nil ||

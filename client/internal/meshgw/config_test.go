@@ -31,7 +31,40 @@ func testEnv(t *testing.T) (map[string]string, string) {
 }
 
 func loadFrom(env map[string]string) (Config, error) {
-	return LoadConfig(func(name string) string { return env[name] })
+	return loadConfig(func(name string) string { return env[name] }, true)
+}
+
+// TD-SEC-69: a release build refuses the test-only modes.
+func TestReleaseBuildRefusesTestModes(t *testing.T) {
+	t.Parallel()
+	release := func(env map[string]string) error {
+		_, err := loadConfig(func(name string) string { return env[name] }, false)
+		return err
+	}
+	env, _ := testEnv(t)
+	if err := release(env); err == nil || !strings.Contains(err.Error(), "MESHGW_JOIN_DIR is required") {
+		t.Errorf("an enroll-only gateway: %v", err)
+	}
+	// The chart's configuration loads in a release build.
+	if err := release(proxyEnv(t)); err != nil {
+		t.Errorf("the chart's proxy configuration: %v", err)
+	}
+	proxy := proxyEnv(t)
+	proxy["MESHGW_KUBE_MODE"] = "passthrough"
+	if err := release(proxy); err == nil || !strings.Contains(err.Error(), "MESHGW_KUBE_MODE=passthrough exists") {
+		t.Errorf("passthrough with a join directory: %v", err)
+	}
+	proxy = proxyEnv(t)
+	proxy["MESHGW_KUBE_API_BACKEND"] = "https://api.example:6443"
+	if err := release(proxy); err == nil || !strings.Contains(err.Error(), "MESHGW_KUBE_API_BACKEND exists") {
+		t.Errorf("an API server override: %v", err)
+	}
+	if testModes {
+		t.Skip("built with meshgwtest")
+	}
+	if _, err := LoadConfig(func(name string) string { return env[name] }); err == nil {
+		t.Error("LoadConfig accepted an enroll-only gateway in a release build")
+	}
 }
 
 // A pod's configuration comes from its environment: the ordinal from its
