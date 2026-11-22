@@ -7,12 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 type recordingTrusts struct {
 	confirms, chooses []kubecluster.TrustDecision
 	resets            []kubecluster.TrustReset
+}
+
+func (store *recordingTrusts) ReadClusterTrust(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.ClusterTrustView, error) {
+	return kubecluster.ClusterTrustView{Mode: kubecluster.TrustModeCode}, nil
 }
 
 func (store *recordingTrusts) ConfirmTrust(_ context.Context,

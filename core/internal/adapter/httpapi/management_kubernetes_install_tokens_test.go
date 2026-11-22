@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 )
 
@@ -24,6 +26,29 @@ type kubernetesTrustStub struct {
 	confirms []kubecluster.TrustDecision
 	chooses  []kubecluster.TrustDecision
 	resets   []kubecluster.TrustReset
+}
+
+func (stub *kubernetesTrustStub) ReadClusterTrust(context.Context, accountsession.Session, network.Scope,
+	kubecluster.ID) (kubecluster.ClusterTrustView, error) {
+	if stub.err != nil {
+		return kubecluster.ClusterTrustView{}, stub.err
+	}
+	trustID, err := publicid.Parse(kubernetesTestKey)
+	if err != nil {
+		stub.t.Fatal(err)
+	}
+	side := kubecluster.TrustSide{Digest: [32]byte{0x89}, Issuer: "https://kubernetes.default.svc.cluster.local",
+		Namespace: "mt-kube", ServiceAccount: "meshgw", StatefulSet: "meshgw", KeyThumbprints: [][32]byte{{1}}}
+	other := side
+	other.Digest = [32]byte{0x42}
+	return kubecluster.ClusterTrustView{ClusterVersion: 7, Mode: kubecluster.TrustModePrivateTOFU, CanManage: true,
+		Trust: &kubecluster.ClusterTrustRead{ID: trustID, Version: 7, Source: kubecluster.TrustFromInstallToken,
+			State: kubecluster.TrustContested, Side: side, SetAt: time.Date(2026, 11, 22, 1, 0, 0, 0, time.UTC),
+			Contested: &other, ContestedAt: time.Date(2026, 11, 22, 2, 0, 0, 0, time.UTC)},
+		Tokens: []kubecluster.InstallTokenState{{KeyID: kubernetesTestKeyValue(stub.t, kubecluster.KeyActive).ID(),
+			State: "revoked", Replicas: 2, UsedOrdinals: []int{0}, CreatedBy: trustID,
+			CreatedAt: time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC),
+			ExpiresAt: time.Date(2026, 11, 22, 1, 0, 0, 0, time.UTC)}}}, nil
 }
 
 func (stub *kubernetesTrustStub) SetClusterTrustMode(_ context.Context,
@@ -108,6 +133,7 @@ const testTrustDigest = "8981fcf3aa7c75f6496a5df0e760ebf1298e0e98ffb196b7563c7cb
 func TestParseKubernetesTrustPaths(t *testing.T) {
 	t.Parallel()
 	for rest, want := range map[string]string{
+		"/trust":                          kubernetesTrustReadOperation,
 		"/trust-mode":                     kubernetesTrustModeOperation,
 		"/install-tokens":                 kubernetesInstallTokenOperation,
 		"/signing-trust/actions/confirm":  kubernetesTrustConfirmOperation,
@@ -120,8 +146,11 @@ func TestParseKubernetesTrustPaths(t *testing.T) {
 		"/signing-trust/actions/confirm/": "",
 	} {
 		method := http.MethodPost
-		if want == kubernetesTrustModeOperation {
+		switch want {
+		case kubernetesTrustModeOperation:
 			method = http.MethodPut
+		case kubernetesTrustReadOperation:
+			method = http.MethodGet
 		}
 		request := httptest.NewRequest(method, kubernetesClustersTestPath("/"+kubernetesTestCluster+rest), nil)
 		path, ok := parseKubernetesClusterPath(request)
@@ -144,6 +173,14 @@ func TestParseKubernetesTrustPaths(t *testing.T) {
 func TestKubernetesTrustHandlers(t *testing.T) {
 	t.Parallel()
 	stub := &kubernetesTrustStub{kubernetesClusterStub: &kubernetesClusterStub{}, t: t}
+	read := serveKubernetesTrustRequest(t, stub, http.MethodGet, "/trust", "", "")
+	body := read.Body.String()
+	if read.Code != http.StatusOK || read.Header().Get("ETag") != `"7"` ||
+		!strings.Contains(body, `"state":"contested"`) || !strings.Contains(body, `"source":"install_token"`) ||
+		!strings.Contains(body, `"contested":{"digest":"42`) || !strings.Contains(body, `"used_ordinals":[0]`) ||
+		!strings.Contains(body, `"trust_mode":"private_tofu"`) {
+		t.Fatalf("GET trust = %d %s", read.Code, body)
+	}
 	response := serveKubernetesTrustRequest(t, stub, http.MethodPut, "/trust-mode", `"3"`,
 		`{"trust_mode":"private_tofu"}`)
 	if response.Code != http.StatusOK || len(stub.modes) != 1 || stub.modes[0].Version != 3 ||

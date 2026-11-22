@@ -8,6 +8,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
 	"meshtransit.net/core/internal/domain/kubecluster"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/platform/config"
 )
 
@@ -61,6 +62,11 @@ type kubernetesClusterManager struct {
 }
 
 var _ httpapi.KubernetesTrustManager = kubernetesClusterManager{}
+
+func (manager kubernetesClusterManager) ReadClusterTrust(ctx context.Context, session accountsession.Session,
+	scope network.Scope, cluster kubecluster.ID) (kubecluster.ClusterTrustView, error) {
+	return manager.trusts.Read(ctx, session, scope, cluster)
+}
 
 func (manager kubernetesClusterManager) SetClusterTrustMode(ctx context.Context,
 	change kubecluster.TrustModeChange) (kubecluster.TrustModeResult, error) {

@@ -166,6 +166,15 @@ func assertKubernetesInstallTokenApproval(ctx context.Context, t *testing.T, adm
 	assertKubernetesEvent(ctx, t, admin, "kubernetes_cluster", clusterID.String(), "kubernetes_cluster.trust_pinned")
 	digest := first.digest(t)
 	assertTrustRow(ctx, t, admin, clusterID, "unconfirmed", digest)
+	// The trust read shows the unconfirmed trust, its digest, and the token
+	// with the ordinal it admitted.
+	read, err := trusts.Read(ctx, owner, scope, clusterID)
+	if err != nil || read.Mode != kubecluster.TrustModePrivateTOFU || read.Trust == nil ||
+		read.Trust.State != kubecluster.TrustUnconfirmed || read.Trust.Side.Digest != digest || !read.CanManage ||
+		len(read.Tokens) != 1 || len(read.Tokens[0].UsedOrdinals) != 1 || read.Tokens[0].UsedOrdinals[0] != 0 ||
+		read.ClusterVersion != clusterVersion(ctx, t, admin, clusterID) {
+		t.Fatalf("Read() after the pin = %+v, %v", read, err)
+	}
 	// The cluster's signing read shows the pinned trust and its source.
 	signing, err := service.ReadSigning(ctx, owner, scope, clusterID)
 	if err != nil || signing.Trust == nil || signing.Trust.Source != kubecluster.TrustFromInstallToken {
@@ -253,6 +262,11 @@ func assertKubernetesInstallTokenApproval(ctx context.Context, t *testing.T, adm
 	assertKubernetesEvent(ctx, t, admin, "kubernetes_cluster", clusterID.String(),
 		"kubernetes_cluster.trust_contested")
 	assertDeviceState(ctx, t, admin, firstDevice, "suspended", "trust_contested")
+	if read, err := trusts.Read(ctx, owner, scope, clusterID); err != nil || read.Trust == nil ||
+		read.Trust.State != kubecluster.TrustContested || read.Trust.Contested == nil ||
+		read.Trust.Contested.Digest != contender.digest(t) || read.Trust.Side.Digest != digest {
+		t.Fatalf("Read() of a contested trust = %+v, %v", read, err)
+	}
 	if err := admin.QueryRow(ctx, `SELECT state FROM mesh.kubernetes_replica_request WHERE public_id = $1::UUID`,
 		restartedTicket.Request.ID().String()).Scan(&secondState); err != nil || secondState != "cancelled" {
 		t.Fatalf("the approval waiting under a contested trust is %q, %v", secondState, err)

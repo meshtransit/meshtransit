@@ -154,8 +154,9 @@ type TrustDecisionResult struct {
 	RevokedTokens    int
 }
 
-// TrustStore authorizes and records trust actions.
+// TrustStore authorizes and records trust actions, and reads trusts.
 type TrustStore interface {
+	ClusterTrustReader
 	ConfirmTrust(ctx context.Context, decision TrustDecision) (TrustDecisionResult, error)
 	ChooseTrust(ctx context.Context, decision TrustDecision) (TrustDecisionResult, error)
 	ResetTrust(ctx context.Context, reset TrustReset) (TrustDecisionResult, error)
@@ -233,4 +234,82 @@ func ValidResetReason(reason string) bool {
 	length := utf8.RuneCountInString(reason)
 	return length >= 1 && length <= 256 && utf8.ValidString(reason) && reason == strings.Trim(reason, " ") &&
 		!strings.ContainsFunc(reason, unicode.IsControl)
+}
+
+// TrustState is how far an install-token trust is from confirmed.
+type TrustState string
+
+// Trust states (schema 306).
+const (
+	TrustConfirmed   TrustState = "confirmed"
+	TrustUnconfirmed TrustState = "unconfirmed"
+	TrustContested   TrustState = "contested"
+)
+
+// TrustSide is one set of signing material: the trust's, or the other
+// side of a contest.
+type TrustSide struct {
+	Digest         [32]byte
+	Issuer         string
+	Namespace      string
+	ServiceAccount string
+	StatefulSet    string
+	KeyThumbprints [][32]byte
+}
+
+// ClusterTrustRead is a cluster's trust as the Console shows it (schema
+// 311): the mode, the trust and, while contested, the other side.
+type ClusterTrustRead struct {
+	ID          publicid.ID
+	Version     int64
+	Source      TrustSource
+	State       TrustState
+	Side        TrustSide
+	SetAt       time.Time
+	ConfirmedAt time.Time
+	// ConfirmedBy is set only for those who manage the cluster.
+	ConfirmedBy publicid.ID
+	// Contested is the other side while State is contested.
+	Contested   *TrustSide
+	ContestedAt time.Time
+}
+
+// InstallTokenState is an install token and the pod ordinals it admitted.
+type InstallTokenState struct {
+	KeyID        enrollment.CredentialID
+	State        string
+	Replicas     int
+	UsedOrdinals []int
+	CreatedBy    publicid.ID
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+}
+
+// ClusterTrustView is what a reader sees of a cluster's trust; Tokens only
+// for those who manage it.
+type ClusterTrustView struct {
+	ClusterVersion int64
+	Mode           TrustMode
+	Trust          *ClusterTrustRead
+	CanManage      bool
+	Tokens         []InstallTokenState
+}
+
+// ClusterTrustReader reads a cluster's trust.
+type ClusterTrustReader interface {
+	ReadClusterTrust(ctx context.Context, session accountsession.Session, scope network.Scope,
+		cluster ID) (ClusterTrustView, error)
+}
+
+// Read reads a cluster's trust (network.read; tokens with manage).
+func (trusts *Trusts) Read(ctx context.Context, session accountsession.Session, scope network.Scope,
+	cluster ID) (ClusterTrustView, error) {
+	if ctx == nil || trusts == nil || !scope.IsValid() || !cluster.IsValid() {
+		return ClusterTrustView{}, ErrInvalid
+	}
+	now := trusts.clock.Now().UTC()
+	if now.IsZero() || !session.IsActiveAt(now) {
+		return ClusterTrustView{}, ErrForbidden
+	}
+	return trusts.store.ReadClusterTrust(ctx, session, scope, cluster)
 }

@@ -721,6 +721,8 @@ func Catalog() []Migration {
 			kubernetesInstallTokenApprovalSQL),
 		newMigration(310, "A replica's session tells an install token from an ordinary join key",
 			kubernetesJoinKeyPreapprovedSQL),
+		newMigration(311, "Read a Kubernetes cluster's trust mode, trust state and digests, and install tokens",
+			kubernetesClusterTrustReadSQL),
 	}
 }
 
@@ -1430,3 +1432,6 @@ var kubernetesInstallTokenApprovalSQL string
 
 //go:embed 000310_kubernetes_join_key_preapproved.up.sql
 var kubernetesJoinKeyPreapprovedSQL string
+
+//go:embed 000311_kubernetes_cluster_trust_read.up.sql
+var kubernetesClusterTrustReadSQL string

@@ -35,6 +35,19 @@ func assertKubernetesInstallTokenInvariants(ctx context.Context, t *testing.T, a
 	}
 	clusterID, _ := tofuCluster(ctx, t, service, tokens, owner, scope, "tofu-c")
 
+	// A reader sees the trust mode, never the install tokens.
+	trusts, err := kubecluster.NewTrusts(store, accountsession.SystemClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeRead := seedKubernetesNetworkPermission(ctx, t, admin, member, scope, 30900, "network.read")
+	if read, err := trusts.Read(ctx, member, scope, clusterID); err != nil || read.CanManage || read.Tokens != nil ||
+		read.Mode != kubecluster.TrustModePrivateTOFU {
+		removeRead()
+		t.Fatalf("a reader's Read() = %+v, %v", read, err)
+	}
+	removeRead()
+
 	// Only manage, then only approve: neither sets the mode nor issues.
 	request := kubecluster.InstallTokenRequest{Session: member, Scope: scope, ClusterID: clusterID, Replicas: 1,
 		CorrelationID: newCorrelationID(t)}

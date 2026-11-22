@@ -6215,6 +6215,315 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/trust": {
+      "get": {
+        "operationId": "readKubernetesClusterTrust",
+        "summary": "Read a cluster's trust mode, trust and install tokens",
+        "description": "Requires network.read; install_tokens need kubernetes_cluster.manage. The trust's digest is the cluster trust digest (meshtransit/kube-cluster-trust/v1) to compare with what helm test prints; while contested, contested is the other side. The ETag is the cluster's version, the If-Match of the trust actions.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cluster's trust",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "ETag": {
+                "description": "The cluster's version",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "data",
+                    "correlation_id"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "cluster_version",
+                        "trust_mode",
+                        "trust",
+                        "can_manage",
+                        "install_tokens"
+                      ],
+                      "properties": {
+                        "cluster_version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "trust_mode": {
+                          "type": "string",
+                          "enum": [
+                            "code",
+                            "private_tofu",
+                            "issuer"
+                          ]
+                        },
+                        "trust": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": false,
+                          "required": [
+                            "digest",
+                            "issuer",
+                            "namespace",
+                            "service_account",
+                            "statefulset",
+                            "key_thumbprints",
+                            "trust_id",
+                            "version",
+                            "source",
+                            "state",
+                            "set_at",
+                            "confirmed_at",
+                            "confirmed_by",
+                            "contested"
+                          ],
+                          "properties": {
+                            "digest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            "issuer": {
+                              "type": "string"
+                            },
+                            "namespace": {
+                              "type": "string"
+                            },
+                            "service_account": {
+                              "type": "string"
+                            },
+                            "statefulset": {
+                              "type": "string"
+                            },
+                            "key_thumbprints": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "trust_id": {
+                              "$ref": "#/components/schemas/PublicID"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "replica_approval",
+                                "admin_paste",
+                                "install_token"
+                              ]
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "confirmed",
+                                "unconfirmed",
+                                "contested"
+                              ]
+                            },
+                            "set_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "confirmed_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            },
+                            "confirmed_by": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "uuid"
+                            },
+                            "contested": {
+                              "type": [
+                                "object",
+                                "null"
+                              ],
+                              "additionalProperties": false,
+                              "required": [
+                                "digest",
+                                "issuer",
+                                "namespace",
+                                "service_account",
+                                "statefulset",
+                                "key_thumbprints",
+                                "contested_at"
+                              ],
+                              "properties": {
+                                "digest": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                },
+                                "issuer": {
+                                  "type": "string"
+                                },
+                                "namespace": {
+                                  "type": "string"
+                                },
+                                "service_account": {
+                                  "type": "string"
+                                },
+                                "statefulset": {
+                                  "type": "string"
+                                },
+                                "key_thumbprints": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$"
+                                  }
+                                },
+                                "contested_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        },
+                        "install_tokens": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "maxItems": 32,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "key_id",
+                              "state",
+                              "replicas",
+                              "used_ordinals",
+                              "created_by",
+                              "created_at",
+                              "expires_at"
+                            ],
+                            "properties": {
+                              "key_id": {
+                                "$ref": "#/components/schemas/PublicID"
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "expired",
+                                  "revoked"
+                                ]
+                              },
+                              "replicas": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 5
+                              },
+                              "used_ordinals": {
+                                "type": "array",
+                                "items": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 4
+                                }
+                              },
+                              "created_by": {
+                                "$ref": "#/components/schemas/PublicID"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "expires_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          },
+                          "description": "The 32 newest install tokens; null unless the caller has kubernetes_cluster.manage"
+                        }
+                      }
+                    },
+                    "correlation_id": {
+                      "$ref": "#/components/schemas/PublicID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/kubernetes-clusters/{cluster_id}/trust-mode": {
       "put": {
         "operationId": "setKubernetesClusterTrustMode",

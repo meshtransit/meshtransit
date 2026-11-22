@@ -72,16 +72,16 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	// start read /auth/v1/session, 3 the Network summaries and Workspace
 	// overview, TD-CON-48, 2 reading and deleting one Network, N1a); another count
 	// means an API was added or dropped without review. The base document
-	// has 69 paths (a release's Kubernetes access and a cluster's profile denials, K2f; a cluster's group ceilings,
+	// has 70 paths (a release's Kubernetes access and a cluster's profile denials, K2f; a cluster's group ceilings,
 	// list and one by hash, K2h h4), 25 of them the Kubernetes clusters (bearer only until the
 	// Console's K1d step moves them onto the cookie; the 25th a cluster's
-	// access settings, K2d d4b), and 5 more of them a cluster's trust mode,
+	// access settings, K2d d4b), and 6 more of them a cluster's trust and its mode,
 	// install tokens and trust actions (V1-12 step 1e).
 	operations := 0
 	for _, item := range paths {
 		operations += len(item.(map[string]any))
 	}
-	if len(basePaths) != 69 || operations != 127 {
+	if len(basePaths) != 70 || operations != 127 {
 		t.Fatal("private profile introduced another product resource API", len(basePaths), operations)
 	}
 	for path, raw := range paths {
