@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 318 {
-		t.Fatalf("len(Catalog()) = %d, want 318", len(catalog))
+	if len(catalog) != 319 {
+		t.Fatalf("len(Catalog()) = %d, want 319", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 318 {
-		t.Fatalf("LatestVersion() = %d, want 318", LatestVersion())
+	if LatestVersion() != 319 {
+		t.Fatalf("LatestVersion() = %d, want 319", LatestVersion())
 	}
 }
 
@@ -9278,5 +9278,77 @@ func TestMigration318OnlyPinsTheActivationTime(t *testing.T) {
 		strings.Contains(sql318, "GRANT ") || strings.Contains(sql318, "REVOKE ") ||
 		strings.Contains(sql318, "ALTER ") || strings.Contains(sql318, "DROP ") {
 		t.Error("schema 318 does more than restate two functions")
+	}
+}
+
+// Schema 319 (TD-SEC-103) restates the email recorder and the member
+// directory with only the provider source added.
+func TestMigration319OnlyAddsTheEmailProvider(t *testing.T) {
+	t.Parallel()
+	sql319 := migrationVersion(t, 319).SQL
+	body := func(sql, name string) string {
+		start := strings.Index(sql, "FUNCTION mesh_ops."+name+"(")
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start:], "$function$;") + start
+		return sql[start:end]
+	}
+	for _, function := range []struct {
+		name    string
+		version int64
+		edits   [][2]string
+	}{
+		{"record_account_verified_email_v1", 288, [][2]string{
+			{"public_id, deployment_id, account_id, email, verified_at, version, created_at, updated_at\n" +
+				"    ) VALUES (p_row_public_id, v_auth.deployment_id, v_account, p_email, v_now, 1, v_now, v_now)",
+				"public_id, deployment_id, account_id, email, identity_provider_id, verified_at, version, created_at,\n" +
+					"        updated_at\n" +
+					"    ) VALUES (p_row_public_id, v_auth.deployment_id, v_account, p_email, v_auth.identity_provider_id, v_now, 1,\n" +
+					"        v_now, v_now)"},
+			{"IF v_row.email = p_email THEN",
+				"IF v_row.email = p_email AND v_row.identity_provider_id IS NOT DISTINCT FROM v_auth.identity_provider_id THEN"},
+			{"SET email = p_email, verified_at = v_now, version = stored.version + 1,",
+				"SET email = p_email, identity_provider_id = v_auth.identity_provider_id, verified_at = v_now,\n" +
+					"        version = stored.version + 1,"},
+		}},
+		{"list_workspace_members_v2", 304, [][2]string{{"'email', account_email.email,",
+			"-- Only an email the provider this Workspace routes verified (TD-SEC-103).\n" +
+				"                        'email', CASE WHEN EXISTS (\n" +
+				"                            SELECT 1 FROM mesh.workspace_identity_provider AS route\n" +
+				"                            WHERE route.deployment_id = workspace.deployment_id\n" +
+				"                              AND route.workspace_id = workspace.id\n" +
+				"                              -- A row from before schema 319: the Account's one provider (an\n" +
+				"                              -- Account's subjects are all on one; 288 recorded only from it).\n" +
+				"                              AND route.identity_provider_id = COALESCE(account_email.identity_provider_id, (\n" +
+				"                                  SELECT CASE WHEN pg_catalog.count(DISTINCT subject.identity_provider_id) = 1\n" +
+				"                                      THEN pg_catalog.min(subject.identity_provider_id) END\n" +
+				"                                  FROM mesh.identity_subject AS subject\n" +
+				"                                  WHERE subject.deployment_id = account.deployment_id\n" +
+				"                                    AND subject.principal_id = principal.id))\n" +
+				"                              AND route.state = 'active' AND route.deleted_at IS NULL\n" +
+				"                        ) THEN account_email.email END,"}}},
+	} {
+		want := body(migrationVersion(t, function.version).SQL, function.name)
+		for _, edit := range function.edits {
+			if strings.Count(want, edit[0]) != 1 {
+				t.Fatalf("%s: %q not found once", function.name, edit[0])
+			}
+			want = strings.Replace(want, edit[0], edit[1], 1)
+		}
+		if body(sql319, function.name) != want {
+			t.Errorf("schema 319 changes %s beyond its email provider", function.name)
+		}
+		for version := function.version + 1; version < 319; version++ {
+			sql := migrationVersion(t, version).SQL
+			if strings.Contains(sql, "CREATE OR REPLACE FUNCTION mesh_ops."+function.name+"(") ||
+				strings.Contains(sql, "ALTER FUNCTION mesh_ops."+function.name+"(") {
+				t.Errorf("schema %d changes %s after the version 319 copies", version, function.name)
+			}
+		}
+	}
+	if strings.Count(sql319, "CREATE OR REPLACE FUNCTION") != 2 || strings.Contains(sql319, "GRANT ") ||
+		strings.Contains(sql319, "REVOKE ") || strings.Contains(sql319, "DROP ") {
+		t.Error("schema 319 does more than add the provider and restate two functions")
 	}
 }

@@ -214,14 +214,19 @@ func assertMemberDirectoryEmail(ctx context.Context, t *testing.T, admin *pgx.Co
 		}
 	}
 	const email = "member-304@example.com"
+	// Verified through a provider this Workspace routes (schema 319).
 	execFixtureWithoutTriggers(ctx, t, admin, `INSERT INTO mesh.account_email
-		(public_id, deployment_id, account_id, email, verified_at, version, created_at, updated_at)
+		(public_id, deployment_id, account_id, email, identity_provider_id, verified_at, version, created_at,
+		 updated_at)
 		SELECT '01890f00-0000-7000-8000-0000000003a4'::UUID, account.deployment_id, account.id, $2,
+			(SELECT route.identity_provider_id FROM mesh.workspace_identity_provider AS route
+			 JOIN mesh.workspace AS workspace ON workspace.id = route.workspace_id
+			 WHERE workspace.public_id = $3::UUID AND route.state = 'active' AND route.deleted_at IS NULL LIMIT 1),
 			pg_catalog.now(), 1, pg_catalog.now(), pg_catalog.now()
 		FROM mesh.account AS account
 		JOIN mesh.principal AS principal
 		  ON principal.deployment_id = account.deployment_id AND principal.id = account.principal_id
-		WHERE principal.public_id = $1`, memberPrincipal.String(), email)
+		WHERE principal.public_id = $1`, memberPrincipal.String(), email, workspaceID.String())
 	listed, err := service.ListMembers(ctx, roles.ListCommand{Session: owner, WorkspaceID: workspaceID})
 	if err != nil {
 		t.Fatalf("list members with an email: %v", err)
@@ -232,6 +237,26 @@ func assertMemberDirectoryEmail(ctx context.Context, t *testing.T, admin *pgx.Co
 			t.Fatalf("member email = %q, want %q", entry.Email, email)
 		case entry.PrincipalID != memberPrincipal && entry.Email == email:
 			t.Fatalf("member %s shows another person's email", entry.PrincipalID)
+		}
+	}
+	// TD-SEC-103: a row from before schema 319 shows through the Account's
+	// one provider; an email another provider verified (another Workspace's,
+	// a provider this one does not route) does not show. The fixture skips
+	// the foreign key to name a provider that is not there.
+	for _, test := range []struct {
+		provider string
+		shown    bool
+	}{{"NULL", true}, {"999999", false}} {
+		execFixtureWithoutTriggers(ctx, t, admin, `UPDATE mesh.account_email SET identity_provider_id = `+
+			test.provider+` WHERE public_id = '01890f00-0000-7000-8000-0000000003a4'::UUID`)
+		listed, err = service.ListMembers(ctx, roles.ListCommand{Session: owner, WorkspaceID: workspaceID})
+		if err != nil {
+			t.Fatalf("list members: %v", err)
+		}
+		for _, entry := range listed.Members {
+			if entry.PrincipalID == memberPrincipal && (entry.Email == email) != test.shown {
+				t.Fatalf("provider %s: member email %q, shown want %v", test.provider, entry.Email, test.shown)
+			}
 		}
 	}
 }

@@ -737,6 +737,8 @@ func Catalog() []Migration {
 			deviceInfrastructureCeilingSQL),
 		newMigration(318, "Policy publication activates at the transaction's own time",
 			policyActivationTimeSQL),
+		newMigration(319, "Account email remembers its provider; the member directory shows it only where routed",
+			accountEmailProviderSQL),
 	}
 }
 
@@ -1470,3 +1472,6 @@ var deviceInfrastructureCeilingSQL string
 
 //go:embed 000318_policy_activation_time.up.sql
 var policyActivationTimeSQL string
+
+//go:embed 000319_account_email_provider.up.sql
+var accountEmailProviderSQL string

@@ -84,14 +84,21 @@ func assertPostgreSQLAccountEmail(ctx context.Context, t *testing.T, admin *pgx.
 	assertConcurrentFirstEmail(ctx, t, authStore, emails, signups)
 	var stored string
 	var version int64
-	if err := admin.QueryRow(ctx, `SELECT stored.email, stored.version
+	var sourced bool
+	// Schema 319 (TD-SEC-103): the email remembers the sign-in's provider.
+	if err := admin.QueryRow(ctx, `SELECT stored.email, stored.version,
+    stored.identity_provider_id IS NOT NULL AND stored.identity_provider_id = (
+        SELECT subject.identity_provider_id FROM mesh.identity_subject AS subject
+        JOIN mesh.principal AS principal ON principal.id = subject.principal_id
+        WHERE principal.id = account.principal_id LIMIT 1)
 FROM mesh.account_email AS stored
 JOIN mesh.account AS account ON account.id = stored.account_id
-WHERE account.display_name = 'Email Person'`).Scan(&stored, &version); err != nil {
+WHERE account.display_name = 'Email Person'`).Scan(&stored, &version, &sourced); err != nil {
 		t.Fatal(err)
 	}
-	if stored != "renamed@example.test" || version != 2 {
-		t.Fatalf("stored email = %q v%d, want the new email at version 2", stored, version)
+	if stored != "renamed@example.test" || version != 2 || !sourced {
+		t.Fatalf("stored email = %q v%d (provider recorded %v), want the new email at version 2 from the sign-in's provider",
+			stored, version, sourced)
 	}
 	rows, err := admin.Query(ctx, `SELECT target_kind, (payload ->> 'email_version')::BIGINT, payload::TEXT
 FROM mesh_audit.audit_event WHERE action = 'account.email_verified' ORDER BY occurred_at, event_identity_id`)
