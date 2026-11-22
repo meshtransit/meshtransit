@@ -88,7 +88,9 @@ func postgresInitSQL(dir string) ([]byte, error) {
 // MeshTransit's keys and channels only: those of the Redis adapter's "all"
 // role (meshcore redis acl rules all), which a test keeps covered.
 const redisCommands = "+ping +publish +subscribe +unsubscribe +eval +evalsha +eval_ro +evalsha_ro +hget +hset " +
-	"+hmget +exists +pexpire +del +get +set +time +hgetall +hdel +hscan +zadd +zrem +zcount +zremrangebyscore"
+	"+hmget +exists +pexpire +del +get +set +time +hgetall +hdel +hscan +zadd +zrem +zcount +zremrangebyscore " +
+	// MULTI and DISCARD: the ACL self-check queues each command and discards it.
+	"+multi +discard"
 
 // redisUserRules are Core's Redis user's rules after its password.
 const redisUserRules = "resetkeys resetchannels ~meshtransit:v1:* &meshtransit:v1:* -@all " + redisCommands
