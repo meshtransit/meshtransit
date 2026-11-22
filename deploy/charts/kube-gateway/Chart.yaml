@@ -2,7 +2,7 @@ apiVersion: v2
 name: meshtransit-kube-gateway
 description: MeshTransit gateway for a Kubernetes cluster - kubectl over the mesh, per person, recorded
 type: application
-version: 0.2.1
+version: 0.2.2
 appVersion: "k1c"
 kubeVersion: ">=1.32.0-0"
 annotations:

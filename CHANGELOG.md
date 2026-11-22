@@ -5,6 +5,11 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- kube-gateway chart 0.2.2: the rule refusing ServiceAccount token Secrets in
+  the gateway's namespace is a policy of its own
+  (`<cluster>-namespace-secrets`); in one policy with the pod rules every
+  expression was type-checked against Secret too, and `helm test` failed on
+  those warnings since 0.2.1. `ci/cases.sh` covers it (26 cases).
 - meshgw (TD-SEC-69): a release build refuses to start without
   `MESHGW_JOIN_DIR` (the kube-gateway chart always sets it), with
   `MESHGW_KUBE_MODE=passthrough`, or with `MESHGW_KUBE_API_BACKEND`. The

@@ -10,10 +10,8 @@
 # account; and the check, made by the job controller for the check or
 # preflight Job, with no Secret it could read (Q99). Images do not change in
 # place, ephemeral containers are refused, and so are exec, attach,
-# port-forward and proxy (break-glass: gatewayNamespace.allowDebug). No
-# Secret of type service-account-token is made there (V1-12 §3.7): the
-# gateway may update a self-managed envelope Secret, and such a Secret
-# would hand anyone who reads the namespace a long-lived token.
+# port-forward and proxy (break-glass: gatewayNamespace.allowDebug). Secrets
+# have their own policy below.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -31,10 +29,6 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["pods/ephemeralcontainers"]
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["secrets"]
       {{- if not .Values.gatewayNamespace.allowDebug }}
       - apiGroups: [""]
         apiVersions: ["v1"]
@@ -89,10 +83,6 @@ spec:
       message: no ephemeral containers in the gateway's namespace
     - expression: "request.operation != 'CONNECT'"
       message: no exec, attach, port-forward or proxy in the gateway's namespace (gatewayNamespace.allowDebug)
-    - expression: >-
-        request.resource.resource != 'secrets' ||
-        !has(object.type) || object.type != 'kubernetes.io/service-account-token'
-      message: no ServiceAccount token Secrets in the gateway's namespace
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -101,6 +91,43 @@ metadata:
   labels: {{- include "kg.labels" . | nindent 4 }}
 spec:
   policyName: {{ $cluster }}-namespace
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+---
+# No Secret of type service-account-token is made in the gateway's namespace
+# (V1-12 §3.7): the gateway may update a self-managed envelope Secret, and
+# such a Secret would hand anyone who reads the namespace a long-lived token.
+# A policy of its own: in one policy with the pod rules, every expression is
+# type-checked against Secret too, and `meshgw check` reports those warnings
+# as a failure. Check before install that no such Secret exists there: its
+# updates are refused, so the legacy-token cleaner cannot label it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}-namespace-secrets
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secrets"]
+  validations:
+    - expression: "!has(object.type) || object.type != 'kubernetes.io/service-account-token'"
+      message: no ServiceAccount token Secrets in the gateway's namespace
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}-namespace-secrets
+  labels: {{- include "kg.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}-namespace-secrets
   validationActions: [Deny]
   matchResources:
     namespaceSelector:

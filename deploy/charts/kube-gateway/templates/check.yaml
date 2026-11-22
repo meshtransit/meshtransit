@@ -6,6 +6,7 @@
 {{- $policies := list (dict "name" "meshtransit-kube-gateway-token" "binding" "meshtransit-kube-gateway-token" "enforcement" "deny")
     (dict "name" "meshtransit-kube-gateway-token-others" "binding" "meshtransit-kube-gateway-token-others" "enforcement" "deny")
     (dict "name" "meshtransit-kube-gateway-namespace" "binding" "meshtransit-kube-gateway-namespace" "enforcement" "deny")
+    (dict "name" "meshtransit-kube-gateway-namespace-secrets" "binding" "meshtransit-kube-gateway-namespace-secrets" "enforcement" "deny")
     (dict "name" "meshtransit-kube-gateway-binding" "binding" "meshtransit-kube-gateway-binding" "enforcement" "deny-or-warn") -}}
 {{- if .Values.gatewayPool.enabled }}
 {{- $broad := ternary "deny-or-warn" "deny" .Values.placement.acceptUnenforced -}}
