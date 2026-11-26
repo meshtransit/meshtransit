@@ -1475,9 +1475,9 @@ on the Internet or belongs to the exit's own networks, or the question holds
 the option twice; REFUSED), 3 the forwarder is busy (SERVFAIL), 4 the exit
 node's own way to the Internet is down (SERVFAIL). The forwarder removes the
 option before asking the resolver. An answer without the option comes from a
-forwarder that does not relay (DNS design D1c). A consumer never answers a
+forwarder that does not relay. A consumer never answers a
 zone's name from another resolver after status 2, even for a zone that fails
-open (DNS design D1c.5).
+open.
 
 #### Validity
 
