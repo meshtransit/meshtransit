@@ -6528,7 +6528,7 @@
       "put": {
         "operationId": "setKubernetesClusterTrustMode",
         "summary": "Set how a cluster anchors its first signing keys",
-        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). code: the first replica an administrator approves by its code anchors the keys (K1). private_tofu: the first replica with an install token pins them, unconfirmed until an administrator confirms their digest. Only a cluster that trusts no keys yet changes mode (409 kubernetes_trust_anchored); leaving private_tofu revokes its install tokens.",
+        "description": "Requires kubernetes_cluster.manage and kubernetes_cluster.approve and the cluster's version (If-Match). code: the first replica an administrator approves by its code anchors the keys. private_tofu: the first replica with an install token pins them, unconfirmed until an administrator confirms their digest. Only a cluster that trusts no keys yet changes mode (409 kubernetes_trust_anchored); leaving private_tofu revokes its install tokens.",
         "security": [
           {
             "accountSessionBearer": []
