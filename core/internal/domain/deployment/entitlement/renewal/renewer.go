@@ -54,6 +54,10 @@ type Options struct {
 	DeploymentID     deployment.ID
 	Interval         time.Duration
 	OperationTimeout time.Duration
+	// Observe, when set, learns the generation in effect after each
+	// attempt that read or recorded one (the expiry metric). It must not
+	// block.
+	Observe func(generation int64, expiresAt time.Time)
 }
 
 // DefaultOptions tries each hour, from the start.
@@ -182,8 +186,10 @@ func (renewer *Renewer) Attempt(ctx context.Context) Outcome {
 	attemptCtx, cancel := context.WithTimeout(ctx, renewer.options.OperationTimeout)
 	defer cancel()
 	var renewed entitlement.Entitlement
+	var seen Current
 	outcome, err := renewer.store.RenewDeploymentEntitlement(attemptCtx, renewer.options.DeploymentID,
 		func(current Current) (entitlement.Entitlement, bool, error) {
+			seen = current
 			if current.DatabaseNow.IsZero() {
 				return entitlement.Entitlement{}, false, ErrNotRenewable
 			}
@@ -194,6 +200,7 @@ func (renewer *Renewer) Attempt(ctx context.Context) Outcome {
 			renewed = next
 			return next, err == nil, err
 		})
+	renewer.observe(outcome, err, renewed, seen)
 	switch {
 	case err != nil:
 		renewer.failed.Add(1)
@@ -212,4 +219,19 @@ func (renewer *Renewer) Attempt(ctx context.Context) Outcome {
 		renewer.logger.DebugContext(ctx, "deployment entitlement renewal", "outcome", string(outcome))
 	}
 	return outcome
+}
+
+// observe reports the generation in effect: the one this attempt recorded,
+// or else the current one it read (also when signing or recording it failed:
+// the read is still true). An attempt that read nothing reports nothing.
+func (renewer *Renewer) observe(outcome Outcome, err error, renewed entitlement.Entitlement, seen Current) {
+	if renewer.options.Observe == nil {
+		return
+	}
+	switch {
+	case err == nil && outcome == OutcomeRenewed:
+		renewer.options.Observe(renewed.Generation, renewed.ExpiresAt)
+	case seen.Generation > 0 && !seen.ExpiresAt.IsZero():
+		renewer.options.Observe(seen.Generation, seen.ExpiresAt)
+	}
 }

@@ -196,14 +196,19 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		checkers = append(checkers, redisClient)
 		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
 	}
+	var entitlementExpiry *entitlementInEffect
+	if processConfig.DeploymentEntitlement != nil {
+		entitlementExpiry = &entitlementInEffect{}
+		additionalMetrics = append(additionalMetrics, entitlementExpiry)
+	}
 	if code, entitlementErr := recordDeploymentEntitlement(
-		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger, time.Now().UTC(),
+		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger, time.Now().UTC(), entitlementExpiry,
 	); entitlementErr != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", code)
 		return 1
 	}
 	entitlementRenewer, renewalMetrics, code, entitlementErr := composeEntitlementRenewer(
-		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger,
+		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger, entitlementExpiry,
 	)
 	if entitlementErr != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", code)

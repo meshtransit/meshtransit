@@ -1,0 +1,328 @@
+# promtool test rules meshtransit-rules.test.yaml (deploy/monitoring/check.sh)
+rule_files:
+  - meshtransit-rules.yaml
+evaluation_interval: 1m
+tests:
+  # A whole role down pages; one replica of two down only warns.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="meshtransit-core",instance="api-a",meshtransit_role="api"}'
+        values: '0x15'
+      - series: 'up{job="meshtransit-core",instance="api-b",meshtransit_role="api"}'
+        values: '0x15'
+      - series: 'up{job="meshtransit-core",instance="control-a",meshtransit_role="control"}'
+        values: '0x15'
+      - series: 'up{job="meshtransit-core",instance="control-b",meshtransit_role="control"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MeshTransitCoreRoleDown
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit, meshtransit_role: api}
+            exp_annotations:
+              summary: Every Core api replica is down
+              description: No replica of the api role answers. api down stops the Console and sign-in; control down stops Devices from getting new maps; worker down stops policy changes from reaching Devices.
+              runbook: core-role-down
+      - eval_time: 10m
+        alertname: MeshTransitCoreScrapeMissing
+        exp_alerts: []
+
+  # Nothing scraped at all.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="other"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MeshTransitCoreScrapeMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit, job: meshtransit-core}
+            exp_annotations:
+              summary: No MeshTransit Core target is being scraped
+              description: Prometheus finds no target for job meshtransit-core; Core is gone or its scrape config broke, and every other Core alert is blind.
+              runbook: core-scrape-missing
+
+  # Readiness joins the role label from meshtransit_runtime_role; the
+  # one-server process carries several roles.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_runtime_role{job="meshtransit-core",instance="w-a",role="worker"}'
+        values: '1x10'
+      - series: 'meshtransit_runtime_ready{job="meshtransit-core",instance="w-a"}'
+        values: '0x10'
+      - series: 'meshtransit_runtime_role{job="meshtransit-core",instance="a-a",role="api"}'
+        values: '1x10'
+      - series: 'meshtransit_runtime_ready{job="meshtransit-core",instance="a-a"}'
+        values: '0x10'
+      - series: 'meshtransit_runtime_role{job="meshtransit-core",instance="a-b",role="api"}'
+        values: '1x10'
+      - series: 'meshtransit_runtime_ready{job="meshtransit-core",instance="a-b"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MeshTransitCoreRoleNotReady
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit, role: worker}
+            exp_annotations:
+              summary: No Core worker replica is ready
+              description: Every replica of the worker role that answers reports not ready.
+              runbook: core-not-ready
+
+  # A stopped worker warns, a running one does not.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_site_election_worker_running{instance="w-a"}'
+        values: '0x10'
+      - series: 'meshtransit_exit_pool_election_worker_running{instance="w-a"}'
+        values: '0x10'
+      - series: 'meshtransit_kubernetes_ca_worker_running{instance="w-a"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MeshTransitWorkerStopped
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, worker: site_election_worker, instance: w-a}
+            exp_annotations:
+              summary: Worker site_election_worker stopped on w-a
+              description: A configured background worker stopped; its work (elections, ledgers, deletions, CA) no longer progresses on this replica.
+              runbook: worker-stopped
+          - exp_labels: {severity: warning, product: meshtransit, worker: exit_pool_election_worker, instance: w-a}
+            exp_annotations:
+              summary: Worker exit_pool_election_worker stopped on w-a
+              description: A configured background worker stopped; its work (elections, ledgers, deletions, CA) no longer progresses on this replica.
+              runbook: worker-stopped
+
+  # Entitlement: 20 days left warns but does not page; the highest
+  # generation's replica decides (max).
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_deployment_entitlement_expiry_timestamp_seconds{instance="api-a"}'
+        values: '1728000x90'
+      - series: 'meshtransit_deployment_entitlement_expiry_timestamp_seconds{instance="api-b"}'
+        values: '86400x90'
+    alert_rule_test:
+      - eval_time: 61m
+        alertname: MeshTransitEntitlementExpiresSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit}
+            exp_annotations:
+              summary: The Deployment entitlement expires in 19d 22h 59m 0s
+              description: Self-renewal renews four months ahead; this firing means renewal failed or the entitlement is issued offline. Issue the next generation.
+              runbook: entitlement-expiry
+      - eval_time: 61m
+        alertname: MeshTransitEntitlementExpiring
+        exp_alerts: []
+
+  # No entitlement mounted: no series, no alert.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="meshtransit-core",instance="api-a",meshtransit_role="api"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 61m
+        alertname: MeshTransitEntitlementExpiresSoon
+        exp_alerts: []
+
+  # A relay that polls but never succeeds has lost Core; one that succeeds
+  # has not.
+  - interval: 1m
+    input_series:
+      - series: 'meshrelay_core_state_polls_total{instance="relay-1",result="fetch_failed"}'
+        values: '0+6x30'
+      - series: 'meshrelay_core_state_polls_total{instance="relay-2",result="fetch_failed"}'
+        values: '0+1x30'
+      - series: 'meshrelay_core_state_polls_total{instance="relay-2",result="not_modified"}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: MeshTransitRelayLostCore
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit, instance: relay-1}
+            exp_annotations:
+              summary: Relay relay-1 cannot read its state from Core
+              description: The relay keeps serving with stale state, so new revocations do not reach it.
+              runbook: relay-lost-core
+
+  # Management API: 10% failures over enough traffic warns; a handful of
+  # failures on a quiet Deployment does not.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="list",result="success"}'
+        values: '0+540x30'
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="list",result="temporarily_unavailable"}'
+        values: '0+60x30'
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="list",result="workspace_unavailable"}'
+        values: '0+60x30'
+      - series: 'meshtransit_management_requests_total{instance="api-b",operation="list",result="success"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: MeshTransitManagementAPIFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit}
+            exp_annotations:
+              summary: More than 5% of management API requests fail
+              description: Console and API calls end in a server-side error (internal_failure, temporarily_unavailable, request_timeout...); read Core's error logs by error_code.
+              runbook: management-api-failures
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="list",result="success"}'
+        values: '0+1x30'
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="list",result="internal_failure"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: MeshTransitManagementAPIFailures
+        exp_alerts: []
+
+  # Pool saturation divides per instance and pool role.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_postgres_pool_connections{instance="api-a",pool_role="runtime",state="acquired"}'
+        values: '10x20'
+      - series: 'meshtransit_postgres_pool_connections{instance="api-a",pool_role="runtime",state="idle"}'
+        values: '0x20'
+      - series: 'meshtransit_postgres_pool_connections_max{instance="api-a",pool_role="runtime"}'
+        values: '10x20'
+      - series: 'meshtransit_postgres_pool_connections{instance="api-b",pool_role="runtime",state="acquired"}'
+        values: '2x20'
+      - series: 'meshtransit_postgres_pool_connections_max{instance="api-b",pool_role="runtime"}'
+        values: '10x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MeshTransitPostgresPoolSaturated
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, instance: api-a, pool_role: runtime}
+            exp_annotations:
+              summary: Postgres pool runtime on api-a is over 90% in use
+              description: Requests will queue for a connection; raise the pool within the database's connection budget or find the slow path.
+              runbook: postgres-pool-saturated
+
+  # Login: configured and not ready warns; not configured is silent.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_login_configured{instance="api-a"}'
+        values: '1x10'
+      - series: 'meshtransit_login_ready{instance="api-a"}'
+        values: '0x10'
+      - series: 'meshtransit_login_configured{instance="worker-a"}'
+        values: '0x10'
+      - series: 'meshtransit_login_ready{instance="worker-a"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MeshTransitLoginNotReady
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, instance: api-a}
+            exp_annotations:
+              summary: Browser sign-in cannot admit new logins on api-a
+              description: A browser login path is configured but not ready; people cannot sign in through this replica.
+              runbook: login-not-ready
+
+  # A tenant's 404/409 (workspace_unavailable) alone is not a fault.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="get",result="workspace_unavailable"}'
+        values: '0+600x30'
+      - series: 'meshtransit_management_requests_total{instance="api-a",operation="get",result="success"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: MeshTransitManagementAPIFailures
+        exp_alerts: []
+
+  # A lazily created counter alone still alerts (no sum with an absent one).
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_oidc_browser_callbacks_total{instance="id-a",result="unavailable"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MeshTransitSignInCallbacksFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit}
+            exp_annotations:
+              summary: Sign-in callbacks fail on the Core side
+              description: People returning from the identity provider cannot finish signing in.
+              runbook: sign-in-unavailable
+
+  # A relay that has served no certificate reports 0: no expiry alert.
+  - interval: 1m
+    input_series:
+      - series: 'meshrelay_tls_certificate_expiry_timestamp_seconds{instance="relay-udp"}'
+        values: '0x120'
+      - series: 'meshrelay_tls_certificate_expiry_timestamp_seconds{instance="relay-tls"}'
+        values: '86400x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: MeshTransitRelayTLSExpired
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit, instance: relay-tls}
+            exp_annotations:
+              summary: Relay relay-tls TLS certificate expires in 22h 30m 0s
+              description: Renew it now; Devices behind UDP-blocking networks lose the relay at expiry.
+              runbook: certificate-expiry
+
+  # Identity on its own image is not a skew; two versions within a role is.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_build_info{job="meshtransit-core",instance="id-a",meshtransit_role="identity",version="id-1"}'
+        values: '1x90'
+      - series: 'meshtransit_build_info{job="meshtransit-core",instance="api-a",meshtransit_role="api",version="core-2"}'
+        values: '1x90'
+      - series: 'meshtransit_build_info{job="meshtransit-core",instance="api-b",meshtransit_role="api",version="core-1"}'
+        values: '1x90'
+      - series: 'meshtransit_build_info{job="meshtransit-core",instance="c-a",meshtransit_role="control",version="core-2"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: MeshTransitCoreVersionSkew
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, meshtransit_role: api}
+            exp_annotations:
+              summary: Core api replicas run more than one version for an hour
+              description: A rollout has not finished; check the Deployments' rollout status.
+              runbook: core-version-skew
+
+  # Kubernetes CA changes failing at the hourly retry cap keep alerting.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_kubernetes_ca_failures_total{instance="w-a"}'
+        values: '0+0x61 1+0x61 2+0x61 3+0x61 4+0x61 5+0x61 6+0x61 7+0x61'
+    alert_rule_test:
+      - eval_time: 300m
+        alertname: MeshTransitKubernetesCAFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit}
+            exp_annotations:
+              summary: Cluster CA changes keep failing and are postponed
+              description: Renewals of Network CAs are postponed for hours; read the worker role's error logs.
+              runbook: kubernetes-ca
+      - eval_time: 470m
+        alertname: MeshTransitKubernetesCAFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit}
+            exp_annotations:
+              summary: Cluster CA changes keep failing and are postponed
+              description: Renewals of Network CAs are postponed for hours; read the worker role's error logs.
+              runbook: kubernetes-ca
+
+  # A signer suspended without custody leaves the queue at 0; struggling
+  # gateways still raise it.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_kubernetes_certificate_signer_suspended{instance="w-a"}'
+        values: '1x20'
+      - series: 'meshtransit_kubernetes_certificate_queue_depth{instance="w-a"}'
+        values: '0x20'
+      - series: 'meshtransit_kubernetes_gateway_replicas_struggling{instance="w-a"}'
+        values: '2x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MeshTransitKubernetesSignerSuspended
+        exp_alerts:
+          - exp_labels: {severity: critical, product: meshtransit}
+            exp_annotations:
+              summary: The Kubernetes gateway certificate signer is suspended while requests wait
+              description: Gateways cannot renew their certificates; kubectl over the mesh stops when they expire.
+              runbook: kubernetes-signer

@@ -262,3 +262,44 @@ func TestRenewerStartsAndStops(t *testing.T) {
 		t.Fatal("renewer did not stop")
 	}
 }
+
+func TestAttemptObservesTheGenerationInEffect(t *testing.T) {
+	t.Parallel()
+	type seen struct {
+		generation int64
+		expiresAt  time.Time
+	}
+	f := newFixture(t)
+	now := start.Add(100 * 24 * time.Hour)
+	store := &fakeStore{current: current(), now: &now}
+	var observed []seen
+	options := renewal.DefaultOptions(f.deploymentID)
+	options.Observe = func(generation int64, expiresAt time.Time) {
+		observed = append(observed, seen{generation, expiresAt})
+	}
+	renewer, err := renewal.New(options, store, f.signer(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewer.Attempt(t.Context()) // not due: the current generation
+	now = start.Add(250 * 24 * time.Hour)
+	renewer.Attempt(t.Context()) // renewed: the new generation
+	store.busy = true
+	renewer.Attempt(t.Context()) // busy: read nothing, report nothing
+	store.busy, store.err = false, errors.New("database down")
+	renewer.Attempt(t.Context()) // failed before reading: nothing
+	want := []seen{{4, current().ExpiresAt}, {5, store.current.ExpiresAt}}
+	if !slices.Equal(observed, want) {
+		t.Fatalf("observed = %+v, want %+v", observed, want)
+	}
+	if !store.current.ExpiresAt.After(current().ExpiresAt) {
+		t.Fatalf("renewed generation does not expire later: %s", store.current.ExpiresAt)
+	}
+	// A read that signing then refuses (no database clock) still reports the
+	// generation it read.
+	store.err, store.now = nil, nil
+	renewer.Attempt(t.Context())
+	if last := observed[len(observed)-1]; last.generation != 5 || len(observed) != 3 {
+		t.Fatalf("clockless attempt observed %+v", observed)
+	}
+}

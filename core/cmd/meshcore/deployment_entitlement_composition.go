@@ -30,8 +30,11 @@ var errEntitlementStartup = errors.New("deployment entitlement startup failure")
 // other failure, an offline issuance reusing a generation included, stops
 // startup so a misconfigured installation is visible at once; an expired
 // entitlement still verifies and keeps tenants working.
+//
+// inEffect learns the generation Core runs with: the mounted one when it is
+// current, or the newer recorded one.
 func recordDeploymentEntitlement(ctx context.Context, settings *config.DeploymentEntitlementConfig,
-	runtime *postgresadapter.Pool, logger *slog.Logger, now time.Time) (string, error) {
+	runtime *postgresadapter.Pool, logger *slog.Logger, now time.Time, inEffect *entitlementInEffect) (string, error) {
 	if settings == nil {
 		return "", nil
 	}
@@ -82,6 +85,7 @@ func recordDeploymentEntitlement(ctx context.Context, settings *config.Deploymen
 			"error_code", "entitlement_mount_superseded", "entitlement_id", verified.ID.String(),
 			"generation", verified.Generation, "signer_key_id", verified.KeyID,
 			"recorded_generation", current.Generation, "recorded_signer_key_id", current.SignerKeyID)
+		inEffect.observe(current.Generation, current.ExpiresAt)
 		return "", nil
 	}
 	if errors.Is(err, postgresadapter.ErrEntitlementRejected) {
@@ -90,12 +94,38 @@ func recordDeploymentEntitlement(ctx context.Context, settings *config.Deploymen
 	if err != nil {
 		return "entitlement_record_unavailable", errEntitlementStartup
 	}
+	observeRecordedEntitlement(ctx, store, settings, verified, outcome, logger, inEffect)
 	logger.InfoContext(ctx, "deployment entitlement verified",
 		"entitlement_id", verified.ID.String(), "profile", string(verified.Profile),
 		"generation", verified.Generation, "state", string(verified.StateAt(now)),
 		"capabilities_sha256", verified.CapabilitiesSHA256(), "signer_key_id", verified.KeyID,
 		"outcome", string(outcome))
 	return "", nil
+}
+
+// observeRecordedEntitlement reports the generation in effect after a
+// successful record: the mounted one, or for "superseded" the newer recorded
+// one, read once. A failed read only leaves the expiry metric empty until
+// the next self-renewal attempt or start.
+func observeRecordedEntitlement(ctx context.Context, store *postgresadapter.DeploymentEntitlementStore,
+	settings *config.DeploymentEntitlementConfig, verified entitlement.Entitlement,
+	outcome postgresadapter.EntitlementOutcome, logger *slog.Logger, inEffect *entitlementInEffect) {
+	if inEffect == nil {
+		return
+	}
+	if outcome != postgresadapter.EntitlementSuperseded {
+		inEffect.observe(verified.Generation, verified.ExpiresAt)
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, entitlementRecordTimeout)
+	defer cancel()
+	current, found, err := store.CurrentDeploymentEntitlement(readCtx, settings.DeploymentID)
+	if err != nil || !found {
+		logger.WarnContext(ctx, "deployment entitlement in effect unknown",
+			"error_code", "entitlement_in_effect_unavailable")
+		return
+	}
+	inEffect.observe(current.Generation, current.ExpiresAt)
 }
 
 // mountSuperseded reports a mounted generation that lost its number to a
@@ -113,8 +143,9 @@ func mountSuperseded(mounted entitlement.Entitlement, current renewal.Current, f
 // allowlisted self-renewal key of this Deployment, or startup stops: a key
 // that would sign entitlements Core refuses is a configuration error.
 func composeEntitlementRenewer(ctx context.Context, settings *config.DeploymentEntitlementConfig,
-	runtime *postgresadapter.Pool, logger *slog.Logger) (*renewal.Renewer, []prometheus.Collector, string, error) {
-	renewer, code, err := buildEntitlementRenewer(ctx, settings, runtime, logger)
+	runtime *postgresadapter.Pool, logger *slog.Logger, inEffect *entitlementInEffect,
+) (*renewal.Renewer, []prometheus.Collector, string, error) {
+	renewer, code, err := buildEntitlementRenewer(ctx, settings, runtime, logger, inEffect)
 	if renewer == nil || err != nil {
 		return nil, nil, code, err
 	}
@@ -123,7 +154,10 @@ func composeEntitlementRenewer(ctx context.Context, settings *config.DeploymentE
 
 // entitlementRenewalMetrics exports the renewer's counters: renewal is due
 // four months before expiry, so failures that keep coming show here long
-// before anything lapses.
+// before anything lapses. Full names (alert rules, deploy/monitoring):
+// meshtransit_deployment_entitlement_renewal_attempts_total,
+// meshtransit_deployment_entitlement_renewals_total,
+// meshtransit_deployment_entitlement_renewal_failures_total.
 func entitlementRenewalMetrics(renewer *renewal.Renewer) []prometheus.Collector {
 	counter := func(name, help string, read func(renewal.Measurements) uint64) prometheus.Collector {
 		return prometheus.NewCounterFunc(prometheus.CounterOpts{
@@ -141,7 +175,7 @@ func entitlementRenewalMetrics(renewer *renewal.Renewer) []prometheus.Collector 
 }
 
 func buildEntitlementRenewer(ctx context.Context, settings *config.DeploymentEntitlementConfig,
-	runtime *postgresadapter.Pool, logger *slog.Logger) (*renewal.Renewer, string, error) {
+	runtime *postgresadapter.Pool, logger *slog.Logger, inEffect *entitlementInEffect) (*renewal.Renewer, string, error) {
 	if settings == nil || settings.RenewalKeyID() == "" {
 		return nil, "", nil
 	}
@@ -176,7 +210,9 @@ func buildEntitlementRenewer(ctx context.Context, settings *config.DeploymentEnt
 	if err != nil {
 		return nil, "entitlement_storage_unavailable", errEntitlementStartup
 	}
-	renewer, err := renewal.New(renewal.DefaultOptions(settings.DeploymentID), store, signer, logger)
+	options := renewal.DefaultOptions(settings.DeploymentID)
+	options.Observe = inEffect.observe
+	renewer, err := renewal.New(options, store, signer, logger)
 	if err != nil {
 		return nil, "entitlement_renewal_composition_failure", errEntitlementStartup
 	}

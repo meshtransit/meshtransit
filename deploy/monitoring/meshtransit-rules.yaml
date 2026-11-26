@@ -1,0 +1,491 @@
+# MeshTransit alerting rules (Prometheus rule file format).
+#
+# Scrape contract these rules rely on:
+#   - Core: every role's health port (default 8081, path /metrics) scraped
+#     under job="meshtransit-core", each target labelled meshtransit_role
+#     (api, control, worker, identity; "all" for the one-server install).
+#   - Relay: each relay's admin listener (meshrelay -admin, default
+#     127.0.0.1:9479, path /metrics) scraped under job="meshtransit-relay".
+# The Helm chart's PodMonitor sets both for Core; relays on VMs need a
+# static scrape config (the monitoring runbook). Aggregations keep the
+# namespace label, so two Deployments in one Prometheus stay apart; outside
+# Kubernetes give each Deployment its own namespace label or Prometheus.
+#
+# severity="critical" pages someone; severity="warning" opens a ticket.
+# Each alert's runbook annotation names its section in the monitoring runbook.
+#
+# The chart ships this file unchanged as a PrometheusRule (files/monitoring/);
+# deploy/monitoring/check.sh keeps the copies identical, runs promtool, and
+# fails on a metric name no source file declares.
+groups:
+  - name: meshtransit-core-availability
+    rules:
+      - alert: MeshTransitCoreScrapeMissing
+        expr: absent(up{job="meshtransit-core"})
+        for: 10m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: No MeshTransit Core target is being scraped
+          description: Prometheus finds no target for job meshtransit-core; Core is gone or its scrape config broke, and every other Core alert is blind.
+          runbook: core-scrape-missing
+      - alert: MeshTransitCoreTargetDown
+        expr: up{job="meshtransit-core"} == 0
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Core {{ $labels.meshtransit_role }} replica {{ $labels.instance }} does not answer scrapes
+          description: The health port has not answered for 5 minutes; the pod is crashing, stuck, or unreachable from Prometheus.
+          runbook: core-target-down
+      - alert: MeshTransitCoreRoleDown
+        expr: sum by (namespace, meshtransit_role) (up{job="meshtransit-core"}) == 0
+        for: 3m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Every Core {{ $labels.meshtransit_role }} replica is down
+          description: No replica of the {{ $labels.meshtransit_role }} role answers. api down stops the Console and sign-in; control down stops Devices from getting new maps; worker down stops policy changes from reaching Devices.
+          runbook: core-role-down
+      - alert: MeshTransitCoreNotReady
+        expr: meshtransit_runtime_ready == 0
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Core replica {{ $labels.instance }} reports not ready
+          description: The runtime cannot safely admit its work; see meshtransit_dependency_ready for the failing dependency.
+          runbook: core-not-ready
+      - alert: MeshTransitCoreRoleNotReady
+        expr: max by (namespace, role) (meshtransit_runtime_role * on (instance, job) group_left () meshtransit_runtime_ready) == 0
+        for: 3m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: No Core {{ $labels.role }} replica is ready
+          description: Every replica of the {{ $labels.role }} role that answers reports not ready.
+          runbook: core-not-ready
+      - alert: MeshTransitCoreDependencyNotReady
+        expr: meshtransit_dependency_ready == 0
+        for: 3m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Core replica {{ $labels.instance }} cannot reach {{ $labels.component }}
+          description: The last bounded check of {{ $labels.component }} failed for 3 minutes.
+          runbook: core-dependency-not-ready
+      - alert: MeshTransitLoginNotReady
+        expr: meshtransit_login_configured == 1 and meshtransit_login_ready == 0
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Browser sign-in cannot admit new logins on {{ $labels.instance }}
+          description: A browser login path is configured but not ready; people cannot sign in through this replica.
+          runbook: login-not-ready
+      - alert: MeshTransitCoreVersionSkew
+        # Per role: identity may run its own image.
+        expr: count by (namespace, meshtransit_role) (count by (namespace, meshtransit_role, version) (meshtransit_build_info{job="meshtransit-core"})) > 1
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Core {{ $labels.meshtransit_role }} replicas run more than one version for an hour
+          description: A rollout has not finished; check the Deployments' rollout status.
+          runbook: core-version-skew
+      - alert: MeshTransitManagementAPIFailures
+        # Server-side result codes only: other *_unavailable codes describe a
+        # tenant's state (404/409), not a fault. "unavailable" and
+        # "internal_error" are two handlers' own results (Kubernetes access
+        # read, Network summary page).
+        expr: |
+          sum by (namespace) (rate(meshtransit_management_requests_total{result=~"internal_failure|temporarily_unavailable|operation_unavailable|request_timeout|capacity_unavailable|dependency_unavailable|authentication_unavailable|rate_limit_unavailable|unavailable|internal_error"}[10m]))
+            / sum by (namespace) (rate(meshtransit_management_requests_total[10m])) > 0.05
+          and sum by (namespace) (rate(meshtransit_management_requests_total{result=~"internal_failure|temporarily_unavailable|operation_unavailable|request_timeout|capacity_unavailable|dependency_unavailable|authentication_unavailable|rate_limit_unavailable|unavailable|internal_error"}[10m])) > 0.05
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: More than 5% of management API requests fail
+          description: Console and API calls end in a server-side error (internal_failure, temporarily_unavailable, request_timeout...); read Core's error logs by error_code.
+          runbook: management-api-failures
+
+      - alert: MeshTransitConsoleReadsFailing
+        # The Console's own reads (session, scopes, Device inventory and
+        # detail, access graph, capabilities) are measured apart from the
+        # management API.
+        expr: |
+          sum by (namespace) (rate(meshtransit_browser_management_requests_total{result=~"unavailable|saturated"}[10m]))
+            / sum by (namespace) (rate(meshtransit_browser_management_requests_total[10m])) > 0.05
+          and sum by (namespace) (rate(meshtransit_browser_management_requests_total{result=~"unavailable|saturated"}[10m])) > 0.05
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: More than 5% of the Console's own reads fail
+          description: Console pages (Devices, access graph, session) end unavailable or saturated; read api's error logs.
+          runbook: management-api-failures
+
+  - name: meshtransit-core-storage
+    rules:
+      - alert: MeshTransitPostgresErrors
+        expr: sum by (namespace, pool_role) (rate(meshtransit_postgres_operations_total{result="error"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Postgres operations of the {{ $labels.pool_role }} pool keep failing
+          description: Core sees Postgres errors for 10 minutes; the operation label of meshtransit_postgres_operations_total shows which path.
+          runbook: postgres-errors
+      - alert: MeshTransitPostgresSlow
+        expr: histogram_quantile(0.99, sum by (namespace, le, pool_role) (rate(meshtransit_postgres_operation_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Postgres p99 above 1 s for the {{ $labels.pool_role }} pool
+          description: Database calls are slow for 10 minutes; check database CPU, locks and connection memory.
+          runbook: postgres-slow
+      - alert: MeshTransitPostgresPoolSaturated
+        expr: |
+          sum by (namespace, instance, pool_role) (meshtransit_postgres_pool_connections{state="acquired"})
+            / sum by (namespace, instance, pool_role) (meshtransit_postgres_pool_connections_max) > 0.9
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Postgres pool {{ $labels.pool_role }} on {{ $labels.instance }} is over 90% in use
+          description: Requests will queue for a connection; raise the pool within the database's connection budget or find the slow path.
+          runbook: postgres-pool-saturated
+      - alert: MeshTransitPostgresAcquiresCanceled
+        expr: sum by (namespace, pool_role) (rate(meshtransit_postgres_pool_acquires_total{result="canceled"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Requests give up waiting for a {{ $labels.pool_role }} Postgres connection
+          description: Pool waits end in cancellation for 10 minutes; the pool is too small or connections are held too long.
+          runbook: postgres-pool-saturated
+      - alert: MeshTransitPostgresOperatorStepPending
+        expr: max by (namespace) (meshtransit_postgres_operator_steps_pending) > 0
+        for: 24h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: A database operator step has been pending for a day
+          description: A migration left a step that needs the operator role (grants, function owners); run the operator Job of this release.
+          runbook: postgres-operator-step-pending
+      - alert: MeshTransitPostgresRoleMemberships
+        expr: max by (namespace) (meshtransit_postgres_role_memberships) > 0
+        for: 15m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: A MeshTransit database role is a member of another role
+          description: Runtime roles must hold no memberships; one widens what a compromised pod can do. Find and revoke it.
+          runbook: postgres-role-memberships
+      - alert: MeshTransitPostgresClockSkew
+        expr: abs(meshtransit_postgres_clock_skew_seconds) > 1
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Clock of {{ $labels.instance }} differs from the database by more than 1 s
+          description: Expiry, renewal and certificate decisions compare both clocks; fix NTP on the node.
+          runbook: clock-skew
+      - alert: MeshTransitRedisErrors
+        expr: sum by (namespace) (rate(meshtransit_redis_commands_total{result="error"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Redis commands keep failing
+          description: Core sees Redis errors for 10 minutes; map wakeups and rate limits depend on it.
+          runbook: redis-errors
+      - alert: MeshTransitRedisSlow
+        expr: histogram_quantile(0.99, sum by (namespace, le) (rate(meshtransit_redis_command_duration_seconds_bucket[5m]))) > 0.5
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Redis p99 above 0.5 s
+          description: Redis answers slowly for 10 minutes; check its memory and CPU.
+          runbook: redis-errors
+      - alert: MeshTransitRedisPoolSaturated
+        expr: |
+          sum by (namespace, instance) (meshtransit_redis_pool_connections{state="active"})
+            / sum by (namespace, instance) (meshtransit_redis_pool_connections_max) > 0.9
+          or sum by (namespace, instance) (rate(meshtransit_redis_pool_timeouts_total[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Redis pool on {{ $labels.instance }} is saturated
+          description: The command pool is over 90% in use or waits time out.
+          runbook: redis-errors
+
+  - name: meshtransit-core-control
+    rules:
+      - alert: MeshTransitControlConnectionsNearLimit
+        expr: |
+          sum by (namespace, instance) (meshtransit_control_connections_active)
+            / sum by (namespace, instance) (meshtransit_control_connections_limit) > 0.9
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Control replica {{ $labels.instance }} is over 90% of its connection limit
+          description: New Device connections will be refused soon; add control replicas.
+          runbook: control-connections
+      - alert: MeshTransitControlConnectionsRejected
+        expr: sum by (namespace, instance) (rate(meshtransit_control_connection_rejections_total[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Control replica {{ $labels.instance }} refuses Device connections for capacity
+          description: Devices retry elsewhere but reconnect slowly; add control replicas.
+          runbook: control-connections
+      - alert: MeshTransitMapStreamsUnavailable
+        expr: sum by (namespace) (rate(meshtransit_mtcp_map_stream_ends_total{reason="unavailable"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Device map streams end because Core cannot build maps
+          description: Devices keep their last map but get no changes; read the control role's error logs.
+          runbook: map-streams-unavailable
+      - alert: MeshTransitUntrustedForwarding
+        expr: sum by (namespace) (rate(meshtransit_mtcp_untrusted_forwarding_total[15m])) > 0
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Control requests carry forwarding headers from an untrusted peer
+          description: Usually a reverse proxy missing from the trusted proxies, so Devices' real addresses are lost.
+          runbook: untrusted-forwarding
+
+  - name: meshtransit-core-workers
+    rules:
+      - alert: MeshTransitWorkerStopped
+        # The worker label keeps two stopped workers of one replica apart
+        # (alerts drop __name__).
+        expr: 'label_replace({__name__=~"meshtransit_.+_(worker|signer)_running"}, "worker", "$1", "__name__", "meshtransit_(.+)_running") == 0'
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: 'Worker {{ $labels.worker }} stopped on {{ $labels.instance }}'
+          description: A configured background worker stopped; its work (elections, ledgers, deletions, CA) no longer progresses on this replica.
+          runbook: worker-stopped
+      - alert: MeshTransitRevisionBacklogOld
+        expr: max by (namespace) (meshtransit_revision_worker_oldest_ready_event_age_seconds) > 60
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Policy changes wait more than a minute to reach Devices
+          description: The oldest ready revision event is {{ $value | humanizeDuration }} old.
+          runbook: revision-backlog
+      - alert: MeshTransitRevisionBacklogStuck
+        expr: max by (namespace) (meshtransit_revision_worker_oldest_ready_event_age_seconds) > 600
+        for: 5m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Policy changes have not reached Devices for 10 minutes
+          description: Revocations and rule changes are not applied; the oldest ready event is {{ $value | humanizeDuration }} old.
+          runbook: revision-backlog
+      - alert: MeshTransitRevisionWorkerErrors
+        expr: |
+          sum by (namespace) (rate(meshtransit_revision_worker_claim_operations_total{result="error"}[5m]))
+          + sum by (namespace) (rate(meshtransit_revision_worker_backlog_observations_total{result="error"}[5m]))
+          + sum by (namespace) (rate(meshtransit_revision_worker_delivery_attempts_total{result="failed"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The revision worker keeps failing to claim or deliver events
+          description: Read the worker role's error logs.
+          runbook: revision-backlog
+      - alert: MeshTransitElectionWorkerErrors
+        # Exit Pools or Sites without a healthy member are a tenant's state
+        # (an exit node asleep), shown in the Console; the workers failing to
+        # read or write is ours.
+        expr: sum by (namespace) (rate({__name__=~"meshtransit_(site|exit_pool)_election_worker_(read|write)_errors_total"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Site or Exit Pool elections keep failing to read or write
+          description: Router and exit node failover stalls; read the worker role's error logs.
+          runbook: election-worker-errors
+      - alert: MeshTransitPrivateEndpointWithdrawalPending
+        expr: max by (namespace) (meshtransit_private_endpoint_worker_candidates{operation="withdrawal"}) > 0
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Private Endpoint withdrawals wait for more than 5 minutes
+          description: Access that should be removed is still announced.
+          runbook: private-endpoint-worker
+      - alert: MeshTransitOIDCExpiryStale
+        expr: time() - max by (namespace) (meshtransit_oidc_expiry_last_success_timestamp_seconds) > 120
+        for: 2m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Expired sign-in sessions have not been cleaned up for over 4 minutes
+          description: The identity expiry worker has not completed a pass.
+          runbook: oidc-expiry
+      - alert: MeshTransitKubernetesSignerSuspended
+        # Queue depth only moves after a claim, so a signer without custody
+        # keeps it at 0: struggling gateways (measured every pass) count too.
+        expr: |
+          max by (namespace) (meshtransit_kubernetes_certificate_signer_suspended) > 0
+          and (max by (namespace) (meshtransit_kubernetes_certificate_queue_depth) > 0
+               or max by (namespace) (meshtransit_kubernetes_gateway_replicas_struggling) > 0)
+        for: 10m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: The Kubernetes gateway certificate signer is suspended while requests wait
+          description: Gateways cannot renew their certificates; kubectl over the mesh stops when they expire.
+          runbook: kubernetes-signer
+
+      - alert: MeshTransitKubernetesCAStopped
+        expr: max by (namespace) (meshtransit_kubernetes_ca_suffix_mismatch) > 0 or max by (namespace) (meshtransit_kubernetes_ca_restore_suspected) > 0
+        for: 5m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: The Kubernetes CA worker stopped all CA work
+          description: A DNS suffix mismatch or a suspected database restore stops cluster CA renewals until an operator reconciles.
+          runbook: kubernetes-ca
+      - alert: MeshTransitKubernetesCACustodyLost
+        expr: meshtransit_kubernetes_ca_worker_running == 1 and meshtransit_kubernetes_ca_custody_ready == 0
+        for: 10m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: The Kubernetes CA worker on {{ $labels.instance }} does not hold its key custody
+          description: Cluster CAs cannot be created or renewed (wrap key Secret, KMS).
+          runbook: kubernetes-ca
+      - alert: MeshTransitKubernetesCATripwireOff
+        expr: max by (namespace) (meshtransit_kubernetes_ca_restore_marks_unavailable) > 0
+        for: 30m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The Kubernetes CA restore tripwire cannot read its marks in Redis
+          description: A database restore would go unnoticed by the CA worker while this lasts.
+          runbook: kubernetes-ca
+      - alert: MeshTransitKubernetesCAFailures
+        # Failing changes retry at most hourly; the window must span a gap.
+        expr: sum by (namespace) (increase(meshtransit_kubernetes_ca_failures_total[90m])) > 0
+        for: 2h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Cluster CA changes keep failing and are postponed
+          description: Renewals of Network CAs are postponed for hours; read the worker role's error logs.
+          runbook: kubernetes-ca
+
+  - name: meshtransit-identity
+    # One counter per alert: these counters appear at their first use, and
+    # a sum of an absent series with a present one is absent.
+    rules:
+      - alert: MeshTransitSignInCallbacksFailing
+        expr: sum by (namespace) (rate(meshtransit_oidc_browser_callbacks_total{result=~"unavailable|commit_unknown|cleanup_failed"}[5m])) > 0
+        for: 5m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Sign-in callbacks fail on the Core side
+          description: People returning from the identity provider cannot finish signing in.
+          runbook: sign-in-unavailable
+      - alert: MeshTransitSignInSubjectsUnavailable
+        expr: sum by (namespace) (rate(meshtransit_oidc_subject_resolutions_total{result="unavailable"}[5m])) > 0
+        for: 5m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Signed-in people cannot be resolved to Accounts
+          description: Subject resolution is unavailable, so sign-in cannot finish.
+          runbook: sign-in-unavailable
+      - alert: MeshTransitBrowserLoginStartFailing
+        expr: sum by (namespace) (rate(meshtransit_browser_login_requests_total{result="unavailable"}[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Devices cannot start a browser sign-in
+          description: Browser sign-in starts end unavailable; read api's error logs.
+          runbook: sign-in-unavailable
+      - alert: MeshTransitBrowserLoginCompletionFailing
+        expr: sum by (namespace) (rate(meshtransit_browser_completion_requests_total{result=~"unavailable|commit_unknown|delivery_failed"}[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Devices cannot complete a browser sign-in
+          description: Approved browser sign-ins do not become Devices; read api's error logs.
+          runbook: sign-in-unavailable
+
+  - name: meshtransit-expiry
+    rules:
+      - alert: MeshTransitEntitlementExpiresSoon
+        expr: max by (namespace) (meshtransit_deployment_entitlement_expiry_timestamp_seconds) - time() < 30 * 86400
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The Deployment entitlement expires in {{ $value | humanizeDuration }}
+          description: Self-renewal renews four months ahead; this firing means renewal failed or the entitlement is issued offline. Issue the next generation.
+          runbook: entitlement-expiry
+      - alert: MeshTransitEntitlementExpiring
+        expr: max by (namespace) (meshtransit_deployment_entitlement_expiry_timestamp_seconds) - time() < 7 * 86400
+        for: 1h
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: The Deployment entitlement expires in {{ $value | humanizeDuration }}
+          description: After expiry the Deployment runs on its grace period, then stops admitting new work. Issue the next generation now.
+          runbook: entitlement-expiry
+      - alert: MeshTransitEntitlementRenewalFailing
+        expr: sum by (namespace) (increase(meshtransit_deployment_entitlement_renewal_failures_total[6h])) > 3
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Entitlement self-renewal keeps failing
+          description: Hourly renewal attempts fail; there are months before expiry, but find the error_code in api's logs.
+          runbook: entitlement-expiry
+      - alert: MeshTransitControlKeyExpiresSoon
+        expr: min by (namespace) (meshtransit_mtcp_control_key_not_after_timestamp_seconds) - time() < 60 * 86400
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The MTCP control key expires in {{ $value | humanizeDuration }}
+          description: Past it Devices refuse the key and the control role no longer starts. Rotate it (runbook).
+          runbook: control-key-expiry
+      - alert: MeshTransitControlKeyExpiring
+        expr: min by (namespace) (meshtransit_mtcp_control_key_not_after_timestamp_seconds) - time() < 14 * 86400
+        for: 1h
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: The MTCP control key expires in {{ $value | humanizeDuration }}
+          description: Rotate it now; Devices refuse an expired key.
+          runbook: control-key-expiry
+      - alert: MeshTransitFlowLogTLSExpiring
+        expr: min by (namespace) (meshtransit_flowlog_internal_tls_certificate_expiry_timestamp_seconds) - time() < 14 * 86400
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The connection-log receiver TLS certificate expires in {{ $value | humanizeDuration }}
+          description: cert-manager should have renewed it; check the Certificate resource.
+          runbook: certificate-expiry
+      - alert: MeshTransitRelayTLSExpiring
+        # 0 until the relay serves a certificate (no TLS listener, or an ACME
+        # relay before its first TCP/443 handshake): not an expiry.
+        expr: (meshrelay_tls_certificate_expiry_timestamp_seconds > 0) - time() < 14 * 86400
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Relay {{ $labels.instance }} TLS certificate expires in {{ $value | humanizeDuration }}
+          description: ACME renewal has not succeeded; TCP/443 fallback through this relay stops at expiry.
+          runbook: certificate-expiry
+      - alert: MeshTransitRelayTLSExpired
+        expr: (meshrelay_tls_certificate_expiry_timestamp_seconds > 0) - time() < 3 * 86400
+        for: 15m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Relay {{ $labels.instance }} TLS certificate expires in {{ $value | humanizeDuration }}
+          description: Renew it now; Devices behind UDP-blocking networks lose the relay at expiry.
+          runbook: certificate-expiry
+
+  - name: meshtransit-relay
+    rules:
+      - alert: MeshTransitRelayDown
+        expr: up{job="meshtransit-relay"} == 0
+        for: 5m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Relay {{ $labels.instance }} does not answer scrapes
+          description: Devices fail over to another relay; with too few relays left, Devices behind strict NAT lose connectivity.
+          runbook: relay-down
+      - alert: MeshTransitRelaysAllDown
+        expr: sum by (namespace) (up{job="meshtransit-relay"}) == 0
+        for: 3m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: No relay answers
+          description: Devices that cannot connect directly lose connectivity.
+          runbook: relay-down
+      - alert: MeshTransitRelayLostCore
+        expr: |
+          sum by (namespace, instance) (rate(meshrelay_core_state_polls_total[10m])) > 0
+          unless sum by (namespace, instance) (rate(meshrelay_core_state_polls_total{result=~"applied|not_modified|not_newer"}[10m])) > 0
+        for: 10m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: Relay {{ $labels.instance }} cannot read its state from Core
+          description: The relay keeps serving with stale state, so new revocations do not reach it.
+          runbook: relay-lost-core
