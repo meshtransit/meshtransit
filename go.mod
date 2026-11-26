@@ -21,7 +21,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.62.0
 	golang.org/x/tools v0.51.0
-	golang.zx2c4.com/wireguard/windows v0.5.3
+	golang.zx2c4.com/wireguard/windows v1.1.1
 	gopkg.in/yaml.v3 v3.0.1
 	gvisor.dev/gvisor v0.0.0-20260224225140-573d5e7127a8
 )
