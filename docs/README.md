@@ -24,6 +24,9 @@ How the product behaves, as implemented:
 | [Devices](concepts/devices.md) | Registration, addresses and names, ownership, lifecycle, members leaving, limits |
 | [Policy](concepts/policy.md) | Access Rules, changing policy (simulate, approve, publish), enforcement on the node, explaining access |
 | [Sharing](concepts/sharing.md) | Share offers, Trust Contracts, Imported Resources, Device aliases, ending a share |
+| [Sites](concepts/sites.md) | Office and cloud subnets behind routers, rules to Sites, failover |
+| [Exit Pools](concepts/exit-pools.md) | Exit nodes, failover and spread pools, fail-closed Internet on the consumer |
+| [Kubernetes access](concepts/kubernetes.md) | kubectl over the mesh with each person's identity, the gateway chart, approval |
 | [DNS](concepts/dns.md) | What resolves, how the resolver answers, wiring into each platform, limits |
 | [Paths and relays](concepts/paths-and-relays.md) | A node's addresses, what peers learn, finding a direct path, relays, Private Interchange |
 | [Audit and evidence](concepts/audit.md) | What is recorded, reading the history, connection history, policy distribution and enforcement |

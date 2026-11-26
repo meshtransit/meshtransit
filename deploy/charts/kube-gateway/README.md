@@ -26,14 +26,13 @@ On managed clusters set both on the node group (EKS managed node group
 at least two nodes: replicas spread across nodes and an evicted replica must
 have somewhere to go.
 
-DigitalOcean (DOKS, measured in K1f): the API refuses `kubernetes.io`
+DigitalOcean (DOKS): the API refuses `kubernetes.io`
 labels on a node pool. Set the taint on the pool and label each node with
 kubectl as above; a replaced node comes without the label, so the gateway
 stays Pending there until it is labelled again (it fails closed). Also label
 the pool's nodes `node.kubernetes.io/exclude-from-external-load-balancers=true`:
 otherwise new nodes join every LoadBalancer Service, and one with
-`externalTrafficPolicy: Local` answers errors while they join (seen as
-Cloudflare 521 on the POC). DOKS accepts only the audience
+`externalTrafficPolicy: Local` answers errors while they join. DOKS accepts only the audience
 `system:konnectivity-server`; DaemonSets are all in kube-system.
 
 **Namespace.** Create it with Pod Security `restricted`:
@@ -75,7 +74,7 @@ kubectl -n meshtransit-gateway create secret generic meshgw-join \
   --from-file=key-0=join-key.txt --from-file=key-1=join-key.txt
 ```
 
-**One command (V1-12).** For a cluster in `private_tofu` trust mode, the
+**One command.** For a cluster in `private_tofu` trust mode, the
 Console issues an install token instead: no Secret to create by hand.
 `envelope.selfManaged: true` renders the envelope Secret empty (kept on
 uninstall and by Argo CD); each replica adds its own key at its first start
