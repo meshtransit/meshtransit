@@ -1,8 +1,7 @@
 # Connection log v1 (flowlog-v1)
 
-Status: draft for phase 1a. Schema: `api/flowlog/v1/flowlog.proto`. Token code:
-`shared/flowlog`. Design and decisions: `docs/connection-logs-design.md` and
-ADR-054 in the MeshTransit design repository.
+Status: draft. Schema: `api/flowlog/v1/flowlog.proto`. Token code:
+`shared/flowlog`.
 
 ## 1. Scope
 
@@ -49,8 +48,8 @@ expect a new ticket.
 
 ## 4. Transport
 
-One request per window, with jitter: `POST <control origin>/mtflow/v1/batches`
-(ADR-054), over the control connection's TLS. TLS is transport only: the token
+One request per window, with jitter: `POST <control origin>/mtflow/v1/batches`,
+over the control connection's TLS. TLS is transport only: the token
 and the Noise messages authenticate end to end between node and receiver, and
 the spec assumes an on-path party.
 

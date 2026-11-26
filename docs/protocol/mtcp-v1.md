@@ -2047,7 +2047,7 @@ governs, `not_after` only tells the node when to expect the next ticket.
 `receiver_key` is the receiver's 32-byte Noise static public key; a ticket
 with a token and without a 32-byte key is invalid. An empty `token` turns
 logging off: the node stops sending and keeps its spool. The node sends batches only to the fixed path
-`/mtflow/v1/batches` on its control origin (ADR-054); Core never sends a URL.
+`/mtflow/v1/batches` on its control origin; Core never sends a URL.
 A ticket never appears in another node's map, in logs or in diagnostics.
 
 ## 10. Lifecycle

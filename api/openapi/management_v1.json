@@ -8735,7 +8735,7 @@
             "format": "date-time"
           }
         },
-        "description": "A Kubernetes cluster's access contact (K2): who to ask for more access, shown in an access profile's refusal"
+        "description": "A Kubernetes cluster's access contact: who to ask for more access, shown in an access profile's refusal"
       },
       "KubernetesAuditSettings": {
         "type": "object",
@@ -9797,7 +9797,7 @@
             "description": "The set this one was copied from; shown only. Absent or null keeps the origin the set has."
           }
         },
-        "description": "A Kubernetes access profile (K2 §5.1): what a rule to a cluster may do within the groups it grants. It only narrows: the cluster's RBAC of each group stays the ceiling. At least one rule; at most 16 KiB normalized."
+        "description": "A Kubernetes access profile: what a rule to a cluster may do within the groups it grants. It only narrows: the cluster's RBAC of each group stays the ceiling. At least one rule; at most 16 KiB normalized."
       },
       "PolicyKubernetesAccessResponse": {
         "type": "object",
@@ -10049,7 +10049,7 @@
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },
-            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
+            "description": "Every Kubernetes access profile of the release, the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           }
         }
       },
@@ -10264,7 +10264,7 @@
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },
-            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
+            "description": "Every Kubernetes access profile of the release, the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           }
         }
       },
@@ -10284,7 +10284,7 @@
             "items": {
               "$ref": "#/components/schemas/KubernetesAccessProfile"
             },
-            "description": "Every Kubernetes access profile of the release (K2), the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
+            "description": "Every Kubernetes access profile of the release, the whole set. Absent or null keeps the profiles of the active release; an empty list removes them all. A profile a kept or named rule applies must be in the set."
           },
           "candidate_semantic_hash": {"$ref": "#/components/schemas/SHA256Digest"},
           "impact_hash": {"$ref": "#/components/schemas/SHA256Digest"},
