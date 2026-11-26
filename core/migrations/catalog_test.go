@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 319 {
-		t.Fatalf("len(Catalog()) = %d, want 319", len(catalog))
+	if len(catalog) != 320 {
+		t.Fatalf("len(Catalog()) = %d, want 320", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 319 {
-		t.Fatalf("LatestVersion() = %d, want 319", LatestVersion())
+	if LatestVersion() != 320 {
+		t.Fatalf("LatestVersion() = %d, want 320", LatestVersion())
 	}
 }
 
@@ -9350,5 +9350,51 @@ func TestMigration319OnlyAddsTheEmailProvider(t *testing.T) {
 	if strings.Count(sql319, "CREATE OR REPLACE FUNCTION") != 2 || strings.Contains(sql319, "GRANT ") ||
 		strings.Contains(sql319, "REVOKE ") || strings.Contains(sql319, "DROP ") {
 		t.Error("schema 319 does more than add the provider and restate two functions")
+	}
+}
+
+// Schema 320 (V1-80 A1) lays the API key foundation: a key's Session row is
+// never 'active', so every Session check stays closed to it, and the three
+// permission resolvers admit it only in its own Workspace.
+func TestMigration320BindsKeysToTheirWorkspace(t *testing.T) {
+	t.Parallel()
+	sql320 := migrationVersion(t, 320).SQL
+	predicate := "(session.state = 'active' OR (session.state = 'api_key'\n" +
+		"          AND session.login_workspace_id = workspace.id\n" +
+		"          AND EXISTS (SELECT 1 FROM mesh.api_key_permission AS key_permission\n" +
+		"                      WHERE key_permission.permission_id = permission.id)))"
+	if got := strings.Count(sql320, predicate); got != 4 {
+		t.Errorf("Workspace- and allowlist-bound key predicate appears %d times, want 4 (v1, v2 twice, workspace v1)", got)
+	}
+	if strings.Contains(sql320, "      AND session.state = 'active'\n") {
+		t.Error("a resolver still admits only active Sessions without the key branch")
+	}
+	for _, name := range []string{"resolve_network_permission_v1", "resolve_network_permission_v2",
+		"resolve_workspace_permission_v1", "resolve_oidc_login_subject_v2", "enforce_human_auth_state_transition"} {
+		if !strings.Contains(sql320, "FUNCTION mesh_ops."+name+"(") {
+			t.Errorf("%s not restated", name)
+		}
+	}
+	if got := strings.Count(sql320, "CREATE OR REPLACE FUNCTION"); got != 5 {
+		t.Errorf("schema 320 restates %d functions, want 5", got)
+	}
+	for _, want := range []string{"account_session_kind_check", "account_session_kind_shape_check",
+		"CHECK (state IN ('active', 'revoked', 'expired', 'api_key'))",
+		"(state IN ('active', 'api_key') AND ended_at IS NULL AND end_reason IS NULL)", "'api_key_revoked'",
+		"end_reason IS DISTINCT FROM 'api_key_revoked'",
+		"CREATE TABLE mesh.api_key_permission", "WHERE permission.risk_class = 'read'",
+		"REVOKE ALL ON TABLE mesh.api_key_permission FROM PUBLIC",
+		"AND session.kind = 'interactive'",
+		"OR (OLD.state = 'api_key' AND NEW.state IN ('revoked', 'expired')"} {
+		if !strings.Contains(sql320, want) {
+			t.Errorf("schema 320 lacks %q", want)
+		}
+	}
+	// One ALTER TABLE: one lock and one validation pass on a hot table.
+	if strings.Count(sql320, "ALTER TABLE mesh.account_session") != 1 || strings.Contains(sql320, "NOT VALID") {
+		t.Error("schema 320 alters account_session in more than one statement")
+	}
+	if strings.Contains(sql320, "OR (TG_TABLE_NAME = 'account_session' AND NEW.state <> 'active')") {
+		t.Error("the trigger keeps the unreachable account_session insert clause")
 	}
 }

@@ -739,6 +739,8 @@ func Catalog() []Migration {
 			policyActivationTimeSQL),
 		newMigration(319, "Account email remembers its provider; the member directory shows it only where routed",
 			accountEmailProviderSQL),
+		newMigration(320, "API key foundation: session kind, keys resolve only in their own Workspace",
+			apiKeySessionFoundationSQL),
 	}
 }
 
@@ -1475,3 +1477,6 @@ var policyActivationTimeSQL string
 
 //go:embed 000319_account_email_provider.up.sql
 var accountEmailProviderSQL string
+
+//go:embed 000320_api_key_session_foundation.up.sql
+var apiKeySessionFoundationSQL string

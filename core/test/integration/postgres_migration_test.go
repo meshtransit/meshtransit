@@ -567,6 +567,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	// The deployment gate runs after every operator step, as in production.
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	assertGroupRolesWithinRuntime(ctx, t, adminConnection)
+	assertPostgreSQLAPIKeyFoundation(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)
