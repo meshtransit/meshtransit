@@ -35,6 +35,17 @@ type secretSpec struct {
 	kind secretKind
 }
 
+// RequiredSecrets names the files setup secrets keeps in secrets/: a
+// restore refuses a backup that lacks one, which setup would otherwise
+// generate anew (a new digest key breaks every enrollment key and session).
+func RequiredSecrets() []string {
+	names := make([]string, 0, len(secretCatalog)+1)
+	for _, spec := range secretCatalog {
+		names = append(names, spec.name)
+	}
+	return append(names, stateFile)
+}
+
 // secretCatalog is every generated secret, one file each (Core refuses two
 // settings sharing a file). Formats follow configuration.md "Secret files".
 var secretCatalog = []secretSpec{

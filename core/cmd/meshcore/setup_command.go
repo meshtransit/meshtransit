@@ -39,9 +39,12 @@ type setupCommand struct {
 	logger      *slog.Logger
 	owner       *selfhost.Owner
 	now         func() time.Time
+	backup      backupOptions
+	input       io.Reader
 }
 
-// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply|migrate|renew-tls"
+// runSetup is "meshcore setup init|secrets|approve-identity|render|check|apply|migrate|renew-tls|
+// backup|backup-verify|restore"
 // (docs: self-host-config-design.md). Output names files and states, never
 // secret values. migrate runs inside the server's containers, as the image
 // user: it only reads run/ and talks to the database.
@@ -55,11 +58,14 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 	flags.SetOutput(errorOutput)
 	configPath := flags.String("config", filepath.Join(selfhost.OperatorDir, "config.yaml"), "config.yaml")
 	stateDir := flags.String("state-dir", "/var/lib/meshtransit", "secrets/ and run/ live here")
+	var backup backupOptions
+	backup.register(flags)
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		return 2
 	}
 	command := setupCommand{
-		ctx: ctx, output: output, errorOutput: errorOutput, logger: logger, now: time.Now,
+		ctx: ctx, output: output, errorOutput: errorOutput, logger: logger, now: time.Now, backup: backup,
+		input: os.Stdin,
 		paths: setupPaths{config: *configPath, layout: selfhost.Layout{
 			SecretsDir: filepath.Join(*stateDir, "secrets"), RunDir: filepath.Join(*stateDir, "run"),
 		}},
@@ -76,6 +82,9 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 		"apply":            {command.secrets, command.approveIfNew, command.render, command.checkForApply},
 		"migrate":          {command.migrateReported},
 		"renew-tls":        {command.renewTLS},
+		"backup":           {command.backupRun},
+		"backup-verify":    {command.backupVerify},
+		"restore":          {command.restore},
 	}
 	operation := args[0]
 	run, ok := steps[operation]
@@ -88,7 +97,9 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 			"error", err)
 		return 1
 	}
-	if operation != "init" && operation != "migrate" {
+	// backup takes the lock itself, only while it reads the files;
+	// backup-verify writes nothing here.
+	if operation != "init" && operation != "migrate" && operation != "backup" && operation != "backup-verify" {
 		// One setup run at a time over the state directory. migrate writes
 		// nothing there; the database serializes its own migrations.
 		// renew-tls runs in a container that mounts only the secrets, the
@@ -103,6 +114,12 @@ func runSetup(ctx context.Context, args []string, output, errorOutput io.Writer)
 			return fail(err)
 		}
 		defer unlock()
+	}
+	// A restore that did not finish must not be "repaired" by new secrets.
+	if slices.Contains([]string{"secrets", "approve-identity", "render", "apply"}, operation) {
+		if err := refuseIncompleteRestore(*stateDir); err != nil {
+			return fail(err)
+		}
 	}
 	for _, step := range run {
 		if err := step(); err != nil {
@@ -262,6 +279,10 @@ func (command setupCommand) render() error {
 	if err != nil {
 		return err
 	}
+	// The PostgreSQL this image runs must own the data directory.
+	if err := selfhost.CheckPostgresMajor(filepath.Dir(command.paths.layout.SecretsDir)); err != nil {
+		return err
+	}
 	rendered, err := selfhost.Render(config, state, keys, command.paths.layout)
 	if err != nil {
 		return err
@@ -286,6 +307,9 @@ func (command setupCommand) render() error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	if err := prepareBackupDir(config); err != nil {
+		return err
+	}
 	return command.report(map[string]any{"operation": "render", "files": names, "identity": "approved"})
 }
 
@@ -351,9 +375,8 @@ func (command setupCommand) checkLoginProvider(providerRequired bool) error {
 	}
 	report := map[string]any{"operation": "check", "valid": true}
 	warnings := []string{}
-	if parsed, err := command.loadConfig(); err == nil && strings.Contains(parsed.FirstAdmin.Subject, "@") {
-		warnings = append(warnings, "first_admin.subject looks like an email address: the provider's "+
-			"sub claim must never be reassigned, so a subject based on email or user name is unsafe")
+	if parsed, err := command.loadConfig(); err == nil {
+		warnings = append(warnings, configWarnings(parsed)...)
 	}
 	findings, err := checkLoginDiscovery(command.ctx, *processConfig.Identity)
 	if err != nil && !providerRequired {
@@ -650,4 +673,25 @@ func prepareDataDir(dir string, owner *selfhost.Owner) error {
 		return err
 	}
 	return os.Chmod(dir, 0o700) // #nosec G302 -- a private directory.
+}
+
+// configWarnings are config.yaml choices check reports without failing.
+func configWarnings(parsed selfhost.Config) []string {
+	var warnings []string
+	if strings.Contains(parsed.FirstAdmin.Subject, "@") {
+		warnings = append(warnings, "first_admin.subject looks like an email address: the provider's "+
+			"sub claim must never be reassigned, so a subject based on email or user name is unsafe")
+	}
+	settings := parsed.BackupSettings()
+	switch {
+	case settings == nil:
+		warnings = append(warnings, "backup is off: losing this server loses its data (runbook backup-restore.md)")
+	case settings.S3 == nil:
+		warnings = append(warnings, "backup has no s3 copy: unless another machine pulls the files, losing this "+
+			"server loses its backups too")
+	}
+	if settings != nil && len(settings.Recipients) == 1 {
+		warnings = append(warnings, "backup has one recipient: keep a second age key on separate media")
+	}
+	return warnings
 }

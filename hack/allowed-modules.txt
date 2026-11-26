@@ -6,6 +6,7 @@ cloud.google.com/go/auth
 cloud.google.com/go/auth/oauth2adapt
 cloud.google.com/go/compute/metadata
 dario.cat/mergo
+filippo.io/age
 filippo.io/edwards25519
 github.com/AppsFlyer/go-sundheit
 github.com/Azure/go-ntlmssp

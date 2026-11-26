@@ -3,6 +3,7 @@ module meshtransit.net
 go 1.26.11
 
 require (
+	filippo.io/age v1.2.1
 	github.com/AppsFlyer/go-sundheit v0.6.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.7

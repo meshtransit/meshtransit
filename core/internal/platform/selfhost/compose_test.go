@@ -96,7 +96,8 @@ func TestComposeRunsTheServerFromRenderedFilesOnly(t *testing.T) {
 	if !strings.Contains(hba, "hostssl meshtransit postgres 172.30.0.12/32 scram-sha-256") ||
 		!strings.Contains(hba, "mesh_migrator,mesh_runtime,mesh_worker,mesh_all ") ||
 		strings.Contains(hba, "mesh_observer") || strings.Contains(hba, " all all ") && !strings.Contains(hba, "local all all") ||
-		strings.Contains(hba, "trust") || strings.Contains(hba, "\nhost ") || strings.Count(hba, "postgres") != 1 {
+		strings.Contains(hba, "trust") || strings.Contains(hba, "\nhost ") || strings.Count(hba, "postgres") != 2 ||
+		!strings.Contains(hba, "\nlocal replication postgres scram-sha-256\n") || strings.Count(hba, "replication") != 1 {
 		t.Errorf("pg_hba.conf = %s", hba)
 	}
 	// Each container sees only the files its settings name.
@@ -193,7 +194,8 @@ func TestComposeSizesPostgresForThePools(t *testing.T) {
 	}
 	// 4 runtime + 2 worker + 4 broker + 10 reserved.
 	base := command(testConfig(t))
-	for _, want := range []string{"max_connections=20", "shared_buffers=128MB", "autovacuum_work_mem=32MB"} {
+	for _, want := range []string{"max_connections=20", "shared_buffers=128MB", "autovacuum_work_mem=32MB",
+		"wal_keep_size=256MB", "max_slot_wal_keep_size=1GB"} {
 		if !strings.Contains(base, want) {
 			t.Errorf("postgres command lacks %s: %s", want, base)
 		}

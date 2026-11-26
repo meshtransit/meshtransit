@@ -42,6 +42,7 @@ type Config struct {
 	Relay        Relay             `yaml:"relay"`
 	Images       Images            `yaml:"images"`
 	Advanced     map[string]string `yaml:"advanced"`
+	Backup       *Backup           `yaml:"backup"`
 }
 
 // Images are the MeshTransit images the server runs; pin them by digest.
@@ -194,6 +195,9 @@ func (config Config) validate() error {
 		if !settingName.MatchString(name) || !tunableSetting(name) || !safeEnvValue(value) {
 			return invalid("advanced." + name)
 		}
+	}
+	if config.Backup != nil {
+		return config.Backup.validate()
 	}
 	return nil
 }

@@ -13,6 +13,7 @@ resolved by `go.mod` and `go.sum`.
 | `golang.org/x/net` | `v0.60.0` | BSD-3-Clause |
 | `github.com/beorn7/perks` | `v1.0.1` | MIT |
 | `github.com/cespare/xxhash/v2` | `v2.3.0` | MIT |
+| `filippo.io/age` | `v1.2.1` | BSD-3-Clause |
 | `github.com/flynn/noise` | `v1.1.0` | BSD-3-Clause |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT |
 | `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | MIT |

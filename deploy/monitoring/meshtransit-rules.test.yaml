@@ -326,3 +326,39 @@ tests:
               summary: The Kubernetes gateway certificate signer is suspended while requests wait
               description: Gateways cannot renew their certificates; kubectl over the mesh stops when they expire.
               runbook: kubernetes-signer
+
+  # Backups: a good one a day keeps every backup alert quiet; one that never
+  # ran warns after a day; a stale one warns, then pages.
+  - interval: 1m
+    input_series:
+      - series: 'meshtransit_backup_configured{instance="vm-a"}'
+        values: '1x1700'
+      - series: 'meshtransit_backup_configured{instance="vm-b"}'
+        values: '1x1700'
+      - series: 'meshtransit_backup_last_success_timestamp_seconds{instance="vm-b"}'
+        values: '0x1700'
+      - series: 'meshtransit_backup_last_result{instance="vm-b"}'
+        values: '1x1700'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: MeshTransitBackupNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, instance: vm-a}
+            exp_annotations:
+              summary: Backups are enabled on vm-a but none ever succeeded
+              description: The backup timer may not be installed, or every run fails.
+              runbook: backup-stale
+      - eval_time: 27h
+        alertname: MeshTransitBackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning, product: meshtransit, instance: vm-b}
+            exp_annotations:
+              summary: The last good backup of vm-b is 1d 3h 0m 0s old
+              description: The nightly backup has not succeeded; the recovery point grows past a day.
+              runbook: backup-stale
+      - eval_time: 27h
+        alertname: MeshTransitBackupMissing
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: MeshTransitBackupFailing
+        exp_alerts: []

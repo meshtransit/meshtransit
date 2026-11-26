@@ -15,7 +15,9 @@ import (
 // following a symbolic link: setup runs as root over directories the image
 // user owns.
 func readRegularFile(path string, limit int64) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- setup's own directories.
+	// Non-blocking: a FIFO planted in the image user's directory cannot
+	// hang setup; the type is checked on the open file.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- setup's own directories.
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +31,9 @@ func readRegularFile(path string, limit int64) ([]byte, error) {
 	}
 	return io.ReadAll(io.LimitReader(file, limit+1))
 }
+
+// ErrSetupLocked reports that another setup run holds the lock.
+var ErrSetupLocked = fmt.Errorf("%w: another setup run holds the lock", ErrSecrets)
 
 // LockSetup takes stateDir's setup lock, so two setup runs never interleave
 // (a CA written by one and leaves signed by the other). It fails at once
@@ -48,7 +53,7 @@ func LockSetup(stateDir string) (func(), error) {
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { // #nosec G115 -- a file descriptor.
 		_ = file.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%w: another setup run holds the lock", ErrSecrets)
+			return nil, ErrSetupLocked
 		}
 		return nil, fmt.Errorf("%w: lock: %w", ErrSecrets, err)
 	}

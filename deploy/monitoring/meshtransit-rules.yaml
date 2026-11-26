@@ -489,3 +489,53 @@ groups:
           summary: Relay {{ $labels.instance }} cannot read its state from Core
           description: The relay keeps serving with stale state, so new revocations do not reach it.
           runbook: relay-lost-core
+
+  # One-server backups (V1-51): the node_exporter textfile meshcore setup
+  # backup writes (backup.textfile_dir).
+  - name: meshtransit-backup
+    rules:
+      - alert: MeshTransitBackupNeverSucceeded
+        expr: |
+          max by (namespace, instance) (meshtransit_backup_configured)
+          unless max by (namespace, instance) (meshtransit_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Backups are enabled on {{ $labels.instance }} but none ever succeeded
+          description: The backup timer may not be installed, or every run fails.
+          runbook: backup-stale
+      - alert: MeshTransitBackupStale
+        expr: time() - max by (namespace, instance) (meshtransit_backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 30m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The last good backup of {{ $labels.instance }} is {{ $value | humanizeDuration }} old
+          description: The nightly backup has not succeeded; the recovery point grows past a day.
+          runbook: backup-stale
+      - alert: MeshTransitBackupMissing
+        expr: time() - max by (namespace, instance) (meshtransit_backup_last_success_timestamp_seconds) > 50 * 3600
+        for: 30m
+        labels: {severity: critical, product: meshtransit}
+        annotations:
+          summary: No good backup of {{ $labels.instance }} for {{ $value | humanizeDuration }}
+          description: Two nightly backups failed in a row; a server loss now loses two days.
+          runbook: backup-stale
+      - alert: MeshTransitBackupFailing
+        expr: max by (namespace, instance) (meshtransit_backup_last_result) == 0
+        for: 30m
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: The last backup run on {{ $labels.instance }} failed
+          description: Read status.json in the backup directory and the unit's journal (journalctl -u meshtransit-backup).
+          runbook: backup-stale
+      - alert: MeshTransitBackupOffsiteStale
+        expr: |
+          time() - max by (namespace, instance) (meshtransit_backup_offsite_last_success_timestamp_seconds) > 50 * 3600
+          or (max by (namespace, instance) (meshtransit_backup_offsite_configured)
+              unless max by (namespace, instance) (meshtransit_backup_offsite_last_success_timestamp_seconds))
+        for: 1h
+        labels: {severity: warning, product: meshtransit}
+        annotations:
+          summary: Backups of {{ $labels.instance }} have not reached the off-server copy
+          description: The S3 upload fails; the backups on the server do not survive its loss.
+          runbook: backup-offsite

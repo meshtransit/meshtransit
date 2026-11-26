@@ -75,3 +75,21 @@ images:
 # level; docs/operations/configuration.md). Anything else is refused.
 # advanced:
 #   MESHTRANSIT_LOG_LEVEL: info
+
+# Optional: a nightly encrypted backup (docs: runbooks/backup-restore.md).
+# Recipients are age public keys; keep their private keys off this server,
+# two of them on separate media. Without s3 (or a machine that pulls the
+# files), losing this server loses its backups too.
+# backup:
+#   enabled: true
+#   dir: /var/backups/meshtransit
+#   keep: 14
+#   recipients:
+#     - age1...
+#   textfile_dir: /var/lib/node_exporter/textfile_collector
+#   s3:
+#     endpoint: https://s3.example.com
+#     region: auto
+#     bucket: meshtransit-backups
+#     prefix: server-1
+#     credentials_file: /etc/meshtransit/backup-s3
