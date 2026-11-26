@@ -2927,7 +2927,7 @@
       "get": {
         "operationId": "getPolicyKubernetesAccess",
         "summary": "Read a release's Kubernetes access profiles and rule access",
-        "description": "Requires current policy.read, policy.validate or policy.publish (K2f). The access profiles of the release at policy_revision and how each of its rules to a Kubernetes cluster grants its groups: {\"full\": true} or a profile in namespaces. Read apart from GET …/policy, whose keys stay as they were. A revision with no release reads as empty; ask the revision GET …/policy names.",
+        "description": "Requires current policy.read, policy.validate or policy.publish. The access profiles of the release at policy_revision and how each of its rules to a Kubernetes cluster grants its groups: {\"full\": true} or a profile in namespaces. Read apart from GET …/policy, whose keys stay as they were. A revision with no release reads as empty; ask the revision GET …/policy names.",
         "security": [
           {
             "accountSessionBearer": []
@@ -2959,7 +2959,7 @@
               "format": "uuid",
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             },
-            "description": "After policy_revision, at most once: only the cluster's rules, its permission sets, and the sets of every cluster its rules apply (K2h). For showing one cluster; publish needs the whole read."
+            "description": "After policy_revision, at most once: only the cluster's rules, its permission sets, and the sets of every cluster its rules apply. For showing one cluster; publish needs the whole read."
           }
         ],
         "responses": {
@@ -3011,7 +3011,7 @@
       "get": {
         "operationId": "listKubernetesProfileDenials",
         "summary": "Read a cluster's latest access profile denials",
-        "description": "Requires current audit.read (K2f). The latest 50 counts of requests an access profile refused (profile_denied) or would refuse once its rule enforces (profile_would_deny), from the last 31 days, newest first, each with one request of its window as a sample and the scope hash of the grant that refused it. Name the profile from GET …/policy/kubernetes-access by the rule's scope_hash; a hash no rule of that release holds is of an earlier release. That read needs policy.read. Profile denials sent without a sample are left out.",
+        "description": "Requires current audit.read. The latest 50 counts of requests an access profile refused (profile_denied) or would refuse once its rule enforces (profile_would_deny), from the last 31 days, newest first, each with one request of its window as a sample and the scope hash of the grant that refused it. Name the profile from GET …/policy/kubernetes-access by the rule's scope_hash; a hash no rule of that release holds is of an earlier release. That read needs policy.read. Profile denials sent without a sample are left out.",
         "security": [
           {
             "accountSessionBearer": []
@@ -3177,7 +3177,7 @@
       "get": {
         "operationId": "listKubernetesGroupCeilings",
         "summary": "Read a cluster's group ceilings",
-        "description": "Requires current network.read (K2h h4). The cluster's active gateway replicas, each with the hash and time of its latest group ceiling, and the distinct ceilings among them: what each group's own RBAC lets it do, as the replica measured it. A lower bound for people to read, never a security decision; the API server stays the real limit.",
+        "description": "Requires current network.read. The cluster's active gateway replicas, each with the hash and time of its latest group ceiling, and the distinct ceilings among them: what each group's own RBAC lets it do, as the replica measured it. A lower bound for people to read, never a security decision; the API server stays the real limit.",
         "security": [
           {
             "accountSessionBearer": []
@@ -3324,7 +3324,7 @@
       "get": {
         "operationId": "readKubernetesGroupCeiling",
         "summary": "Read one of a cluster's group ceilings by its hash",
-        "description": "Requires current network.read (K2h h4). A ceiling an active replica of the cluster holds; 404 when none does.",
+        "description": "Requires current network.read. A ceiling an active replica of the cluster holds; 404 when none does.",
         "security": [
           {
             "accountSessionBearer": []
@@ -5783,7 +5783,7 @@
       "get": {
         "operationId": "readKubernetesClusterSigning",
         "summary": "Read a cluster's signing trust",
-        "description": "Requires network.read; requests and token warnings also need kubernetes_cluster.manage or kubernetes_cluster.approve. A Core before K1.1 answers 404.",
+        "description": "Requires network.read; requests and token warnings also need kubernetes_cluster.manage or kubernetes_cluster.approve. An older Core answers 404.",
         "security": [
           {
             "accountSessionBearer": []
@@ -9786,7 +9786,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "The cluster the permission set belongs to (K2h). Up to 256 sets, names unique in the Network, until every Core knows clusters; then 1024, names unique within a cluster. Absent keeps the cluster the set has in the replaced release; for an ID not in that release, absent makes a new set (every cluster while clustered sets are off), and an ID bound before is refused (409) unless its cluster is named; null makes it a set of every cluster, only for a set that is one (or a new set while clustered sets are off); a cluster's ID binds it, for good. A set never moves to another cluster."
+            "description": "The cluster the permission set belongs to. Up to 256 sets, names unique in the Network, until every Core knows clusters; then 1024, names unique within a cluster. Absent keeps the cluster the set has in the replaced release; for an ID not in that release, absent makes a new set (every cluster while clustered sets are off), and an ID bound before is refused (409) unless its cluster is named; null makes it a set of every cluster, only for a set that is one (or a new set while clustered sets are off); a cluster's ID binds it, for good. A set never moves to another cluster."
           },
           "copied_from": {
             "type": [
@@ -9830,7 +9830,7 @@
               },
               "clustered_profiles": {
                 "type": "boolean",
-                "description": "Whether every Core knows the clusters of permission sets: sets of different clusters may share a name, up to 1024 sets (K2h)."
+                "description": "Whether every Core knows the clusters of permission sets: sets of different clusters may share a name, up to 1024 sets."
               },
               "rules": {
                 "type": "array",
@@ -9890,7 +9890,7 @@
               "null"
             ],
             "format": "uuid",
-            "description": "The cluster the permission set belongs to; null for a set of every cluster (K2h)."
+            "description": "The cluster the permission set belongs to; null for a set of every cluster."
           },
           "copied_from": {
             "$ref": "#/components/schemas/PublicID",
@@ -9924,7 +9924,7 @@
             "items": {
               "type": "string"
             },
-            "description": "null for a rule released before groups (K1a3), which grants nothing through the cluster's gateways."
+            "description": "null for a rule released before groups, which grants nothing through the cluster's gateways."
           },
           "access": {
             "$ref": "#/components/schemas/PolicyKubernetesAccessRead"
@@ -9971,7 +9971,7 @@
           "scope_hash": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
-            "description": "With a profile: the scope hash of the profile as this rule applies it, which a gateway's denial samples name (K2f)."
+            "description": "With a profile: the scope hash of the profile as this rule applies it, which a gateway's denial samples name."
           }
         },
         "description": "How a released rule grants its groups: full, or a profile in namespaces."
@@ -10701,7 +10701,7 @@
       "PolicySimulationKubernetesAccessChanges": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Present when the current policy or the proposal has a permission set or a rule to a Kubernetes cluster (K2h f5). Every permission set added, removed or changed, and every rule to a cluster added, removed, moved, or whose source, groups or access differ; at most 256 entries each, sorted by ID, the counts carry the totals. Not part of impact_hash.",
+        "description": "Present when the current policy or the proposal has a permission set or a rule to a Kubernetes cluster. Every permission set added, removed or changed, and every rule to a cluster added, removed, moved, or whose source, groups or access differ; at most 256 entries each, sorted by ID, the counts carry the totals. Not part of impact_hash.",
         "required": ["set_count", "sets", "rule_count", "rules", "truncated"],
         "properties": {
           "set_count": {"type": "integer", "minimum": 0},

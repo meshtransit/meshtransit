@@ -66,7 +66,7 @@ VPN. No window is needed on Android: sign in from that notification and the
 exit node carries the traffic again once the Wi-Fi lets it through. Tried on
 Android 12 (MIUI) on 2026-10-21 with a simulated portal.
 
-**Accounts (device logout design §7):** the core keeps one profile per account. `ProfilesJSON` lists them as
+**Accounts:** the core keeps one profile per account. `ProfilesJSON` lists them as
 `{"version":1,"profiles":[{"id","name","controlUrl","active","state"}]}`, `state` being `registered`, `signed_out`,
 `authorization_required`, `unregistered`, `untrusted` or `unreadable`. `AddAccount` adds a profile for the active
 profile's server with the same pinned key, then makes it active, so the next browser sign-in makes another Device;

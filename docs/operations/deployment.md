@@ -73,7 +73,7 @@ memberships the operator command keeps (below): the migrator checks this
 before every run and refuses otherwise, and the serving roles' readiness
 checks it again.
 
-Role isolation (TD-SEC-90): grants go to two NOLOGIN group roles,
+Role isolation: grants go to two NOLOGIN group roles,
 `mesh_api_rights` and `mesh_control_rights`, and each serving login holds them
 through membership (inherit only, never `SET` or `ADMIN`). The operator
 command creates the groups and keeps the memberships; migrations need the
@@ -233,7 +233,7 @@ with key selectors and channel rules (7.0 or later; the integration tests use
 Redis 8).
 
 Each serving role has its own Redis user with only what its code sends
-(role isolation, TD-SEC-90 S6): `mesh_api`, `mesh_control`, `mesh_worker`, and
+(role isolation): `mesh_api`, `mesh_control`, `mesh_worker`, and
 `mesh_all` for a process that runs every role. The rules are generated from the
 code; print them with:
 

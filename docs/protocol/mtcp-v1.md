@@ -526,7 +526,7 @@ code   = the first 50 bits of digest, RFC 4648 base32 upper case: "XXXXX-XXXXX"
 Each length is big-endian before its bytes; `jwks` is the canonical form of
 the cluster's keys (`kube-sa-trust/v1`: public members only, sorted by
 `kid`, members in lexicographic order, no whitespace, no HTML escaping).
-Since K1.1 the join also carries the pod's identity:
+The join also carries the pod's identity:
 `service_account_token` (the pod's projected ServiceAccount token, audience
 `meshtransit.net/kubernetes-gateway`; never logged),
 `service_account_issuer` and `service_account_jwks` (as the cluster's API
@@ -695,7 +695,7 @@ proof = BLAKE2s-256(key = X25519(new_machine_key, control_key),
                     "meshtransit/mtcp-machine-key-rotation/v1" || 0x00 || h || new_machine_key)
 ```
 
-Since K1.1 both rotations of a gateway (this one and 6.3) carry
+Both rotations of a gateway (this one and 6.3) carry
 `service_account_token`, the pod's token, read again for each rotation.
 Core verifies it after the request's own proofs (and, for a node key, after
 finding that a repeated rotation already committed, which needs no token)
@@ -724,18 +724,18 @@ proof; `NOT_PERMITTED` on any session that is not a gateway's. A gateway
 also rotates its node key (6.3) at every start, at most 30 times an hour.
 
 A gateway session rotates its machine key or its node key only while its own
-map stream holds the gateway's presence on every Core replica. Since K1.1 a
-contested key no longer refuses the rotation: only the pod has the token,
+map stream holds the gateway's presence on every Core replica. A
+contested key does not refuse the rotation: only the pod has the token,
 so its rotation retires the keys of a copy that fought it. Every gateway session opened with a Ping streams, so a
 rotation sent right after the Ping waits, at most 5 seconds, for the stream
 to claim the presence. Core refuses a rotation with `Error{NOT_PERMITTED}`,
 not fatal and without `retry_after_ms`, so the node drops the staged key,
 keeps the session and starts at once. It refuses when:
 
-- **No valid pod token** (K1.1), checked first.
+- **No valid pod token**, checked first.
 - **No presence.** The stream has not claimed the presence, another stream
   holds it, or Core cannot tell (Redis failed).
-- **Contested** (before K1.1 only; since K1.1 counted, not refused). The
+- **Contested** (older gateways only; for current ones it is counted, not refused). The
   machine key is contested:
   - **Pushed out on the same replica.** A gateway session pushed out a live
     session of the same machine key on the same replica, within 10 minutes
@@ -1635,7 +1635,7 @@ narrows a peer's groups by access profiles: a profile says what a rule may do
 scoped grant is never the whole group, whatever its fields: what reaches the
 API server still carries the group's token, so the cluster's RBAC stays the
 ceiling. Matching is `shared/kubeprofile` (RBAC's rule match, stricter in the
-cases of the K2 design §5.4).
+cases).
 
 - **Table.** `kubernetes_scopes` in every `MapSnapshot` (and in a `MapDelta`
   when it changed, replacing it whole) carries every profile and scope of
@@ -1767,7 +1767,7 @@ address (that is a `PORT_MAPPED` endpoint).
   session and stores it only when it changes; the Console shows it with the
   Device's paths.
 
-- `disco_key` MUST be proved in this session (TD-SEC-80): by the session's
+- `disco_key` MUST be proved in this session: by the session's
   registration or rotation, or by `disco_key_proof` (6.4, the same proof as
   registration's) in the report. A session that proved no key yet, such as a
   reconnect opened by `Ping`, sends the proof with its first report; Core then
@@ -2235,7 +2235,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C11 | Map tampering by a compromised relay | Maps never travel through relays; relay map is signed separately |
 | C12 | Captured INIT replayed to displace a live node | Sessions count only after the first TRANSPORT record; durable per-Device timestamps shared by replicas |
 | C13 | Approval URL leaked or phished | Pending approvals bound to machine key and node key; separate resume handle; fingerprint on the approval page |
-| C14 | Registering or reporting someone else's public node or disco key | Node keys: uniqueness against current and retired keys; node and disco keys: proof of possession bound to the handshake hash, at registration, rotation and in the first endpoint report of a session that proved none (8.1, TD-SEC-80); a node skips peers whose disco keys collide |
+| C14 | Registering or reporting someone else's public node or disco key | Node keys: uniqueness against current and retired keys; node and disco keys: proof of possession bound to the handshake hash, at registration, rotation and in the first endpoint report of a session that proved none (8.1); a node skips peers whose disco keys collide |
 | C15 | Stolen machine key renews an expired Device | `auth.resume` only before expiry unless policy enables auto-renewal |
 | C16 | Shared peers reveal another Workspace's data | Foreign peers carry no owner or provider names; foreign Network revisions never listed |
 | C17 | One source holds every session slot of a replica with sessions that never register, kept alive by Pings | Such sessions count as unauthenticated for their source until they receive a map, bounded per source, and close after the unproven lifetime (section 14) |
