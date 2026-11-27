@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	// apiKeyFoundationSessionID is a key bound to the Workspace of the probed
-	// Network; apiKeyElsewhereSessionID one bound to another Workspace of the
+	// foundationKeyRowID is a key bound to the Workspace of the probed
+	// Network; elsewhereKeyRowID one bound to another Workspace of the
 	// same person; humanTwinSessionID an interactive copy that has not idled
 	// out, the baseline a key must match in its own Workspace.
-	apiKeyFoundationSessionID = "01890f00-0000-7000-8000-00000000a7a1"
-	apiKeyElsewhereSessionID  = "01890f00-0000-7000-8000-00000000a7b1"
-	humanTwinSessionID        = "01890f00-0000-7000-8000-00000000a7c1"
+	foundationKeyRowID = "01890f00-0000-7000-8000-00000000a7a1"
+	elsewhereKeyRowID  = "01890f00-0000-7000-8000-00000000a7b1"
+	humanTwinSessionID = "01890f00-0000-7000-8000-00000000a7c1"
 )
 
 // apiKeyProbe is a human Session and a Network where it holds a permission
@@ -60,8 +60,8 @@ LIMIT 1`, probe.session, probe.workspace).Scan(&elsewhere); err != nil {
 		t.Fatalf("a second Workspace: %v", err)
 	}
 	copySessionAsAPIKey(ctx, t, admin, probe.session, humanTwinSessionID, probe.workspace, "a7c1", "interactive", false)
-	copySessionAsAPIKey(ctx, t, admin, probe.session, apiKeyFoundationSessionID, probe.workspace, "a7a1", "api_key", true)
-	copySessionAsAPIKey(ctx, t, admin, probe.session, apiKeyElsewhereSessionID, elsewhere, "a7b1", "api_key", false)
+	copySessionAsAPIKey(ctx, t, admin, probe.session, foundationKeyRowID, probe.workspace, "a7a1", "api_key", true)
+	copySessionAsAPIKey(ctx, t, admin, probe.session, elsewhereKeyRowID, elsewhere, "a7b1", "api_key", false)
 
 	networkWith := func(resolver, session, workspaceID, networkID, permission string) int {
 		t.Helper()
@@ -105,13 +105,13 @@ WHERE session.public_id = $1::UUID`, session, workspaceID)
 		network(human, probe.workspace, probe.network, probe.write) != 1 {
 		t.Fatalf("baseline: the human twin lost the probed permissions %+v", probe)
 	}
-	if got := network(apiKeyFoundationSessionID, probe.workspace, probe.network, probe.read); got != 1 {
+	if got := network(foundationKeyRowID, probe.workspace, probe.network, probe.read); got != 1 {
 		t.Errorf("key lacks %s on a Network of its own Workspace: %d", probe.read, got)
 	}
-	if got := network(apiKeyFoundationSessionID, probe.workspace, probe.network, probe.write); got != 0 {
+	if got := network(foundationKeyRowID, probe.workspace, probe.network, probe.write); got != 0 {
 		t.Errorf("key resolved %s, which is not on mesh.api_key_permission: %d", probe.write, got)
 	}
-	if got := network(apiKeyElsewhereSessionID, probe.workspace, probe.network, probe.read); got != 0 {
+	if got := network(elsewhereKeyRowID, probe.workspace, probe.network, probe.read); got != 0 {
 		t.Errorf("key bound to %s reached a Network of %s", elsewhere, probe.workspace)
 	}
 	// resolve_network_permission_v1 reads Network role bindings only; with a
@@ -125,10 +125,10 @@ WHERE session.public_id = $1::UUID`, session, workspaceID)
 		if permission == probe.write {
 			want = 0
 		}
-		if got := networkWith("resolve_network_permission_v1", apiKeyFoundationSessionID, probe.workspace, probe.network, permission); got != want {
+		if got := networkWith("resolve_network_permission_v1", foundationKeyRowID, probe.workspace, probe.network, permission); got != want {
 			t.Errorf("v1 %s: key %d, want %d", permission, got, want)
 		}
-		if got := networkWith("resolve_network_permission_v1", apiKeyElsewhereSessionID, probe.workspace, probe.network, permission); got != 0 {
+		if got := networkWith("resolve_network_permission_v1", elsewhereKeyRowID, probe.workspace, probe.network, permission); got != 0 {
 			t.Errorf("v1 %s: key bound to %s reached %s: %d", permission, elsewhere, probe.workspace, got)
 		}
 	}
@@ -140,7 +140,7 @@ WHERE session.public_id = $1::UUID`, session, workspaceID)
 		if baseline == 0 {
 			t.Logf("member.read: the person holds nothing in %s, so only the refusals there are checked", workspaceID)
 		}
-		for key, bound := range map[string]string{apiKeyFoundationSessionID: probe.workspace, apiKeyElsewhereSessionID: elsewhere} {
+		for key, bound := range map[string]string{foundationKeyRowID: probe.workspace, elsewhereKeyRowID: elsewhere} {
 			want := 0
 			if bound == workspaceID {
 				want = baseline
@@ -168,7 +168,7 @@ WHERE session.public_id = $1::UUID`, session)
 	if got := accountSession(human); got != 1 {
 		t.Fatalf("baseline: resolve_account_session_v1 refused the human twin: %d", got)
 	}
-	if got := accountSession(apiKeyFoundationSessionID); got != 0 {
+	if got := accountSession(foundationKeyRowID); got != 0 {
 		t.Errorf("resolve_account_session_v1 admitted a key (%d rows)", got)
 	}
 
@@ -194,7 +194,7 @@ WHERE public_id = $1::UUID`, "account session binding is immutable"},
     updated_at = pg_catalog.clock_timestamp() WHERE public_id = $1::UUID`, "invalid account session state transition"},
 	} {
 		expectSessionChangeRefused(ctx, t, admin, name, change.statement, change.message,
-			apiKeyFoundationSessionID, elsewhere)
+			foundationKeyRowID, elsewhere)
 	}
 	expectSessionChangeRefused(ctx, t, admin, "human to api_key", `UPDATE mesh.account_session SET state = 'api_key',
     version = version + 1, updated_at = pg_catalog.clock_timestamp() WHERE public_id = $1::UUID`,
@@ -203,8 +203,8 @@ WHERE public_id = $1::UUID`, "account session binding is immutable"},
 	// Ending is the one change; then the key resolves nothing. The other two
 	// rows end too: later steps count the person's Sessions.
 	for _, row := range []struct{ id, suffix, reason string }{
-		{apiKeyFoundationSessionID, "a7a2", "api_key_revoked"},
-		{apiKeyElsewhereSessionID, "a7b2", "api_key_revoked"},
+		{foundationKeyRowID, "a7a2", "api_key_revoked"},
+		{elsewhereKeyRowID, "a7b2", "api_key_revoked"},
 		{humanTwinSessionID, "a7c2", "administrative"},
 	} {
 		commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
@@ -220,7 +220,7 @@ WHERE public_id = $1::UUID`, "account session binding is immutable"},
 			}
 		})
 	}
-	if got := network(apiKeyFoundationSessionID, probe.workspace, probe.network, probe.read); got != 0 {
+	if got := network(foundationKeyRowID, probe.workspace, probe.network, probe.read); got != 0 {
 		t.Errorf("revoked key still resolves: %d", got)
 	}
 }
@@ -274,7 +274,7 @@ func copySessionAsAPIKey(ctx context.Context, t *testing.T, admin *pgx.Conn,
 		state = "active"
 	}
 	insert := func(transaction pgx.Tx, kind, state string) error {
-		_, err := transaction.Exec(ctx, `INSERT INTO mesh.account_session (`+apiKeySessionColumns+`)
+		_, err := transaction.Exec(ctx, `INSERT INTO mesh.account_session (`+sessionRowColumns+`)
 SELECT $1::UUID, session.deployment_id, session.principal_id, session.identity_provider_id,
     session.identity_subject_id, session.identity_provider_client_id,
     COALESCE((SELECT id FROM mesh.workspace WHERE public_id = NULLIF($3, '')::UUID), session.login_workspace_id),
@@ -322,7 +322,7 @@ WHERE session.public_id = $2::UUID`, sessionID, source, workspacePublicID, kind,
 	})
 }
 
-const apiKeySessionColumns = `public_id, deployment_id, principal_id, identity_provider_id, identity_subject_id,
+const sessionRowColumns = `public_id, deployment_id, principal_id, identity_provider_id, identity_subject_id,
     identity_provider_client_id, login_workspace_id, token_digest_algorithm, token_digest_key_id, token_digest,
     provider_generation, authentication_time, acr, amr, principal_authority_generation, account_session_generation,
     deployment_recovery_epoch, issued_at, last_used_at, idle_expires_at, absolute_expires_at, state, kind,
@@ -432,4 +432,327 @@ JOIN mesh.workspace_membership AS membership
  AND membership.state = 'active'
 WHERE session.public_id = $4::UUID`, args: []any{id, probe.workspace, probe.network, probe.session}},
 	}
+}
+
+type apiKeyMemberFixture struct {
+	manager, workspace, elsewhere           string
+	memberPrincipal, human, keyHere, keyOut string
+}
+
+// assertPostgreSQLAPIKeysEndWithSessions drives schema 321 (V1-80 A2): Account
+// operations end a person's keys in every Workspace, while Workspace member
+// operations end only the keys bound to that Workspace and leave keys in other
+// Workspaces live. Every case runs in a rollback-only transaction.
+func assertPostgreSQLAPIKeysEndWithSessions(ctx context.Context, t *testing.T, admin *pgx.Conn, owner accountsession.Session) {
+	t.Helper()
+	fixture := apiKeyMemberFixture{
+		manager:         "01890f00-0000-7000-8000-00000000a8c1",
+		memberPrincipal: "01890f00-0000-7000-8000-00000000a8d1",
+		human:           "01890f00-0000-7000-8000-00000000a8d4",
+		keyHere:         "01890f00-0000-7000-8000-00000000a8d5",
+		keyOut:          "01890f00-0000-7000-8000-00000000a8d6",
+	}
+	if err := admin.QueryRow(ctx, `SELECT workspace.public_id::TEXT FROM mesh.account_session AS session
+JOIN mesh.workspace AS workspace ON workspace.owner_principal_id = session.principal_id AND workspace.state = 'active'
+JOIN mesh.network AS network ON network.workspace_id = workspace.id AND network.state = 'active'
+JOIN mesh.workspace_membership AS membership ON membership.workspace_id = workspace.id
+ AND membership.principal_id = session.principal_id AND membership.state = 'active'
+WHERE session.public_id = $1::UUID ORDER BY 1 LIMIT 1`, owner.ID().String()).Scan(&fixture.workspace); err != nil {
+		t.Fatalf("a Workspace the owner owns and belongs to: %v", err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT workspace.public_id::TEXT FROM mesh.account_session AS session
+JOIN mesh.workspace AS workspace ON workspace.deployment_id = session.deployment_id AND workspace.state = 'active'
+WHERE session.public_id = $1::UUID AND workspace.public_id <> $2::UUID ORDER BY 1 LIMIT 1`,
+		owner.ID().String(), fixture.workspace).Scan(&fixture.elsewhere); err != nil {
+		t.Fatalf("a second active Workspace: %v", err)
+	}
+	assertAccountEndsAllWorkspaceKeys(ctx, t, admin, owner.ID().String(), fixture)
+	assertMemberActionsEndWorkspaceKeysOnly(ctx, t, admin, owner.ID().String(), fixture)
+}
+
+func assertAccountEndsAllWorkspaceKeys(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	ownerSession string, f apiKeyMemberFixture,
+) {
+	t.Helper()
+	for _, op := range []struct{ name, query, reason string }{
+		{"account recovery", `SELECT sessions_ended FROM mesh_ops.change_account_recovery_v1($1::UUID, 'revoke_sessions', $2::UUID)`,
+			"administrative"},
+		{"logout all", `SELECT sessions_ended FROM mesh.account_session AS session
+JOIN mesh.deployment AS deployment ON deployment.id = session.deployment_id
+JOIN mesh.principal AS principal ON principal.id = session.principal_id
+JOIN mesh.identity_subject AS subject ON subject.id = session.identity_subject_id
+CROSS JOIN LATERAL mesh_ops.logout_all_account_sessions_v1(
+    session.public_id, deployment.installation_public_id, principal.public_id, subject.public_id,
+    session.version, session.principal_authority_generation, session.account_session_generation,
+    session.provider_generation, session.deployment_recovery_epoch, $2::UUID)
+WHERE session.public_id = $1::UUID`, "logout_all"},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			tx := beginSeededAPIKeyMemberTx(ctx, t, admin, ownerSession, f, op.name)
+			defer func() { _ = tx.Rollback(ctx) }()
+			const change = "01890f01-0000-7000-8000-00000000a8f1"
+			setIntegrationChange(ctx, t, tx, change)
+			target := f.memberPrincipal
+			if op.name == "logout all" {
+				target = f.human
+			}
+			var ended int
+			if err := tx.QueryRow(ctx, op.query, target, change).Scan(&ended); err != nil || ended != 3 {
+				t.Fatalf("%s: ended=%d err=%v, want 3", op.name, ended, err)
+			}
+			for _, pair := range [][2]string{{f.keyHere, f.workspace}, {f.keyOut, f.elsewhere}} {
+				state, reason := txSessionOutcome(ctx, t, tx, pair[0])
+				if state != "revoked" || reason != op.reason || txWorkspaceKeyResolves(ctx, t, tx, pair[0], pair[1]) != 0 {
+					t.Errorf("%s: key %s = %s/%s or still resolves", op.name, pair[0], state, reason)
+				}
+			}
+		})
+	}
+}
+
+const memberActorFromSQL = ` FROM mesh.account_session AS session
+JOIN mesh.deployment AS deployment ON deployment.id = session.deployment_id
+JOIN mesh.principal AS principal ON principal.id = session.principal_id
+JOIN mesh.identity_subject AS subject ON subject.id = session.identity_subject_id `
+
+const memberActorArgsSQL = `session.public_id, deployment.installation_public_id, principal.public_id, subject.public_id,
+    session.version, session.principal_authority_generation, session.account_session_generation,
+    session.provider_generation, session.deployment_recovery_epoch`
+
+func assertMemberActionsEndWorkspaceKeysOnly(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	ownerSession string, f apiKeyMemberFixture,
+) {
+	t.Helper()
+	for _, op := range []struct {
+		name, call string
+		resume     bool
+	}{
+		{"revoke member sessions", `SELECT (mesh_ops.revoke_workspace_member_sessions_v1(` + memberActorArgsSQL + `,
+    $2::UUID, $3::UUID, $4::UUID, pg_catalog.transaction_timestamp()) ->> 'sessions_ended')::INT` + memberActorFromSQL +
+			`WHERE session.public_id = $1::UUID`, false},
+		{"suspend and resume member", `SELECT (mesh_ops.change_workspace_member_v1(` + memberActorArgsSQL + `,
+    $2::UUID, $3::UUID, 'suspend', $4::UUID, pg_catalog.transaction_timestamp()) ->> 'sessions_ended')::INT` + memberActorFromSQL +
+			`WHERE session.public_id = $1::UUID`, true},
+		{"remove member", `SELECT (mesh_ops.remove_workspace_member_v1(` + memberActorArgsSQL + `,
+    $2::UUID, $3::UUID, '[]'::JSONB, $4::UUID, pg_catalog.transaction_timestamp()) ->> 'sessions_ended')::INT` + memberActorFromSQL +
+			`WHERE session.public_id = $1::UUID`, false},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			tx := beginSeededAPIKeyMemberTx(ctx, t, admin, ownerSession, f, op.name)
+			defer func() { _ = tx.Rollback(ctx) }()
+			var ended int
+			if err := tx.QueryRow(ctx, op.call, f.manager, f.workspace, f.memberPrincipal,
+				"01890f01-0000-7000-8000-00000000a8f2").Scan(&ended); err != nil {
+				t.Fatalf("%s: %v", op.name, err)
+			}
+			stateHere, reasonHere := txSessionOutcome(ctx, t, tx, f.keyHere)
+			stateOut, reasonOut := txSessionOutcome(ctx, t, tx, f.keyOut)
+			if ended != 2 || stateHere != "revoked" || reasonHere != "administrative" ||
+				txWorkspaceKeyResolves(ctx, t, tx, f.keyHere, f.workspace) != 0 {
+				t.Errorf("%s: workspace key %s/%s, ended %d; want revoked/administrative, ended 2, resolves 0",
+					op.name, stateHere, reasonHere, ended)
+			}
+			if stateOut != "api_key" || reasonOut != "" || txWorkspaceKeyResolves(ctx, t, tx, f.keyOut, f.elsewhere) != 1 {
+				t.Errorf("%s: other-Workspace key %s/%s; want api_key and still resolves 1", op.name, stateOut, reasonOut)
+			}
+			if op.resume {
+				assertResumedMemberKeyStaysRevoked(ctx, t, tx, f)
+			}
+		})
+	}
+}
+
+func assertResumedMemberKeyStaysRevoked(ctx context.Context, t *testing.T, tx pgx.Tx, f apiKeyMemberFixture) {
+	t.Helper()
+	var resumedState string
+	if err := tx.QueryRow(ctx, `SELECT mesh_ops.change_workspace_member_v1(`+memberActorArgsSQL+`,
+    $2::UUID, $3::UUID, 'resume', $4::UUID, pg_catalog.transaction_timestamp()) #>> '{after,state}'`+memberActorFromSQL+
+		`WHERE session.public_id = $1::UUID`, f.manager, f.workspace, f.memberPrincipal,
+		"01890f01-0000-7000-8000-00000000a8f3").Scan(&resumedState); err != nil || resumedState != "active" {
+		t.Fatalf("resume member: state=%q err=%v", resumedState, err)
+	}
+	afterState, _ := txSessionOutcome(ctx, t, tx, f.keyHere)
+	if afterState != "revoked" || txWorkspaceKeyResolves(ctx, t, tx, f.keyHere, f.workspace) != 0 {
+		t.Errorf("resuming a suspended member revived its key (%s)", afterState)
+	}
+}
+
+func beginSeededAPIKeyMemberTx(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	ownerSession string, f apiKeyMemberFixture, opName string,
+) pgx.Tx {
+	t.Helper()
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAPIKeyMemberTx(ctx, t, tx, ownerSession, f)
+	if txWorkspaceKeyResolves(ctx, t, tx, f.keyHere, f.workspace) != 1 ||
+		txWorkspaceKeyResolves(ctx, t, tx, f.keyOut, f.elsewhere) != 1 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("baseline: keys did not resolve before %s", opName)
+	}
+	return tx
+}
+
+func seedAPIKeyMemberTx(ctx context.Context, t *testing.T, tx pgx.Tx, ownerSession string, f apiKeyMemberFixture) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO mesh.account_session (`+sessionRowColumns+`)
+SELECT $1::UUID, s.deployment_id, s.principal_id, s.identity_provider_id, s.identity_subject_id,
+    s.identity_provider_client_id, ws.id, s.token_digest_algorithm, s.token_digest_key_id,
+    pg_catalog.sha256(pg_catalog.convert_to($1::TEXT, 'UTF8')), p.current_generation, now.at - interval '1 minute',
+    s.acr, s.amr, pr.authority_generation, a.session_generation, d.recovery_epoch,
+    now.at - interval '1 minute', now.at - interval '1 minute', now.at + interval '1 hour', now.at + interval '1 hour',
+    'active', 'interactive', now.at - interval '1 minute', now.at - interval '1 minute'
+FROM mesh.account_session AS s
+JOIN mesh.deployment AS d ON d.id = s.deployment_id JOIN mesh.principal AS pr ON pr.id = s.principal_id
+JOIN mesh.account AS a ON a.principal_id = s.principal_id JOIN mesh.identity_provider AS p ON p.id = s.identity_provider_id
+JOIN mesh.workspace AS ws ON ws.public_id = $3::UUID
+CROSS JOIN (SELECT pg_catalog.transaction_timestamp() AS at) AS now WHERE s.public_id = $2::UUID`,
+		f.manager, ownerSession, f.workspace); err != nil {
+		t.Fatalf("seed manager session: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO mesh.workspace_identity_provider (public_id, deployment_id, workspace_id,
+    identity_provider_id, identity_provider_client_id, admission_mode, minimum_assurance, routing_priority, state)
+SELECT pg_catalog.uuidv7(), r.deployment_id, dst.id, r.identity_provider_id, r.identity_provider_client_id,
+    r.admission_mode, r.minimum_assurance,
+    COALESCE((SELECT pg_catalog.max(p.routing_priority) + 1 FROM mesh.workspace_identity_provider AS p
+        WHERE p.workspace_id = dst.id), r.routing_priority), 'active'
+FROM mesh.account_session AS s
+JOIN mesh.workspace AS src ON src.public_id = $1::UUID
+JOIN mesh.workspace_identity_provider AS r ON r.workspace_id = src.id
+ AND r.identity_provider_id = s.identity_provider_id AND r.identity_provider_client_id = s.identity_provider_client_id
+CROSS JOIN mesh.workspace AS dst
+WHERE s.public_id = $3::UUID AND dst.public_id = $2::UUID AND r.state = 'active' AND r.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM mesh.workspace_identity_provider AS x
+      WHERE x.workspace_id = dst.id AND x.identity_provider_id = r.identity_provider_id
+        AND x.identity_provider_client_id = r.identity_provider_client_id)
+LIMIT 1`, f.workspace, f.elsewhere, ownerSession); err != nil {
+		t.Fatalf("seed elsewhere IdP route: %v", err)
+	}
+	seedAPIKeyMemberIdentityTx(ctx, t, tx, ownerSession, f)
+	seedAPIKeyMemberWorkspacesAndSessionsTx(ctx, t, tx, ownerSession, f)
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedAPIKeyMemberIdentityTx(ctx context.Context, t *testing.T, tx pgx.Tx, ownerSession string, f apiKeyMemberFixture) {
+	t.Helper()
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO mesh.principal (id, public_id, deployment_id, kind, state) OVERRIDING SYSTEM VALUE
+SELECT 970321, $1::UUID, s.deployment_id, 'account', 'active' FROM mesh.account_session AS s WHERE s.public_id = $2::UUID`,
+			[]any{f.memberPrincipal, ownerSession}},
+		{`INSERT INTO mesh.account (id, public_id, deployment_id, principal_id, display_name, session_generation, recovery_state)
+OVERRIDING SYSTEM VALUE SELECT 970321, '01890f00-0000-7000-8000-00000000a8d2'::UUID, s.deployment_id, 970321,
+    'API Key Member', 1, 'verified' FROM mesh.account_session AS s WHERE s.public_id = $1::UUID`, []any{ownerSession}},
+		{`INSERT INTO mesh.identity_subject (id, public_id, deployment_id, identity_provider_id, principal_id,
+    subject_digest_algorithm, subject_digest_key_id, subject_digest, claims_revision, last_seen_at, state)
+OVERRIDING SYSTEM VALUE SELECT 970321, '01890f00-0000-7000-8000-00000000a8d3'::UUID, s.deployment_id,
+    s.identity_provider_id, 970321, 'hmac-sha256-v1', 'integration-v1', pg_catalog.sha256('a8d3'::BYTEA), 1,
+    pg_catalog.transaction_timestamp(), 'active' FROM mesh.account_session AS s WHERE s.public_id = $1::UUID`,
+			[]any{ownerSession}},
+		{`INSERT INTO mesh.principal (id, public_id, deployment_id, kind, state) OVERRIDING SYSTEM VALUE
+SELECT 970329, pg_catalog.uuidv7(), ws.deployment_id, 'service', 'active'
+FROM mesh.workspace AS ws WHERE ws.public_id = $1::UUID
+  AND NOT EXISTS (SELECT 1 FROM mesh.workspace_device_principal AS dp WHERE dp.workspace_id = ws.id)`,
+			[]any{f.workspace}},
+		{`INSERT INTO mesh.workspace_device_principal (workspace_id, principal_id)
+SELECT ws.id, 970329 FROM mesh.workspace AS ws WHERE ws.public_id = $1::UUID
+  AND NOT EXISTS (SELECT 1 FROM mesh.workspace_device_principal AS dp WHERE dp.workspace_id = ws.id)`,
+			[]any{f.workspace}},
+	} {
+		if _, err := tx.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed API key member identity: %v", err)
+		}
+	}
+}
+
+func seedAPIKeyMemberWorkspacesAndSessionsTx(ctx context.Context, t *testing.T, tx pgx.Tx,
+	ownerSession string, f apiKeyMemberFixture,
+) {
+	t.Helper()
+	for i, ws := range []string{f.workspace, f.elsewhere} {
+		id := int64(970321 + i)
+		if _, err := tx.Exec(ctx, `INSERT INTO mesh.workspace_membership (id, public_id, deployment_id, workspace_id,
+    principal_id, state, authority_generation, valid_from) OVERRIDING SYSTEM VALUE
+SELECT $1::BIGINT, pg_catalog.uuidv7(), ws.deployment_id, ws.id, 970321, 'active', 1,
+    pg_catalog.transaction_timestamp() - interval '1 minute'
+FROM mesh.workspace AS ws WHERE ws.public_id = $2::UUID`, id, ws); err != nil {
+			t.Fatalf("seed membership %s: %v", ws, err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO mesh.workspace_role_assignment (id, public_id, deployment_id, workspace_id,
+    principal_id, workspace_membership_id, role_key, state, authority_generation, valid_from, created_at, updated_at)
+OVERRIDING SYSTEM VALUE SELECT $1::BIGINT, pg_catalog.uuidv7(), ws.deployment_id, ws.id, 970321, $1::BIGINT,
+    'network_admin', 'active', 1, now.at - interval '1 minute', now.at - interval '1 minute', now.at - interval '1 minute'
+FROM mesh.workspace AS ws CROSS JOIN (SELECT pg_catalog.transaction_timestamp() AS at) AS now
+WHERE ws.public_id = $2::UUID`, id, ws); err != nil {
+			t.Fatalf("seed role assignment %s: %v", ws, err)
+		}
+	}
+	for _, row := range []struct{ id, ws, kind, state string }{
+		{f.human, f.workspace, "interactive", "active"},
+		{f.keyHere, f.workspace, "api_key", "api_key"},
+		{f.keyOut, f.elsewhere, "api_key", "api_key"},
+	} {
+		if _, err := tx.Exec(ctx, `INSERT INTO mesh.account_session (`+sessionRowColumns+`)
+SELECT $1::UUID, s.deployment_id, 970321, s.identity_provider_id, 970321, s.identity_provider_client_id, ws.id,
+    s.token_digest_algorithm, s.token_digest_key_id, pg_catalog.sha256(pg_catalog.convert_to($1::TEXT, 'UTF8')),
+    p.current_generation, now.at - interval '1 minute', s.acr, s.amr, 1, 1, d.recovery_epoch,
+    now.at - interval '1 minute', now.at - interval '1 minute', now.at + interval '1 hour', now.at + interval '1 hour',
+    $5, $4, now.at - interval '1 minute', now.at - interval '1 minute'
+FROM mesh.account_session AS s JOIN mesh.deployment AS d ON d.id = s.deployment_id
+JOIN mesh.identity_provider AS p ON p.id = s.identity_provider_id JOIN mesh.workspace AS ws ON ws.public_id = $3::UUID
+CROSS JOIN (SELECT pg_catalog.transaction_timestamp() AS at) AS now WHERE s.public_id = $2::UUID`,
+			row.id, ownerSession, row.ws, row.kind, row.state); err != nil {
+			t.Fatalf("seed member %s row: %v", row.kind, err)
+		}
+	}
+}
+
+func txWorkspaceKeyResolves(ctx context.Context, t *testing.T, tx pgx.Tx, sessionID, workspaceID string) int {
+	t.Helper()
+	var internalID string
+	if err := tx.QueryRow(ctx, `SELECT id::TEXT FROM mesh.workspace WHERE public_id = $1::UUID`, workspaceID).Scan(&internalID); err != nil {
+		t.Fatalf("workspace internal id: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.set_config('mesh.requested_workspace_public_id', $1, TRUE),
+    pg_catalog.set_config('mesh.requested_network_public_id', '', TRUE),
+    pg_catalog.set_config('mesh.workspace_id', $2, TRUE),
+    pg_catalog.set_config('mesh.network_id', '', TRUE)`, workspaceID, internalID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM mesh.account_session AS session
+JOIN mesh.deployment AS deployment ON deployment.id = session.deployment_id
+JOIN mesh.principal AS principal ON principal.id = session.principal_id
+JOIN mesh.identity_subject AS subject ON subject.id = session.identity_subject_id
+CROSS JOIN LATERAL mesh_ops.resolve_workspace_permission_v1(
+    session.public_id, deployment.installation_public_id, principal.public_id, subject.public_id,
+    session.version, session.principal_authority_generation, session.account_session_generation,
+    session.provider_generation, session.deployment_recovery_epoch,
+    $2::UUID, 'member.read', pg_catalog.transaction_timestamp()) AS resolved
+WHERE session.public_id = $1::UUID`, sessionID, workspaceID).Scan(&count); err != nil {
+		t.Fatalf("resolve workspace permission: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.set_config('mesh.requested_workspace_public_id', '', TRUE),
+    pg_catalog.set_config('mesh.workspace_id', '', TRUE)`); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func txSessionOutcome(ctx context.Context, t *testing.T, tx pgx.Tx, sessionID string) (string, string) {
+	t.Helper()
+	var state, reason string
+	if err := tx.QueryRow(ctx, `SELECT state, COALESCE(end_reason, '') FROM mesh.account_session
+WHERE public_id = $1::UUID`, sessionID).Scan(&state, &reason); err != nil {
+		t.Fatal(err)
+	}
+	return state, reason
 }

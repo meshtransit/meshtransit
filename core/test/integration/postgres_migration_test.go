@@ -568,6 +568,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	assertGroupRolesWithinRuntime(ctx, t, adminConnection)
 	assertPostgreSQLAPIKeyFoundation(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
+	assertPostgreSQLAPIKeysEndWithSessions(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 320 {
-		t.Fatalf("len(Catalog()) = %d, want 320", len(catalog))
+	if len(catalog) != 321 {
+		t.Fatalf("len(Catalog()) = %d, want 321", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 320 {
-		t.Fatalf("LatestVersion() = %d, want 320", LatestVersion())
+	if LatestVersion() != 321 {
+		t.Fatalf("LatestVersion() = %d, want 321", LatestVersion())
 	}
 }
 
@@ -9396,5 +9396,48 @@ func TestMigration320BindsKeysToTheirWorkspace(t *testing.T) {
 	}
 	if strings.Contains(sql320, "OR (TG_TABLE_NAME = 'account_session' AND NEW.state <> 'active')") {
 		t.Error("the trigger keeps the unreachable account_session insert clause")
+	}
+}
+
+// Schema 321 (V1-80 A2) ends key rows wherever a person's Sessions end: the
+// five Session-ending functions lock and update 'active' and 'api_key' rows,
+// and nothing else in them changes.
+func TestMigration321EndsKeysWithSessions(t *testing.T) {
+	t.Parallel()
+	sql321 := migrationVersion(t, 321).SQL
+	functions := []string{
+		"change_account_recovery_v1", "logout_all_account_sessions_v1", "revoke_workspace_member_sessions_v1",
+		"change_workspace_member_v1", "remove_workspace_member_v1",
+	}
+	if got := strings.Count(sql321, "CREATE OR REPLACE FUNCTION"); got != len(functions) {
+		t.Errorf("schema 321 restates %d functions, want %d", got, len(functions))
+	}
+	for _, name := range functions {
+		if !strings.Contains(sql321, "FUNCTION mesh_ops."+name+"(") {
+			t.Errorf("schema 321 does not restate %s", name)
+		}
+	}
+	// All five functions pre-lock the rows in id order first, then update them.
+	if got := strings.Count(sql321, "session.state IN ('active', 'api_key')"); got != 10 {
+		t.Errorf("schema 321 covers key rows in %d places, want 10", got)
+	}
+	preLocks := regexp.MustCompile(`ORDER BY session\.id\s+FOR UPDATE;`).FindAllString(sql321, -1)
+	if len(preLocks) != len(functions) {
+		t.Errorf("schema 321 pre-locks sessions in id order in %d functions, want %d", len(preLocks), len(functions))
+	}
+	// What stays 'active' only is the caller's own Session (logout-all) and
+	// unrelated rows; no UPDATE of mesh.account_session keeps the old filter.
+	for _, statement := range strings.Split(sql321, "UPDATE mesh.account_session")[1:] {
+		end := strings.Index(statement, ";")
+		if end < 0 || !strings.Contains(statement[:end], "session.state IN ('active', 'api_key')") {
+			t.Errorf("an UPDATE of mesh.account_session in schema 321 skips key rows: %.120q", statement)
+		}
+	}
+	for _, unchanged := range []string{
+		"WHERE session.public_id = p_session_public_id AND session.state = 'active'",
+	} {
+		if !strings.Contains(sql321, unchanged) {
+			t.Errorf("schema 321 changed the caller's own check %q", unchanged)
+		}
 	}
 }

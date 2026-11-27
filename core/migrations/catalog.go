@@ -741,6 +741,8 @@ func Catalog() []Migration {
 			accountEmailProviderSQL),
 		newMigration(320, "API key foundation: session kind, keys resolve only in their own Workspace",
 			apiKeySessionFoundationSQL),
+		newMigration(321, "API keys end with their person's Sessions",
+			apiKeySessionsEndTogetherSQL),
 	}
 }
 
@@ -1480,3 +1482,6 @@ var accountEmailProviderSQL string
 
 //go:embed 000320_api_key_session_foundation.up.sql
 var apiKeySessionFoundationSQL string
+
+//go:embed 000321_api_key_sessions_end_together.up.sql
+var apiKeySessionsEndTogetherSQL string
