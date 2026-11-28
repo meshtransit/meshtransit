@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 322 {
-		t.Fatalf("len(Catalog()) = %d, want 322", len(catalog))
+	if len(catalog) != 323 {
+		t.Fatalf("len(Catalog()) = %d, want 323", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 322 {
-		t.Fatalf("LatestVersion() = %d, want 322", LatestVersion())
+	if LatestVersion() != 323 {
+		t.Fatalf("LatestVersion() = %d, want 323", LatestVersion())
 	}
 }
 
@@ -9488,5 +9488,39 @@ func TestMigration322APIKeyTablesAndOperations(t *testing.T) {
 	}
 	if strings.Contains(sql322, "TO mesh_runtime") {
 		t.Error("schema 322 must grant new functions to mesh_api_rights, never mesh_runtime")
+	}
+}
+
+// Schema 323 (V1-80 A2) expands mesh_audit.audit_event with nullable
+// actor_credential_kind and actor_credential_public_id, populated in
+// append_authority_evidence from transaction GUCs after verifying ownership.
+func TestMigration323AuditActorCredentialColumns(t *testing.T) {
+	t.Parallel()
+	sql323 := migrationVersion(t, 323).SQL
+	for _, want := range []string{
+		"ALTER TABLE mesh_audit.audit_event",
+		"ADD COLUMN actor_credential_kind TEXT",
+		"ADD COLUMN actor_credential_public_id UUID",
+		"audit_event_actor_credential_check",
+		"NOT VALID;",
+		"VALIDATE CONSTRAINT audit_event_actor_credential_check;",
+		"CREATE OR REPLACE FUNCTION mesh_audit.append_authority_evidence",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh_audit, mesh_ops, mesh",
+		"mesh.actor_credential_kind",
+		"mesh.actor_credential_public_id",
+		"stream_workspace_id IS NULL",
+		"FROM mesh.api_key AS key_row",
+		"key_row.workspace_id = stream_workspace_id",
+	} {
+		if !strings.Contains(sql323, want) {
+			t.Errorf("schema 323 lacks %q", want)
+		}
+	}
+	if strings.Count(sql323, "ALTER TABLE mesh_audit.audit_event") != 2 {
+		t.Error("schema 323 must alter mesh_audit.audit_event with NOT VALID then VALIDATE CONSTRAINT")
+	}
+	if strings.Contains(sql323, "TO mesh_runtime") {
+		t.Error("schema 323 must not grant new privileges to mesh_runtime")
 	}
 }

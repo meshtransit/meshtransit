@@ -745,6 +745,8 @@ func Catalog() []Migration {
 			apiKeySessionsEndTogetherSQL),
 		newMigration(322, "API key tables and management operations",
 			apiKeyTablesAndOperationsSQL),
+		newMigration(323, "Audit event actor credential columns from transaction context",
+			auditEventActorCredentialSQL),
 	}
 }
 
@@ -1490,3 +1492,6 @@ var apiKeySessionsEndTogetherSQL string
 
 //go:embed 000322_api_key_tables_and_operations.up.sql
 var apiKeyTablesAndOperationsSQL string
+
+//go:embed 000323_audit_event_actor_credential.up.sql
+var auditEventActorCredentialSQL string

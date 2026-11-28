@@ -570,6 +570,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLAPIKeyFoundation(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
 	assertPostgreSQLAPIKeysEndWithSessions(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
 	assertPostgreSQLAPIKeyLifecycle(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
+	assertPostgreSQLAPIKeyAuditCredential(ctx, t, adminConnection, managementRBACAccountSessionFixture(t))
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 	assertAuditStreamLoad(ctx, t, adminConnection, adminConfig)
