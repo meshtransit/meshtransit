@@ -743,6 +743,8 @@ func Catalog() []Migration {
 			apiKeySessionFoundationSQL),
 		newMigration(321, "API keys end with their person's Sessions",
 			apiKeySessionsEndTogetherSQL),
+		newMigration(322, "API key tables and management operations",
+			apiKeyTablesAndOperationsSQL),
 	}
 }
 
@@ -1485,3 +1487,6 @@ var apiKeySessionFoundationSQL string
 
 //go:embed 000321_api_key_sessions_end_together.up.sql
 var apiKeySessionsEndTogetherSQL string
+
+//go:embed 000322_api_key_tables_and_operations.up.sql
+var apiKeyTablesAndOperationsSQL string

@@ -19,8 +19,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 321 {
-		t.Fatalf("len(Catalog()) = %d, want 321", len(catalog))
+	if len(catalog) != 322 {
+		t.Fatalf("len(Catalog()) = %d, want 322", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1619,8 +1619,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 321 {
-		t.Fatalf("LatestVersion() = %d, want 321", LatestVersion())
+	if LatestVersion() != 322 {
+		t.Fatalf("LatestVersion() = %d, want 322", LatestVersion())
 	}
 }
 
@@ -9439,5 +9439,54 @@ func TestMigration321EndsKeysWithSessions(t *testing.T) {
 		if !strings.Contains(sql321, unchanged) {
 			t.Errorf("schema 321 changed the caller's own check %q", unchanged)
 		}
+	}
+}
+
+// Schema 322 (V1-80 A2, part 2) adds mesh.api_key, mesh.api_key_usage, and
+// their six mesh_api_rights entry points, plus GREATEST(v_now, issued_at) on
+// the two account-wide Session-ending functions.
+func TestMigration322APIKeyTablesAndOperations(t *testing.T) {
+	t.Parallel()
+	sql322 := migrationVersion(t, 322).SQL
+	for _, want := range []string{
+		"CREATE TABLE mesh.api_key",
+		"CREATE TABLE mesh.api_key_usage",
+		"ALTER TABLE mesh.api_key ENABLE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh.api_key FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh.api_key_usage ENABLE ROW LEVEL SECURITY",
+		"ALTER TABLE mesh.api_key_usage FORCE ROW LEVEL SECURITY",
+		"account_session_workspace_live_api_key_idx",
+		"api_key_workspace_principal_page_idx",
+		"mesh_audit.capture_authority_mutation('api_key', 'public_id')",
+		"BEFORE UPDATE OR DELETE ON mesh.api_key",
+		"BEFORE INSERT ON mesh.api_key",
+		"pg_catalog.hashtextextended('mesh.api_key.quota', v_workspace)",
+		"SET join_collapse_limit = 1",
+		"SET from_collapse_limit = 1",
+		"SET plan_cache_mode = force_generic_plan",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_account_recovery_v1",
+		"CREATE OR REPLACE FUNCTION mesh_ops.logout_all_account_sessions_v1",
+		"ended_at = GREATEST(v_now, session.issued_at)",
+	} {
+		if !strings.Contains(sql322, want) {
+			t.Errorf("schema 322 lacks %q", want)
+		}
+	}
+	for _, fn := range []string{
+		"create_api_key_v1", "revoke_api_key_v1", "list_api_keys_v1",
+		"read_api_key_v1", "resolve_api_key_v1", "touch_api_key_usage_v1",
+	} {
+		if !strings.Contains(sql322, "CREATE FUNCTION mesh_ops."+fn+"(") {
+			t.Errorf("schema 322 does not create mesh_ops.%s", fn)
+		}
+		if !strings.Contains(sql322, "GRANT EXECUTE ON FUNCTION mesh_ops."+fn+"(") {
+			t.Errorf("schema 322 does not grant mesh_ops.%s to mesh_api_rights", fn)
+		}
+	}
+	if got := strings.Count(sql322, "TO mesh_api_rights;"); got != 6 {
+		t.Errorf("schema 322 grants TO mesh_api_rights %d times, want 6", got)
+	}
+	if strings.Contains(sql322, "TO mesh_runtime") {
+		t.Error("schema 322 must grant new functions to mesh_api_rights, never mesh_runtime")
 	}
 }
